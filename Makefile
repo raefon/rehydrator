@@ -7,7 +7,7 @@ build:
 	go build ./cmd/rehydrator
 
 run:
-	go run ./cmd/rehydrator
+	go run ./cmd/rehydrator --config ./rehydrator.yaml
 
 docker:
 	docker build -t rehydrator:dev .

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,13 +17,20 @@ import (
 )
 
 func main() {
+	configPath := flag.String("config", "", "path to YAML config file")
+	flag.Parse()
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		slog.Error("config error", "error", err)
 		os.Exit(1)
+	}
+
+	if cfg.ConfigCreated {
+		slog.Info("default config created", "path", cfg.ConfigPath)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -57,6 +65,7 @@ func main() {
 	})
 
 	slog.Info("rehydrator starting",
+		"config", cfg.ConfigPath,
 		"interval", cfg.ReconcileInterval.String(),
 		"cache_grace", cfg.CacheGrace.String(),
 		"csi_path", cfg.CSIPath,

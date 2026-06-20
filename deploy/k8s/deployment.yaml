@@ -16,21 +16,20 @@ spec:
         - name: rehydrator
           image: ghcr.io/YOUR_ORG/rehydrator:latest
           imagePullPolicy: IfNotPresent
+          args:
+            - "--config"
+            - "/config/rehydrator.yaml"
           env:
             - name: POSTGRES_URL
               valueFrom:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: postgres-url
-            - name: RADARR_URL
-              value: "http://radarr:7878"
             - name: RADARR_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: radarr-api-key
-            - name: SONARR_URL
-              value: "http://sonarr:8989"
             - name: SONARR_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -41,16 +40,16 @@ spec:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: torbox-api-key
-            - name: CSI_PATH
-              value: "/storage/media"
-            - name: CACHE_GRACE_HOURS
-              value: "24"
-            - name: DB_AUTO_MIGRATE
-              value: "false"
           volumeMounts:
+            - name: rehydrator-config
+              mountPath: /config
+              readOnly: true
             - name: media
               mountPath: /storage/media
       volumes:
+        - name: rehydrator-config
+          configMap:
+            name: rehydrator-config
         - name: media
           persistentVolumeClaim:
             claimName: media

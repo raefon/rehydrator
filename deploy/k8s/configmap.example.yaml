@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rehydrator-config
+data:
+  rehydrator.yaml: |
+    radarr:
+      url: http://radarr:7878
+    sonarr:
+      url: http://sonarr:8989
+    csi_path: /storage/media
+    reconcile_interval_seconds: 30
+    csi_wait_seconds: 180
+    cache_grace_hours: 24
+    max_retries: 10
+    concurrent_workers: 4
+    db_auto_migrate: false

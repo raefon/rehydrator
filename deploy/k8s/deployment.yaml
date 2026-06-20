@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rehydrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rehydrator
+  template:
+    metadata:
+      labels:
+        app: rehydrator
+    spec:
+      containers:
+        - name: rehydrator
+          image: ghcr.io/YOUR_ORG/rehydrator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: postgres-url
+            - name: RADARR_URL
+              value: "http://radarr:7878"
+            - name: RADARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: radarr-api-key
+            - name: SONARR_URL
+              value: "http://sonarr:8989"
+            - name: SONARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: sonarr-api-key
+            - name: TORBOX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: torbox-api-key
+            - name: CSI_PATH
+              value: "/storage/media"
+            - name: CACHE_GRACE_HOURS
+              value: "24"
+            - name: DB_AUTO_MIGRATE
+              value: "false"
+          volumeMounts:
+            - name: media
+              mountPath: /storage/media
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: media

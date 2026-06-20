@@ -1,0 +1,7 @@
+.git
+*.zip
+tmp
+dist
+.env
+.qodo
+.DS_Store

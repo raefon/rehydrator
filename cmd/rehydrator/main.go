@@ -74,7 +74,7 @@ func main() {
 		"health_addr", cfg.HealthAddr,
 	)
 
-	healthServer := health.NewServer(cfg.HealthAddr)
+	healthServer := health.New(cfg.HealthAddr)
 	go healthServer.Run(ctx)
 
 	if err := ctrl.Run(ctx); err != nil {

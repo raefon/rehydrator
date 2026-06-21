@@ -20,7 +20,7 @@ type Client struct {
 func NewClient(key string) *Client {
 	return &Client{
 		key:  key,
-		base: "https://api.torbox.app/v1",
+		base: "https://api.torbox.app/v1/api",
 		http: httpx.DefaultClient(),
 	}
 }

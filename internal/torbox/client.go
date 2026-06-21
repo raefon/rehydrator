@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"mime/multipart"
 	"net/http"
 
 	"github.com/raefon/rehydrator/internal/httpx"
@@ -30,20 +33,22 @@ type addResponse struct {
 }
 
 func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata) (model.TorBoxAddResult, error) {
-	if torrent.InfoHash == "" && torrent.Magnet == "" {
-		return model.TorBoxAddResult{}, fmt.Errorf("missing infohash and magnet")
+	if torrent.Magnet == "" {
+		return model.TorBoxAddResult{}, fmt.Errorf("missing magnet; TorBox createtorrent does not accept bare infohash")
 	}
 
-	body := map[string]string{}
-	if torrent.InfoHash != "" {
-		body["hash"] = torrent.InfoHash
-	}
-	if torrent.Magnet != "" {
-		body["magnet"] = torrent.Magnet
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	if err := writer.WriteField("magnet", torrent.Magnet); err != nil {
+		return model.TorBoxAddResult{}, err
 	}
 
-	raw, err := json.Marshal(body)
-	if err != nil {
+	// Optional but useful. Keeps behavior closer to "instant cached only"
+	// if your TorBox API/account supports it.
+	_ = writer.WriteField("add_only_if_cached", "false")
+
+	if err := writer.Close(); err != nil {
 		return model.TorBoxAddResult{}, err
 	}
 
@@ -51,14 +56,16 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata) 
 		ctx,
 		http.MethodPost,
 		c.base+"/torrents/createtorrent",
-		bytes.NewReader(raw),
+		&body,
 	)
 	if err != nil {
 		return model.TorBoxAddResult{}, err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	slog.Info("torbox create torrent request", "url", req.URL.String())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -66,12 +73,14 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata) 
 	}
 	defer resp.Body.Close()
 
-	if err := httpx.CheckStatus(resp); err != nil {
-		return model.TorBoxAddResult{}, err
+	raw, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return model.TorBoxAddResult{}, fmt.Errorf("unexpected status: %s body=%s", resp.Status, string(raw))
 	}
 
 	var decoded addResponse
-	_ = json.NewDecoder(resp.Body).Decode(&decoded)
+	_ = json.Unmarshal(raw, &decoded)
 
 	return model.TorBoxAddResult{TorrentID: extractID(decoded.Data)}, nil
 }

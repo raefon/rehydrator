@@ -19,3 +19,4 @@ cache_grace_hours: 24
 max_retries: 10
 concurrent_workers: 4
 db_auto_migrate: false
+health_addr: ":8080"

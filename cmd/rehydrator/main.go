@@ -13,6 +13,7 @@ import (
 	"github.com/raefon/rehydrator/internal/controller"
 	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/health"
 	"github.com/raefon/rehydrator/internal/torbox"
 )
 
@@ -70,7 +71,11 @@ func main() {
 		"cache_grace", cfg.CacheGrace.String(),
 		"csi_path", cfg.CSIPath,
 		"workers", cfg.ConcurrentWorkers,
+		"health_addr", cfg.HealthAddr,
 	)
+
+	healthServer := health.NewServer(cfg.HealthAddr)
+	go healthServer.Run(ctx)
 
 	if err := ctrl.Run(ctx); err != nil {
 		slog.Error("controller stopped with error", "error", err)

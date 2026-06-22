@@ -57,11 +57,22 @@ func (c *Client) LatestGrabbedTorrent(ctx context.Context, arrID int, mediaType 
 			continue
 		}
 
-		infoHash := firstNonEmpty(r.Data["torrentInfoHash"], r.DownloadID)
-		magnet := firstNonEmpty(r.Data["guid"], r.Data["downloadUrl"])
+		rawGuid := strings.TrimSpace(r.Data["guid"])
 
-		if strings.HasPrefix(strings.ToLower(magnet), "magnet:") && infoHash == "" {
-			infoHash = parseBTIH(magnet)
+		infoHash := cleanInfoHash(firstNonEmpty(
+			r.Data["torrentInfoHash"],
+			r.DownloadID,
+			parseBTIH(rawGuid),
+		))
+
+		magnet := ""
+
+		if infoHash != "" {
+			// Prefer a clean minimal magnet over Radarr/Prowlarr's full GUID.
+			// Some indexer GUID magnets can be accepted by clients but rejected by TorBox.
+			magnet = buildMinimalMagnet(infoHash)
+		} else if strings.HasPrefix(strings.ToLower(rawGuid), "magnet:") {
+			magnet = rawGuid
 		}
 
 		if infoHash == "" && magnet == "" {
@@ -141,4 +152,31 @@ func parseBTIH(magnet string) string {
 		}
 	}
 	return ""
+}
+
+func cleanInfoHash(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimPrefix(s, "urn:btih:")
+
+	// Keep only hex-like BTIH values for now.
+	if len(s) != 40 {
+		return ""
+	}
+
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'f') || (r >= '0' && r <= '9')) {
+			return ""
+		}
+	}
+
+	return s
+}
+
+func buildMinimalMagnet(infoHash string) string {
+	infoHash = cleanInfoHash(infoHash)
+	if infoHash == "" {
+		return ""
+	}
+
+	return "magnet:?xt=urn:btih:" + infoHash
 }

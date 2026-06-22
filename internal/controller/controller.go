@@ -146,6 +146,15 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		return
 	}
 
+	slog.Info("torrent metadata resolved",
+		"tenant", item.Tenant,
+		"media_type", item.MediaType,
+		"arr_id", item.ArrID,
+		"infohash", torrent.InfoHash,
+		"magnet_len", len(torrent.Magnet),
+		"magnet_prefix", firstN(torrent.Magnet, 30),
+	)
+
 	metaJSON, _ := json.Marshal(map[string]string{
 		"infohash": torrent.InfoHash,
 		"source":   torrent.Source,
@@ -265,4 +274,11 @@ func valueOrEmpty(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func firstN(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }

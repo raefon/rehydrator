@@ -19,6 +19,25 @@ spec:
           args:
             - "--config"
             - "/config/rehydrator.yaml"
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           env:
             - name: POSTGRES_URL
               valueFrom:
@@ -35,11 +54,20 @@ spec:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: sonarr-api-key
-            - name: TORBOX_API_KEY
+            - name: DECYPHARR_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: rehydrator-secrets
-                  key: torbox-api-key
+                  key: decypharr-username
+                  optional: true
+            - name: DECYPHARR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: decypharr-password
+                  optional: true
+            - name: HEALTH_ADDR
+              value: ":8080"
           volumeMounts:
             - name: rehydrator-config
               mountPath: /config

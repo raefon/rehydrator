@@ -13,8 +13,8 @@ import (
 	"github.com/raefon/rehydrator/internal/controller"
 	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/health"
-	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 func main() {
@@ -53,16 +53,19 @@ func main() {
 	}
 
 	ctrl := controller.New(controller.Options{
-		Repo:              repo,
-		Radarr:            arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey),
-		Sonarr:            arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey),
-		TorBox:            torbox.NewClient(cfg.TorBoxAPIKey),
-		CSI:               csi.NewChecker(cfg.CSIPath),
-		Interval:          cfg.ReconcileInterval,
-		CSIWait:           cfg.CSIWait,
-		CacheGrace:        cfg.CacheGrace,
-		MaxRetries:        cfg.MaxRetries,
-		ConcurrentWorkers: cfg.ConcurrentWorkers,
+		Repo:               repo,
+		Radarr:             arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey),
+		Sonarr:             arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey),
+		Decypharr:          decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword),
+		CSI:                csi.NewChecker(cfg.CSIPath),
+		RadarrCategory:     cfg.DecypharrRadarrCategory,
+		SonarrCategory:     cfg.DecypharrSonarrCategory,
+		DeleteFilesOnPrune: cfg.DecypharrDeleteFilesOnPrune,
+		Interval:           cfg.ReconcileInterval,
+		CSIWait:            cfg.CSIWait,
+		CacheGrace:         cfg.CacheGrace,
+		MaxRetries:         cfg.MaxRetries,
+		ConcurrentWorkers:  cfg.ConcurrentWorkers,
 	})
 
 	slog.Info("rehydrator starting",
@@ -70,11 +73,15 @@ func main() {
 		"interval", cfg.ReconcileInterval.String(),
 		"cache_grace", cfg.CacheGrace.String(),
 		"csi_path", cfg.CSIPath,
-		"workers", cfg.ConcurrentWorkers,
+		"decypharr_url", cfg.DecypharrURL,
+		"radarr_category", cfg.DecypharrRadarrCategory,
+		"sonarr_category", cfg.DecypharrSonarrCategory,
+		"delete_files_on_prune", cfg.DecypharrDeleteFilesOnPrune,
 		"health_addr", cfg.HealthAddr,
+		"workers", cfg.ConcurrentWorkers,
 	)
 
-	healthServer := health.New(cfg.HealthAddr)
+	healthServer := health.NewServer(cfg.HealthAddr)
 	go healthServer.Run(ctx)
 
 	if err := ctrl.Run(ctx); err != nil {

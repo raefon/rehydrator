@@ -1,22 +1,31 @@
 postgres_url: ""
 
 radarr:
-  url: http://radarr:7878
+  url: http://tenet-radarr:7878
   api_key: ""
 
 sonarr:
-  url: http://sonarr:8989
+  url: http://tenet-sonarr:8989
   api_key: ""
 
+decypharr:
+  url: http://tenet-decypharr:8282
+  username: ""
+  password: ""
+  radarr_category: radarr
+  sonarr_category: sonarr
+  delete_files_on_prune: true
+
+# Deprecated/legacy. Decypharr is now the primary path.
 torbox:
   api_key: ""
 
 csi_path: /storage/media
+health_addr: ":8080"
 
 reconcile_interval_seconds: 30
-csi_wait_seconds: 180
+csi_wait_seconds: 300
 cache_grace_hours: 24
 max_retries: 10
 concurrent_workers: 4
 db_auto_migrate: false
-health_addr: ":8080"

@@ -21,18 +21,27 @@ sonarr:
   url: http://sonarr:8989
   api_key: ""
 
+decypharr:
+  url: http://decypharr:8282
+  username: ""
+  password: ""
+  radarr_category: radarr
+  sonarr_category: sonarr
+  delete_files_on_prune: true
+
+# Deprecated/legacy. Decypharr is now the primary download-client integration.
 torbox:
   api_key: ""
 
 csi_path: /storage/media
+health_addr: ":8080"
 
 reconcile_interval_seconds: 30
-csi_wait_seconds: 180
+csi_wait_seconds: 300
 cache_grace_hours: 24
 max_retries: 10
 concurrent_workers: 4
 db_auto_migrate: false
-health_addr: ":8080"
 `
 
 type Config struct {
@@ -44,9 +53,18 @@ type Config struct {
 	SonarrURL    string
 	SonarrAPIKey string
 
+	DecypharrURL                string
+	DecypharrUsername           string
+	DecypharrPassword           string
+	DecypharrRadarrCategory     string
+	DecypharrSonarrCategory     string
+	DecypharrDeleteFilesOnPrune bool
+
+	// Deprecated/legacy fallback only.
 	TorBoxAPIKey string
 
-	CSIPath string
+	CSIPath    string
+	HealthAddr string
 
 	ReconcileIntervalSeconds int
 	CSIWaitSeconds           int
@@ -62,8 +80,6 @@ type Config struct {
 
 	ConfigPath    string
 	ConfigCreated bool
-
-	HealthAddr string
 }
 
 type fileConfig struct {
@@ -79,11 +95,21 @@ type fileConfig struct {
 		APIKey string `yaml:"api_key"`
 	} `yaml:"sonarr"`
 
+	Decypharr struct {
+		URL                string `yaml:"url"`
+		Username           string `yaml:"username"`
+		Password           string `yaml:"password"`
+		RadarrCategory     string `yaml:"radarr_category"`
+		SonarrCategory     string `yaml:"sonarr_category"`
+		DeleteFilesOnPrune *bool  `yaml:"delete_files_on_prune"`
+	} `yaml:"decypharr"`
+
 	TorBox struct {
 		APIKey string `yaml:"api_key"`
 	} `yaml:"torbox"`
 
-	CSIPath string `yaml:"csi_path"`
+	CSIPath    string `yaml:"csi_path"`
+	HealthAddr string `yaml:"health_addr"`
 
 	ReconcileIntervalSeconds int  `yaml:"reconcile_interval_seconds"`
 	CSIWaitSeconds           int  `yaml:"csi_wait_seconds"`
@@ -91,8 +117,6 @@ type fileConfig struct {
 	MaxRetries               int  `yaml:"max_retries"`
 	ConcurrentWorkers        int  `yaml:"concurrent_workers"`
 	DBAutoMigrate            bool `yaml:"db_auto_migrate"`
-
-	HealthAddr string `yaml:"health_addr"`
 }
 
 func Load(configPath string) (Config, error) {
@@ -128,14 +152,20 @@ func Load(configPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
-		CSIPath:                  "/storage/media",
-		ReconcileIntervalSeconds: 30,
-		CSIWaitSeconds:           180,
-		CacheGraceHours:          24,
-		MaxRetries:               10,
-		ConcurrentWorkers:        4,
-		DBAutoMigrate:            false,
-		HealthAddr:               ":8080",
+		RadarrURL:                   "http://radarr:7878",
+		SonarrURL:                   "http://sonarr:8989",
+		DecypharrURL:                "http://decypharr:8282",
+		DecypharrRadarrCategory:     "radarr",
+		DecypharrSonarrCategory:     "sonarr",
+		DecypharrDeleteFilesOnPrune: true,
+		CSIPath:                     "/storage/media",
+		HealthAddr:                  ":8080",
+		ReconcileIntervalSeconds:    30,
+		CSIWaitSeconds:              300,
+		CacheGraceHours:             24,
+		MaxRetries:                  10,
+		ConcurrentWorkers:           4,
+		DBAutoMigrate:               false,
 	}
 }
 
@@ -176,18 +206,52 @@ func readFileConfig(path string) (fileConfig, error) {
 }
 
 func applyFileConfig(cfg *Config, fc fileConfig) {
-	cfg.PostgresURL = fc.PostgresURL
+	if fc.PostgresURL != "" {
+		cfg.PostgresURL = fc.PostgresURL
+	}
 
-	cfg.RadarrURL = fc.Radarr.URL
-	cfg.RadarrAPIKey = fc.Radarr.APIKey
+	if fc.Radarr.URL != "" {
+		cfg.RadarrURL = fc.Radarr.URL
+	}
+	if fc.Radarr.APIKey != "" {
+		cfg.RadarrAPIKey = fc.Radarr.APIKey
+	}
 
-	cfg.SonarrURL = fc.Sonarr.URL
-	cfg.SonarrAPIKey = fc.Sonarr.APIKey
+	if fc.Sonarr.URL != "" {
+		cfg.SonarrURL = fc.Sonarr.URL
+	}
+	if fc.Sonarr.APIKey != "" {
+		cfg.SonarrAPIKey = fc.Sonarr.APIKey
+	}
 
-	cfg.TorBoxAPIKey = fc.TorBox.APIKey
+	if fc.Decypharr.URL != "" {
+		cfg.DecypharrURL = fc.Decypharr.URL
+	}
+	if fc.Decypharr.Username != "" {
+		cfg.DecypharrUsername = fc.Decypharr.Username
+	}
+	if fc.Decypharr.Password != "" {
+		cfg.DecypharrPassword = fc.Decypharr.Password
+	}
+	if fc.Decypharr.RadarrCategory != "" {
+		cfg.DecypharrRadarrCategory = fc.Decypharr.RadarrCategory
+	}
+	if fc.Decypharr.SonarrCategory != "" {
+		cfg.DecypharrSonarrCategory = fc.Decypharr.SonarrCategory
+	}
+	if fc.Decypharr.DeleteFilesOnPrune != nil {
+		cfg.DecypharrDeleteFilesOnPrune = *fc.Decypharr.DeleteFilesOnPrune
+	}
+
+	if fc.TorBox.APIKey != "" {
+		cfg.TorBoxAPIKey = fc.TorBox.APIKey
+	}
 
 	if fc.CSIPath != "" {
 		cfg.CSIPath = fc.CSIPath
+	}
+	if fc.HealthAddr != "" {
+		cfg.HealthAddr = fc.HealthAddr
 	}
 	if fc.ReconcileIntervalSeconds > 0 {
 		cfg.ReconcileIntervalSeconds = fc.ReconcileIntervalSeconds
@@ -204,9 +268,6 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.ConcurrentWorkers > 0 {
 		cfg.ConcurrentWorkers = fc.ConcurrentWorkers
 	}
-	if fc.HealthAddr != "" {
-		cfg.HealthAddr = fc.HealthAddr
-	}
 
 	cfg.DBAutoMigrate = fc.DBAutoMigrate
 }
@@ -220,9 +281,17 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.SonarrURL = getenv("SONARR_URL", cfg.SonarrURL)
 	cfg.SonarrAPIKey = getenv("SONARR_API_KEY", cfg.SonarrAPIKey)
 
+	cfg.DecypharrURL = getenv("DECYPHARR_URL", cfg.DecypharrURL)
+	cfg.DecypharrUsername = getenv("DECYPHARR_USERNAME", cfg.DecypharrUsername)
+	cfg.DecypharrPassword = getenv("DECYPHARR_PASSWORD", cfg.DecypharrPassword)
+	cfg.DecypharrRadarrCategory = getenv("DECYPHARR_RADARR_CATEGORY", cfg.DecypharrRadarrCategory)
+	cfg.DecypharrSonarrCategory = getenv("DECYPHARR_SONARR_CATEGORY", cfg.DecypharrSonarrCategory)
+	cfg.DecypharrDeleteFilesOnPrune = getenvBool("DECYPHARR_DELETE_FILES_ON_PRUNE", cfg.DecypharrDeleteFilesOnPrune)
+
 	cfg.TorBoxAPIKey = getenv("TORBOX_API_KEY", cfg.TorBoxAPIKey)
 
 	cfg.CSIPath = getenv("CSI_PATH", cfg.CSIPath)
+	cfg.HealthAddr = getenv("HEALTH_ADDR", cfg.HealthAddr)
 
 	cfg.ReconcileIntervalSeconds = getenvInt("RECONCILE_INTERVAL_SECONDS", cfg.ReconcileIntervalSeconds)
 	cfg.CSIWaitSeconds = getenvInt("CSI_WAIT_SECONDS", cfg.CSIWaitSeconds)
@@ -230,7 +299,6 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.MaxRetries = getenvInt("MAX_RETRIES", cfg.MaxRetries)
 	cfg.ConcurrentWorkers = getenvInt("CONCURRENT_WORKERS", cfg.ConcurrentWorkers)
 	cfg.DBAutoMigrate = getenvBool("DB_AUTO_MIGRATE", cfg.DBAutoMigrate)
-	cfg.HealthAddr = getenv("HEALTH_ADDR", cfg.HealthAddr)
 }
 
 func hydrateDurations(cfg *Config) {
@@ -246,44 +314,48 @@ func validate(cfg Config) error {
 	if cfg.RadarrURL == "" || cfg.RadarrAPIKey == "" {
 		return errors.New("RADARR_URL/RADARR_API_KEY or radarr.url/radarr.api_key are required")
 	}
-	if cfg.TorBoxAPIKey == "" {
-		return errors.New("TORBOX_API_KEY or torbox.api_key is required")
+	if cfg.DecypharrURL == "" {
+		return errors.New("DECYPHARR_URL or decypharr.url is required")
+	}
+	if cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {
+		return errors.New("DECYPHARR_PASSWORD is required when DECYPHARR_USERNAME is set")
+	}
+	if cfg.CSIPath == "" {
+		return errors.New("CSI_PATH or csi_path is required")
+	}
+	if cfg.HealthAddr == "" {
+		return errors.New("HEALTH_ADDR or health_addr is required")
 	}
 	return nil
 }
 
-func getenv(key, def string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getenvInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		return fallback
 	}
 	return v
 }
 
-func getenvInt(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
+func getenvBool(key string, fallback bool) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
 	}
-
-	i, err := strconv.Atoi(v)
+	v, err := strconv.ParseBool(raw)
 	if err != nil {
-		return def
+		return fallback
 	}
-
-	return i
-}
-
-func getenvBool(key string, def bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return def
-	}
-
-	return b
+	return v
 }

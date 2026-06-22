@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rehydrator
+spec:
+  selector:
+    app: rehydrator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

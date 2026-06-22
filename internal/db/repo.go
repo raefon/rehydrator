@@ -36,8 +36,9 @@ func (r *Repo) InitSchema(ctx context.Context) error {
 func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([]model.MediaCacheState, error) {
 	rows, err := r.pool.Query(ctx, `
         SELECT id::text, tenant, media_type, arr_id, symlink_path, state,
-               rearm_requested, cached_until, torbox_torrent_id, retry_count,
-               last_checked, last_rehydrated, last_pruned, last_error
+               rearm_requested, cached_until, torbox_torrent_id,
+               infohash, magnet, download_client, download_category, arr_title, source_title,
+               retry_count, last_checked, last_rehydrated, last_pruned, last_error
         FROM media_cache_state
         WHERE rearm_requested = true
           AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')
@@ -55,14 +56,16 @@ func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([
 func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCacheState, error) {
 	rows, err := r.pool.Query(ctx, `
         SELECT id::text, tenant, media_type, arr_id, symlink_path, state,
-               rearm_requested, cached_until, torbox_torrent_id, retry_count,
-               last_checked, last_rehydrated, last_pruned, last_error
+               rearm_requested, cached_until, torbox_torrent_id,
+               infohash, magnet, download_client, download_category, arr_title, source_title,
+               retry_count, last_checked, last_rehydrated, last_pruned, last_error
         FROM media_cache_state
         WHERE state = 'AVAILABLE'
           AND rearm_requested = false
           AND cached_until IS NOT NULL
           AND cached_until < now()
-          AND torbox_torrent_id IS NOT NULL
+          AND infohash IS NOT NULL
+          AND infohash <> ''
         ORDER BY cached_until ASC
         LIMIT $1
     `, limit)
@@ -93,6 +96,12 @@ func scanItems(rows itemRows) ([]model.MediaCacheState, error) {
 			&m.RearmRequested,
 			&m.CachedUntil,
 			&m.TorBoxTorrentID,
+			&m.InfoHash,
+			&m.Magnet,
+			&m.DownloadClient,
+			&m.DownloadCategory,
+			&m.ArrTitle,
+			&m.SourceTitle,
 			&m.RetryCount,
 			&m.LastChecked,
 			&m.LastRehydrated,
@@ -117,19 +126,34 @@ func (r *Repo) MarkRearming(ctx context.Context, id string) error {
 	return err
 }
 
-func (r *Repo) MarkAvailable(ctx context.Context, id string, torboxID string, cachedUntil time.Time) error {
+func (r *Repo) SaveTorrentMetadata(ctx context.Context, id string, torrent model.TorrentMetadata, category string) error {
+	_, err := r.pool.Exec(ctx, `
+        UPDATE media_cache_state
+        SET infohash = NULLIF($2, ''),
+            magnet = NULLIF($3, ''),
+            download_client = 'decypharr',
+            download_category = NULLIF($4, ''),
+            source_title = NULLIF($5, ''),
+            last_checked = now()
+        WHERE id = $1
+    `, id, torrent.InfoHash, torrent.Magnet, category, torrent.SourceTitle)
+	return err
+}
+
+func (r *Repo) MarkAvailable(ctx context.Context, id string, infoHash string, cachedUntil time.Time) error {
 	_, err := r.pool.Exec(ctx, `
         UPDATE media_cache_state
         SET state = 'AVAILABLE',
             rearm_requested = false,
             cached_until = $2,
-            torbox_torrent_id = NULLIF($3, ''),
+            infohash = COALESCE(NULLIF($3, ''), infohash),
+            torbox_torrent_id = NULL,
             last_checked = now(),
             last_rehydrated = now(),
             retry_count = 0,
             last_error = NULL
         WHERE id = $1
-    `, id, cachedUntil, torboxID)
+    `, id, cachedUntil, infoHash)
 	return err
 }
 

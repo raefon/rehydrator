@@ -12,7 +12,7 @@ type Server struct {
 	srv  *http.Server
 }
 
-func New(addr string) *Server {
+func NewServer(addr string) *Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

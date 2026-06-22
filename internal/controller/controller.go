@@ -11,22 +11,25 @@ import (
 	"github.com/raefon/rehydrator/internal/arr"
 	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/model"
-	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 type Options struct {
-	Repo   *db.Repo
-	Radarr *arr.Client
-	Sonarr *arr.Client
-	TorBox *torbox.Client
-	CSI    *csi.Checker
+	Repo      *db.Repo
+	Radarr    *arr.Client
+	Sonarr    *arr.Client
+	Decypharr *decypharr.Client
+	CSI       *csi.Checker
 
-	Interval          time.Duration
-	CSIWait           time.Duration
-	CacheGrace        time.Duration
-	MaxRetries        int
-	ConcurrentWorkers int
+	RadarrCategory     string
+	SonarrCategory     string
+	DeleteFilesOnPrune bool
+	Interval           time.Duration
+	CSIWait            time.Duration
+	CacheGrace         time.Duration
+	MaxRetries         int
+	ConcurrentWorkers  int
 }
 
 type Controller struct {
@@ -41,13 +44,19 @@ func New(opt Options) *Controller {
 		opt.Interval = 30 * time.Second
 	}
 	if opt.CSIWait <= 0 {
-		opt.CSIWait = 180 * time.Second
+		opt.CSIWait = 300 * time.Second
 	}
 	if opt.CacheGrace <= 0 {
 		opt.CacheGrace = 24 * time.Hour
 	}
 	if opt.MaxRetries <= 0 {
 		opt.MaxRetries = 10
+	}
+	if opt.RadarrCategory == "" {
+		opt.RadarrCategory = "radarr"
+	}
+	if opt.SonarrCategory == "" {
+		opt.SonarrCategory = "sonarr"
 	}
 	return &Controller{opt: opt}
 }
@@ -124,11 +133,12 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 
 	if c.opt.CSI.Exists(item.SymlinkPath) {
 		log.Info("file already visible through CSI; marking available")
-		_ = c.opt.Repo.MarkAvailable(ctx, item.ID, valueOrEmpty(item.TorBoxTorrentID), time.Now().Add(c.opt.CacheGrace))
+		cachedUntil := time.Now().Add(c.opt.CacheGrace)
+		_ = c.opt.Repo.MarkAvailable(ctx, item.ID, valueOrEmpty(item.InfoHash), cachedUntil)
 		return
 	}
 
-	log.Info("file missing; rearming")
+	log.Info("file missing; rearming through Decypharr")
 	if err := c.opt.Repo.MarkRearming(ctx, item.ID); err != nil {
 		log.Error("failed to mark rearming", "error", err)
 		return
@@ -146,32 +156,34 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		return
 	}
 
-	slog.Info("torrent metadata resolved",
-		"tenant", item.Tenant,
-		"media_type", item.MediaType,
-		"arr_id", item.ArrID,
-		"infohash", torrent.InfoHash,
-		"magnet_len", len(torrent.Magnet),
-		"magnet_prefix", firstN(torrent.Magnet, 30),
-	)
+	category := c.categoryFor(item.MediaType)
+	if err := c.opt.Repo.SaveTorrentMetadata(ctx, item.ID, torrent, category); err != nil {
+		c.fail(ctx, item, err)
+		return
+	}
 
 	metaJSON, _ := json.Marshal(map[string]string{
-		"infohash": torrent.InfoHash,
-		"source":   torrent.Source,
+		"infohash":     torrent.InfoHash,
+		"source":       torrent.Source,
+		"source_title": torrent.SourceTitle,
+		"download_id":  torrent.DownloadID,
+		"category":     category,
+		"client":       "decypharr",
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "torrent_metadata_resolved", string(metaJSON))
 
-	addResult, err := c.opt.TorBox.AddTorrent(ctx, torrent)
+	addResult, err := c.opt.Decypharr.AddTorrent(ctx, torrent, category)
 	if err != nil {
 		c.fail(ctx, item, err)
 		return
 	}
 
 	addJSON, _ := json.Marshal(map[string]string{
-		"torbox_torrent_id": addResult.TorrentID,
-		"infohash":          torrent.InfoHash,
+		"infohash": addResult.Hash,
+		"category": category,
+		"client":   "decypharr",
 	})
-	_ = c.opt.Repo.Event(ctx, item.ID, "torbox_readd_requested", string(addJSON))
+	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_readd_requested", string(addJSON))
 
 	if ok := c.waitForCSI(ctx, item.SymlinkPath); !ok {
 		c.fail(ctx, item, fmt.Errorf("CSI path did not appear within %s", c.opt.CSIWait))
@@ -179,16 +191,18 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	}
 
 	cachedUntil := time.Now().Add(c.opt.CacheGrace)
-	if err := c.opt.Repo.MarkAvailable(ctx, item.ID, addResult.TorrentID, cachedUntil); err != nil {
+	if err := c.opt.Repo.MarkAvailable(ctx, item.ID, firstNonEmpty(addResult.Hash, torrent.InfoHash), cachedUntil); err != nil {
 		log.Error("failed to mark available", "error", err)
 		return
 	}
 
 	finalJSON, _ := json.Marshal(map[string]string{
 		"cached_until": cachedUntil.Format(time.RFC3339),
+		"infohash":     firstNonEmpty(addResult.Hash, torrent.InfoHash),
+		"client":       "decypharr",
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "available", string(finalJSON))
-	log.Info("rehydration complete", "cached_until", cachedUntil)
+	log.Info("rehydration complete", "cached_until", cachedUntil, "infohash", firstNonEmpty(addResult.Hash, torrent.InfoHash))
 }
 
 func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState) {
@@ -196,30 +210,34 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 		"tenant", item.Tenant,
 		"media_type", item.MediaType,
 		"arr_id", item.ArrID,
-		"torbox_torrent_id", valueOrEmpty(item.TorBoxTorrentID),
+		"infohash", valueOrEmpty(item.InfoHash),
+		"download_client", valueOrEmpty(item.DownloadClient),
 	)
 
-	if item.TorBoxTorrentID == nil || *item.TorBoxTorrentID == "" {
-		log.Warn("no torbox_torrent_id available; marking archived without delete")
+	infoHash := valueOrEmpty(item.InfoHash)
+	if infoHash == "" {
+		log.Warn("no infohash available; marking archived without download-client delete")
 		_ = c.opt.Repo.MarkArchived(ctx, item.ID)
 		return
 	}
 
-	log.Info("pruning expired TorBox torrent")
+	log.Info("pruning expired Decypharr torrent")
 	if err := c.opt.Repo.MarkPruning(ctx, item.ID); err != nil {
 		log.Error("failed to mark pruning", "error", err)
 		return
 	}
 
-	if err := c.opt.TorBox.DeleteTorrent(ctx, *item.TorBoxTorrentID); err != nil {
+	if err := c.opt.Decypharr.DeleteTorrent(ctx, infoHash, c.opt.DeleteFilesOnPrune); err != nil {
 		c.fail(ctx, item, err)
 		return
 	}
 
 	deleteJSON, _ := json.Marshal(map[string]string{
-		"torbox_torrent_id": *item.TorBoxTorrentID,
+		"infohash":     infoHash,
+		"client":       "decypharr",
+		"delete_files": fmt.Sprintf("%t", c.opt.DeleteFilesOnPrune),
 	})
-	_ = c.opt.Repo.Event(ctx, item.ID, "torbox_deleted", string(deleteJSON))
+	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_deleted", string(deleteJSON))
 
 	if err := c.opt.Repo.MarkArchived(ctx, item.ID); err != nil {
 		log.Error("failed to mark archived", "error", err)
@@ -238,6 +256,17 @@ func (c *Controller) arrClientFor(mediaType model.MediaType) (*arr.Client, error
 		return c.opt.Sonarr, nil
 	default:
 		return nil, fmt.Errorf("unsupported media_type: %s", mediaType)
+	}
+}
+
+func (c *Controller) categoryFor(mediaType model.MediaType) string {
+	switch mediaType {
+	case model.MediaMovie:
+		return c.opt.RadarrCategory
+	case model.MediaSeries:
+		return c.opt.SonarrCategory
+	default:
+		return ""
 	}
 }
 
@@ -269,16 +298,18 @@ func (c *Controller) fail(ctx context.Context, item model.MediaCacheState, err e
 	_ = c.opt.Repo.Event(ctx, item.ID, "failed", string(payload))
 }
 
-func valueOrEmpty(v *string) string {
-	if v == nil {
+func valueOrEmpty(s *string) string {
+	if s == nil {
 		return ""
 	}
-	return *v
+	return *s
 }
 
-func firstN(s string, n int) string {
-	if len(s) <= n {
-		return s
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
 	}
-	return s[:n]
+	return ""
 }

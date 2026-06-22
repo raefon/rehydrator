@@ -27,7 +27,17 @@ CREATE TABLE IF NOT EXISTS media_cache_state (
     rearm_requested BOOLEAN NOT NULL DEFAULT false,
 
     cached_until TIMESTAMPTZ,
+
+    -- Legacy provider-specific field. Kept for compatibility with earlier rows.
     torbox_torrent_id TEXT,
+
+    -- Decypharr/qBittorrent lifecycle identity. This is the preferred handle.
+    infohash TEXT,
+    magnet TEXT,
+    download_client TEXT NOT NULL DEFAULT 'decypharr',
+    download_category TEXT,
+    arr_title TEXT,
+    source_title TEXT,
 
     retry_count INT NOT NULL DEFAULT 0,
 
@@ -41,6 +51,20 @@ CREATE TABLE IF NOT EXISTS media_cache_state (
 
     UNIQUE (tenant, media_type, arr_id)
 );
+
+-- Safe upgrade path for databases created by the TorBox-first prototype.
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS infohash TEXT;
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS magnet TEXT;
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS download_client TEXT NOT NULL DEFAULT 'decypharr';
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS download_category TEXT;
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS arr_title TEXT;
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS source_title TEXT;
 
 CREATE TABLE IF NOT EXISTS media_cache_events (
     id BIGSERIAL PRIMARY KEY,
@@ -69,6 +93,9 @@ ON media_cache_state (rearm_requested, state, retry_count, updated_at);
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_state_prune_work
 ON media_cache_state (state, cached_until);
+
+CREATE INDEX IF NOT EXISTS idx_media_cache_state_infohash
+ON media_cache_state (infohash);
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_state_tenant
 ON media_cache_state (tenant);

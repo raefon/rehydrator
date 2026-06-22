@@ -47,15 +47,8 @@ type HistoryRecord struct {
 	Data        map[string]any `json:"data"`
 }
 
-// LatestGrabbedTorrent returns the torrent metadata that should be used to
-// re-add an Arr item to TorBox.
-//
-// Selection strategy:
-//  1. Query Arr history filtered by movieId/seriesId.
-//  2. Keep only records whose returned movieId/seriesId matches arrID.
-//  3. Prefer the grabbed event that matches the latest import event's downloadId.
-//  4. Fall back to latest matching grabbed event.
-//  5. Build a clean BTIH-only magnet from the infohash to avoid indexer GUID noise.
+// LatestGrabbedTorrent returns the safest torrent metadata for rehydrating an Arr item.
+// It validates movieId/seriesId and prefers the grabbed event that matches the latest import downloadId.
 func (c *Client) LatestGrabbedTorrent(ctx context.Context, arrID int, mediaType model.MediaType) (model.TorrentMetadata, error) {
 	records, err := c.history(ctx, arrID, mediaType)
 	if err != nil {
@@ -64,45 +57,21 @@ func (c *Client) LatestGrabbedTorrent(ctx context.Context, arrID int, mediaType 
 
 	matching := make([]HistoryRecord, 0, len(records))
 	for _, r := range records {
-		if !recordMatchesMedia(r, arrID, mediaType) {
-			slog.Debug("skipping arr history record for different media",
-				"arr", c.name,
-				"wanted_arr_id", arrID,
-				"media_type", mediaType,
-				"history_id", r.ID,
-				"movie_id", r.MovieID,
-				"series_id", r.SeriesID,
-				"event_type", r.EventType,
-				"source_title", r.SourceTitle,
-			)
-			continue
+		if recordMatchesMedia(r, arrID, mediaType) {
+			matching = append(matching, r)
 		}
-
-		matching = append(matching, r)
 	}
-
 	if len(matching) == 0 {
 		return model.TorrentMetadata{}, fmt.Errorf("no matching %s history records found for arr_id=%d", mediaType, arrID)
 	}
 
-	// First, try the safest match:
-	// latest import event -> same downloadId -> grabbed event.
 	if imported := latestImportRecord(matching); imported != nil {
-		importDownloadID := strings.TrimSpace(imported.DownloadID)
-		if importDownloadID == "" {
-			importDownloadID = dataString(imported.Data, "downloadId")
-		}
-
+		importDownloadID := firstNonEmpty(imported.DownloadID, dataString(imported.Data, "downloadId"))
 		if importDownloadID != "" {
 			for _, r := range matching {
-				if r.EventType != "grabbed" {
+				if r.EventType != "grabbed" || !sameDownloadID(r.DownloadID, importDownloadID) {
 					continue
 				}
-
-				if !sameDownloadID(r.DownloadID, importDownloadID) {
-					continue
-				}
-
 				torrent, ok := torrentMetadataFromGrabbed(c.name, arrID, mediaType, r)
 				if ok {
 					logSelectedRecord(c.name, arrID, mediaType, r, "matched_import_download_id", torrent)
@@ -122,12 +91,10 @@ func (c *Client) LatestGrabbedTorrent(ctx context.Context, arrID int, mediaType 
 		}
 	}
 
-	// Fallback: latest grabbed record for the same movie/series.
 	for _, r := range matching {
 		if r.EventType != "grabbed" {
 			continue
 		}
-
 		torrent, ok := torrentMetadataFromGrabbed(c.name, arrID, mediaType, r)
 		if ok {
 			logSelectedRecord(c.name, arrID, mediaType, r, "latest_matching_grabbed", torrent)
@@ -144,7 +111,6 @@ func (c *Client) history(ctx context.Context, arrID int, mediaType model.MediaTy
 	}
 
 	endpoint := c.base + "/api/v3/history"
-
 	q := url.Values{}
 	q.Set("page", "1")
 	q.Set("pageSize", "250")
@@ -164,15 +130,9 @@ func (c *Client) history(ctx context.Context, arrID int, mediaType model.MediaTy
 	if err != nil {
 		return nil, err
 	}
-
 	req.Header.Set("X-Api-Key", c.key)
 
-	slog.Debug("arr history request",
-		"arr", c.name,
-		"url", req.URL.String(),
-		"media_type", mediaType,
-		"arr_id", arrID,
-	)
+	slog.Debug("arr history request", "arr", c.name, "url", req.URL.String(), "media_type", mediaType, "arr_id", arrID)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -188,7 +148,6 @@ func (c *Client) history(ctx context.Context, arrID int, mediaType model.MediaTy
 	if err := json.NewDecoder(resp.Body).Decode(&hr); err != nil {
 		return nil, err
 	}
-
 	if hr.Records == nil {
 		return nil, errors.New("arr history response did not contain records")
 	}
@@ -214,7 +173,6 @@ func latestImportRecord(records []HistoryRecord) *HistoryRecord {
 			return &records[i]
 		}
 	}
-
 	return nil
 }
 
@@ -235,10 +193,7 @@ func torrentMetadataFromGrabbed(arrName string, arrID int, mediaType model.Media
 	))
 
 	magnet := ""
-
 	if infoHash != "" {
-		// Prefer a clean minimal magnet over the Arr/Prowlarr GUID.
-		// Some indexer GUID magnets are accepted by clients but rejected by TorBox.
 		magnet = buildMinimalMagnet(infoHash)
 	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawGuid)), "magnet:") {
 		magnet = strings.TrimSpace(rawGuid)
@@ -262,9 +217,11 @@ func torrentMetadataFromGrabbed(arrName string, arrID int, mediaType model.Media
 	}
 
 	return model.TorrentMetadata{
-		InfoHash: infoHash,
-		Magnet:   magnet,
-		Source:   arrName,
+		InfoHash:    infoHash,
+		Magnet:      magnet,
+		Source:      arrName,
+		SourceTitle: r.SourceTitle,
+		DownloadID:  r.DownloadID,
 	}, true
 }
 
@@ -288,19 +245,14 @@ func logSelectedRecord(arrName string, arrID int, mediaType model.MediaType, r H
 func cleanInfoHash(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
 	s = strings.TrimPrefix(s, "urn:btih:")
-
-	// For now, only trust v1 BTIH hex hashes.
-	// This prevents accidentally sending release titles, download IDs, or GUID junk as magnets.
 	if len(s) != 40 {
 		return ""
 	}
-
 	for _, r := range s {
 		if !((r >= 'a' && r <= 'f') || (r >= '0' && r <= '9')) {
 			return ""
 		}
 	}
-
 	return s
 }
 
@@ -309,7 +261,6 @@ func buildMinimalMagnet(infoHash string) string {
 	if infoHash == "" {
 		return ""
 	}
-
 	return "magnet:?xt=urn:btih:" + infoHash
 }
 
@@ -318,19 +269,16 @@ func parseBTIH(magnet string) string {
 	if magnet == "" {
 		return ""
 	}
-
 	u, err := url.Parse(magnet)
 	if err != nil {
 		return ""
 	}
-
 	for _, xt := range u.Query()["xt"] {
 		lower := strings.ToLower(strings.TrimSpace(xt))
 		if strings.HasPrefix(lower, "urn:btih:") {
 			return cleanInfoHash(strings.TrimPrefix(lower, "urn:btih:"))
 		}
 	}
-
 	return ""
 }
 
@@ -340,14 +288,12 @@ func firstNonEmpty(vs ...string) string {
 			return strings.TrimSpace(v)
 		}
 	}
-
 	return ""
 }
 
 func sameDownloadID(a, b string) bool {
 	a = strings.ToLower(strings.TrimSpace(a))
 	b = strings.ToLower(strings.TrimSpace(b))
-
 	return a != "" && b != "" && a == b
 }
 
@@ -355,12 +301,10 @@ func dataString(data map[string]any, key string) string {
 	if data == nil {
 		return ""
 	}
-
 	v, ok := data[key]
 	if !ok || v == nil {
 		return ""
 	}
-
 	switch t := v.(type) {
 	case string:
 		return strings.TrimSpace(t)
@@ -376,7 +320,6 @@ func dataKeys(data map[string]any) []string {
 	for k := range data {
 		keys = append(keys, k)
 	}
-
 	return keys
 }
 
@@ -384,6 +327,5 @@ func firstN(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-
 	return s[:n]
 }

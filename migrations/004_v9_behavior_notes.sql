@@ -1,0 +1,5 @@
+-- V9 behavior migration placeholder.
+-- No schema changes are required.
+-- Behavior changes are controlled by config:
+--   prune_wait_for_csi_gone=false
+--   rearm_short_circuit_if_csi_visible=false

@@ -36,6 +36,11 @@ torbox:
 csi_path: /storage/media
 health_addr: ":8080"
 
+# Prune success is provider-authoritative by default. CSI/rclone can show stale paths.
+prune_wait_for_csi_gone: false
+# When false, ARCHIVED+rearm_requested always queues Decypharr even if CSI still shows the library path.
+rearm_short_circuit_if_csi_visible: false
+
 reconcile_interval_seconds: 30
 csi_wait_seconds: 300
 cache_grace_hours: 24
@@ -65,6 +70,9 @@ type Config struct {
 
 	CSIPath    string
 	HealthAddr string
+
+	PruneWaitForCSIGone           bool
+	RearmShortCircuitIfCSIVisible bool
 
 	ReconcileIntervalSeconds int
 	CSIWaitSeconds           int
@@ -111,6 +119,9 @@ type fileConfig struct {
 	CSIPath    string `yaml:"csi_path"`
 	HealthAddr string `yaml:"health_addr"`
 
+	PruneWaitForCSIGone           bool `yaml:"prune_wait_for_csi_gone"`
+	RearmShortCircuitIfCSIVisible bool `yaml:"rearm_short_circuit_if_csi_visible"`
+
 	ReconcileIntervalSeconds int  `yaml:"reconcile_interval_seconds"`
 	CSIWaitSeconds           int  `yaml:"csi_wait_seconds"`
 	CacheGraceHours          int  `yaml:"cache_grace_hours"`
@@ -152,20 +163,22 @@ func Load(configPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
-		RadarrURL:                   "http://radarr:7878",
-		SonarrURL:                   "http://sonarr:8989",
-		DecypharrURL:                "http://decypharr:8282",
-		DecypharrRadarrCategory:     "radarr",
-		DecypharrSonarrCategory:     "sonarr",
-		DecypharrDeleteFilesOnPrune: true,
-		CSIPath:                     "/storage/media",
-		HealthAddr:                  ":8080",
-		ReconcileIntervalSeconds:    30,
-		CSIWaitSeconds:              300,
-		CacheGraceHours:             24,
-		MaxRetries:                  10,
-		ConcurrentWorkers:           4,
-		DBAutoMigrate:               false,
+		RadarrURL:                     "http://radarr:7878",
+		SonarrURL:                     "http://sonarr:8989",
+		DecypharrURL:                  "http://decypharr:8282",
+		DecypharrRadarrCategory:       "radarr",
+		DecypharrSonarrCategory:       "sonarr",
+		DecypharrDeleteFilesOnPrune:   true,
+		CSIPath:                       "/storage/media",
+		HealthAddr:                    ":8080",
+		PruneWaitForCSIGone:           false,
+		RearmShortCircuitIfCSIVisible: false,
+		ReconcileIntervalSeconds:      30,
+		CSIWaitSeconds:                300,
+		CacheGraceHours:               24,
+		MaxRetries:                    10,
+		ConcurrentWorkers:             4,
+		DBAutoMigrate:                 false,
 	}
 }
 
@@ -253,6 +266,8 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.HealthAddr != "" {
 		cfg.HealthAddr = fc.HealthAddr
 	}
+	cfg.PruneWaitForCSIGone = fc.PruneWaitForCSIGone
+	cfg.RearmShortCircuitIfCSIVisible = fc.RearmShortCircuitIfCSIVisible
 	if fc.ReconcileIntervalSeconds > 0 {
 		cfg.ReconcileIntervalSeconds = fc.ReconcileIntervalSeconds
 	}
@@ -292,6 +307,8 @@ func applyEnvOverrides(cfg *Config) {
 
 	cfg.CSIPath = getenv("CSI_PATH", cfg.CSIPath)
 	cfg.HealthAddr = getenv("HEALTH_ADDR", cfg.HealthAddr)
+	cfg.PruneWaitForCSIGone = getenvBool("PRUNE_WAIT_FOR_CSI_GONE", cfg.PruneWaitForCSIGone)
+	cfg.RearmShortCircuitIfCSIVisible = getenvBool("REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE", cfg.RearmShortCircuitIfCSIVisible)
 
 	cfg.ReconcileIntervalSeconds = getenvInt("RECONCILE_INTERVAL_SECONDS", cfg.ReconcileIntervalSeconds)
 	cfg.CSIWaitSeconds = getenvInt("CSI_WAIT_SECONDS", cfg.CSIWaitSeconds)

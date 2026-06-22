@@ -24,14 +24,16 @@ type Options struct {
 	TorBox    *torbox.Client
 	CSI       *csi.Checker
 
-	RadarrCategory     string
-	SonarrCategory     string
-	DeleteFilesOnPrune bool
-	Interval           time.Duration
-	CSIWait            time.Duration
-	CacheGrace         time.Duration
-	MaxRetries         int
-	ConcurrentWorkers  int
+	RadarrCategory             string
+	SonarrCategory             string
+	DeleteFilesOnPrune         bool
+	PruneWaitForCSIGone        bool
+	RearmShortCircuitIfVisible bool
+	Interval                   time.Duration
+	CSIWait                    time.Duration
+	CacheGrace                 time.Duration
+	MaxRetries                 int
+	ConcurrentWorkers          int
 }
 
 type Controller struct {
@@ -133,14 +135,19 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		"state", item.State,
 	)
 
-	if c.opt.CSI.Exists(item.SymlinkPath) {
-		log.Info("file already visible through CSI; marking available")
+	pathVisible := c.opt.CSI.Exists(item.SymlinkPath)
+	if pathVisible && c.opt.RearmShortCircuitIfVisible {
+		log.Info("file already visible through CSI; marking available", "rearm_short_circuit_if_visible", true)
 		cachedUntil := time.Now().Add(c.opt.CacheGrace)
 		_ = c.opt.Repo.MarkAvailable(ctx, item.ID, valueOrEmpty(item.InfoHash), cachedUntil)
 		return
 	}
 
-	log.Info("file missing; rearming through Decypharr")
+	if pathVisible {
+		log.Info("CSI path is visible but rearm will still be queued because CSI visibility is not authoritative for archived cache state")
+	} else {
+		log.Info("file missing; rearming through Decypharr")
+	}
 	if err := c.opt.Repo.MarkRearming(ctx, item.ID); err != nil {
 		log.Error("failed to mark rearming", "error", err)
 		return
@@ -240,16 +247,17 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 	}
 
 	if !found {
-		if !c.opt.CSI.Exists(item.SymlinkPath) {
+		if c.opt.CSI.Exists(item.SymlinkPath) {
+			log.Warn("TorBox torrent not found but CSI path is still visible; marking archived because provider absence is authoritative")
+			_ = c.opt.Repo.Event(ctx, item.ID, "torbox_missing_csi_visible_ignored", `{}`)
+		} else {
 			log.Warn("TorBox torrent not found and CSI path is already gone; marking archived")
-			_ = c.opt.Repo.Event(ctx, item.ID, "torbox_missing_path_absent", "{}")
-			if err := c.opt.Repo.MarkArchived(ctx, item.ID); err != nil {
-				log.Error("failed to mark archived", "error", err)
-			}
-			return
+			_ = c.opt.Repo.Event(ctx, item.ID, "torbox_missing_path_absent", `{}`)
 		}
 
-		c.fail(ctx, item, fmt.Errorf("TorBox torrent not found for infohash %s but CSI path still exists", infoHash))
+		if err := c.opt.Repo.MarkArchived(ctx, item.ID); err != nil {
+			log.Error("failed to mark archived", "error", err)
+		}
 		return
 	}
 
@@ -275,9 +283,14 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "torbox_deleted", string(deleteJSON))
 
-	if ok := c.waitForCSIGone(ctx, item.SymlinkPath); !ok {
-		c.fail(ctx, item, fmt.Errorf("TorBox torrent deleted but CSI path still existed after %s", c.opt.CSIWait))
-		return
+	if c.opt.PruneWaitForCSIGone {
+		if ok := c.waitForCSIGone(ctx, item.SymlinkPath); !ok {
+			log.Warn("TorBox torrent deleted but CSI path still existed after wait; marking archived because provider delete is authoritative", "wait", c.opt.CSIWait)
+			_ = c.opt.Repo.Event(ctx, item.ID, "csi_path_still_visible_after_prune", `{}`)
+		}
+	} else if c.opt.CSI.Exists(item.SymlinkPath) {
+		log.Info("CSI path still visible after TorBox delete; marking archived because prune_wait_for_csi_gone=false")
+		_ = c.opt.Repo.Event(ctx, item.ID, "csi_path_visible_ignored_after_prune", `{}`)
 	}
 
 	if err := c.opt.Repo.MarkArchived(ctx, item.ID); err != nil {

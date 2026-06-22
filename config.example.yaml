@@ -23,6 +23,11 @@ torbox:
 csi_path: /storage/media
 health_addr: ":8080"
 
+# Provider delete is authoritative; CSI/rclone can show stale library paths after prune.
+prune_wait_for_csi_gone: false
+# When false, ARCHIVED+rearm_requested queues Decypharr even if CSI still shows the path.
+rearm_short_circuit_if_csi_visible: false
+
 reconcile_interval_seconds: 30
 csi_wait_seconds: 300
 cache_grace_hours: 24

@@ -73,6 +73,10 @@ spec:
                   key: torbox-api-key
             - name: HEALTH_ADDR
               value: ":8080"
+            - name: PRUNE_WAIT_FOR_CSI_GONE
+              value: "false"
+            - name: REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE
+              value: "false"
           volumeMounts:
             - name: rehydrator-config
               mountPath: /config

@@ -157,6 +157,16 @@ func (r *Repo) MarkAvailable(ctx context.Context, id string, infoHash string, ca
 	return err
 }
 
+func (r *Repo) SaveTorBoxTorrentID(ctx context.Context, id string, torrentID string) error {
+	_, err := r.pool.Exec(ctx, `
+        UPDATE media_cache_state
+        SET torbox_torrent_id = NULLIF($2, ''),
+            last_checked = now()
+        WHERE id = $1
+    `, id, torrentID)
+	return err
+}
+
 func (r *Repo) MarkPruning(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `
         UPDATE media_cache_state

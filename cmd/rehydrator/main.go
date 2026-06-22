@@ -15,6 +15,7 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/health"
+	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 func main() {
@@ -57,6 +58,7 @@ func main() {
 		Radarr:             arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey),
 		Sonarr:             arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey),
 		Decypharr:          decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword),
+		TorBox:             torbox.NewClient(cfg.TorBoxAPIKey),
 		CSI:                csi.NewChecker(cfg.CSIPath),
 		RadarrCategory:     cfg.DecypharrRadarrCategory,
 		SonarrCategory:     cfg.DecypharrSonarrCategory,
@@ -76,7 +78,8 @@ func main() {
 		"decypharr_url", cfg.DecypharrURL,
 		"radarr_category", cfg.DecypharrRadarrCategory,
 		"sonarr_category", cfg.DecypharrSonarrCategory,
-		"delete_files_on_prune", cfg.DecypharrDeleteFilesOnPrune,
+		"delete_path", "torbox_by_infohash",
+		"torbox_prune_enabled", cfg.TorBoxAPIKey != "",
 		"health_addr", cfg.HealthAddr,
 		"workers", cfg.ConcurrentWorkers,
 	)

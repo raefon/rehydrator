@@ -16,7 +16,7 @@ decypharr:
   sonarr_category: sonarr
   delete_files_on_prune: true
 
-# Deprecated/legacy. Decypharr is now the primary path.
+# Add/re-arm goes through Decypharr. Prune/delete goes directly to TorBox by infohash.
 torbox:
   api_key: ""
 

@@ -29,7 +29,7 @@ decypharr:
   sonarr_category: sonarr
   delete_files_on_prune: true
 
-# Deprecated/legacy. Decypharr is now the primary download-client integration.
+# Re-arm/add goes through Decypharr. Prune/delete goes directly to TorBox by infohash.
 torbox:
   api_key: ""
 
@@ -60,7 +60,7 @@ type Config struct {
 	DecypharrSonarrCategory     string
 	DecypharrDeleteFilesOnPrune bool
 
-	// Deprecated/legacy fallback only.
+	// Used for prune/dehydrate. Re-arm/add still goes through Decypharr.
 	TorBoxAPIKey string
 
 	CSIPath    string
@@ -319,6 +319,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {
 		return errors.New("DECYPHARR_PASSWORD is required when DECYPHARR_USERNAME is set")
+	}
+	if cfg.TorBoxAPIKey == "" {
+		return errors.New("TORBOX_API_KEY or torbox.api_key is required for prune/delete")
 	}
 	if cfg.CSIPath == "" {
 		return errors.New("CSI_PATH or csi_path is required")

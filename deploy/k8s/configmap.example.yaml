@@ -12,7 +12,10 @@ data:
       url: http://tenet-decypharr:8282
       radarr_category: radarr
       sonarr_category: sonarr
+      # Add/re-arm goes through Decypharr. Prune/delete goes directly to TorBox.
       delete_files_on_prune: true
+    torbox:
+      api_key: ""
     csi_path: /storage/media
     health_addr: ":8080"
     reconcile_interval_seconds: 30

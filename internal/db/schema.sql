@@ -99,3 +99,6 @@ ON media_cache_state (infohash);
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_state_tenant
 ON media_cache_state (tenant);
+
+CREATE INDEX IF NOT EXISTS idx_media_cache_state_torbox_torrent_id
+ON media_cache_state (torbox_torrent_id);

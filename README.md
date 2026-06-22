@@ -1,27 +1,36 @@
-# Rehydrator — Decypharr-first cache lifecycle controller
+# Rehydrator — Decypharr re-arm + TorBox prune cache lifecycle controller
 
 Rehydrator manages cached media lifecycle state for a tenant namespace.
 
-This version makes **Decypharr/qBittorrent API the primary re-arm and prune path**. TorBox is no longer called directly by the controller. Decypharr owns the download/debrid queue state; TorBox remains behind Decypharr.
+This version uses the split that matched the live debugging session:
+
+```text
+Re-arm/add:   Rehydrator → Decypharr qBittorrent API → Radarr/Sonarr import path
+Prune/delete: Rehydrator → TorBox API by infohash → provider cache removal
+```
+
+Decypharr remains the queue/import path because it is the download-client bridge Radarr/Sonarr understand. TorBox is used only for prune/dehydrate because it owns the cached provider object.
 
 ## Flow
 
 ```text
 Radarr/Sonarr history
 → Rehydrator resolves latest matching grabbed torrent
-→ Rehydrator queues magnet to Decypharr /api/v2/torrents/add
+→ Rehydrator queues clean BTIH magnet to Decypharr /api/v2/torrents/add
 → Decypharr talks to TorBox/debrid provider
-→ CSI-rclone/Decypharr mount exposes path
-→ Rehydrator marks AVAILABLE
+→ Radarr/Sonarr import and CSI-rclone/Decypharr mount expose path
+→ Rehydrator marks AVAILABLE and stores infohash/magnet/source_title
 → cached_until expires
-→ Rehydrator calls Decypharr /api/v2/torrents/delete by infohash
+→ Rehydrator calls TorBox /api/torrents/mylist and finds torrent by infohash
+→ Rehydrator calls TorBox /api/torrents/controltorrent operation=delete
+→ Rehydrator waits for CSI path to disappear
 → Rehydrator marks ARCHIVED
 ```
 
 ## Important design notes
 
-- Durable identity is now `infohash`, not `torbox_torrent_id`.
-- `torbox_torrent_id` remains in the DB only for compatibility with earlier prototype rows.
+- Durable identity is `infohash`.
+- `torbox_torrent_id` is optional and is filled during prune lookup when TorBox returns a matching torrent.
 - Rehydrator still does not create rows from Seerr/Radarr automatically. For current testing, seed `media_cache_state` after Radarr import or add a small Radarr seed worker later.
 - Health endpoints are included:
   - `GET /healthz` → `200 ok`
@@ -46,7 +55,12 @@ decypharr:
   password: ""
   radarr_category: radarr
   sonarr_category: sonarr
+  # Kept for compatibility with older configs. V8 prune uses TorBox instead.
   delete_files_on_prune: true
+
+# Required for prune/dehydrate.
+torbox:
+  api_key: ""
 
 csi_path: /storage/media
 health_addr: ":8080"
@@ -72,7 +86,7 @@ DECYPHARR_USERNAME=
 DECYPHARR_PASSWORD=
 DECYPHARR_RADARR_CATEGORY=radarr
 DECYPHARR_SONARR_CATEGORY=sonarr
-DECYPHARR_DELETE_FILES_ON_PRUNE=true
+TORBOX_API_KEY=
 CSI_PATH=/storage/media
 HEALTH_ADDR=:8080
 DB_AUTO_MIGRATE=true
@@ -80,17 +94,19 @@ DB_AUTO_MIGRATE=true
 
 ## DB upgrade
 
-If you already created tables from the TorBox-first prototype, either set `DB_AUTO_MIGRATE=true` or run:
+If you already created tables from an earlier prototype, either set `DB_AUTO_MIGRATE=true` or run:
 
 ```bash
 psql "$POSTGRES_URL" -f migrations/002_decypharr.sql
+psql "$POSTGRES_URL" -f migrations/003_torbox_prune.sql
 ```
 
-New columns:
+Core columns:
 
 ```sql
 infohash TEXT,
 magnet TEXT,
+torbox_torrent_id TEXT,
 download_client TEXT DEFAULT 'decypharr',
 download_category TEXT,
 arr_title TEXT,
@@ -105,7 +121,7 @@ Pause a bad row:
 UPDATE media_cache_state
 SET rearm_requested = false,
     state = 'BROKEN',
-    last_error = 'paused for Decypharr retest'
+    last_error = 'paused for v8 retest'
 WHERE tenant = 'tenet-nofear101'
   AND media_type = 'movie'
   AND arr_id = 1;
@@ -154,10 +170,13 @@ WHERE tenant = 'tenet-nofear101'
 Expected prune logs:
 
 ```text
-pruning expired Decypharr torrent
-decypharr delete torrent request ...
-prune complete; item archived
+pruning expired TorBox torrent by infohash
+torbox mylist request ...
+torbox controltorrent delete request ...
+prune complete; TorBox torrent deleted and item archived
 ```
+
+If TorBox no longer has the torrent and the CSI path is already gone, Rehydrator treats that as archived. If TorBox does not have the torrent but the CSI path still exists, it marks the row BROKEN instead of lying about dehydration.
 
 ## Build
 

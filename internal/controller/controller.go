@@ -13,6 +13,7 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/model"
+	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 type Options struct {
@@ -20,6 +21,7 @@ type Options struct {
 	Radarr    *arr.Client
 	Sonarr    *arr.Client
 	Decypharr *decypharr.Client
+	TorBox    *torbox.Client
 	CSI       *csi.Checker
 
 	RadarrCategory     string
@@ -216,28 +218,67 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 
 	infoHash := valueOrEmpty(item.InfoHash)
 	if infoHash == "" {
-		log.Warn("no infohash available; marking archived without download-client delete")
-		_ = c.opt.Repo.MarkArchived(ctx, item.ID)
+		c.fail(ctx, item, fmt.Errorf("cannot prune: missing infohash"))
 		return
 	}
 
-	log.Info("pruning expired Decypharr torrent")
+	if c.opt.TorBox == nil || !c.opt.TorBox.Configured() {
+		c.fail(ctx, item, fmt.Errorf("cannot prune: missing TorBox API key/client"))
+		return
+	}
+
+	log.Info("pruning expired TorBox torrent by infohash")
 	if err := c.opt.Repo.MarkPruning(ctx, item.ID); err != nil {
 		log.Error("failed to mark pruning", "error", err)
 		return
 	}
 
-	if err := c.opt.Decypharr.DeleteTorrent(ctx, infoHash, c.opt.DeleteFilesOnPrune); err != nil {
+	torrent, found, err := c.opt.TorBox.FindTorrentByHash(ctx, infoHash)
+	if err != nil {
+		c.fail(ctx, item, err)
+		return
+	}
+
+	if !found {
+		if !c.opt.CSI.Exists(item.SymlinkPath) {
+			log.Warn("TorBox torrent not found and CSI path is already gone; marking archived")
+			_ = c.opt.Repo.Event(ctx, item.ID, "torbox_missing_path_absent", "{}")
+			if err := c.opt.Repo.MarkArchived(ctx, item.ID); err != nil {
+				log.Error("failed to mark archived", "error", err)
+			}
+			return
+		}
+
+		c.fail(ctx, item, fmt.Errorf("TorBox torrent not found for infohash %s but CSI path still exists", infoHash))
+		return
+	}
+
+	if torrent.ID == "" {
+		c.fail(ctx, item, fmt.Errorf("TorBox torrent matched infohash %s but had no torrent ID", infoHash))
+		return
+	}
+
+	if err := c.opt.Repo.SaveTorBoxTorrentID(ctx, item.ID, torrent.ID); err != nil {
+		log.Warn("failed to save TorBox torrent ID", "error", err, "torbox_torrent_id", torrent.ID)
+	}
+
+	if err := c.opt.TorBox.DeleteTorrent(ctx, torrent.ID); err != nil {
 		c.fail(ctx, item, err)
 		return
 	}
 
 	deleteJSON, _ := json.Marshal(map[string]string{
-		"infohash":     infoHash,
-		"client":       "decypharr",
-		"delete_files": fmt.Sprintf("%t", c.opt.DeleteFilesOnPrune),
+		"infohash":          infoHash,
+		"client":            "torbox",
+		"torbox_torrent_id": torrent.ID,
+		"name":              torrent.Name,
 	})
-	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_deleted", string(deleteJSON))
+	_ = c.opt.Repo.Event(ctx, item.ID, "torbox_deleted", string(deleteJSON))
+
+	if ok := c.waitForCSIGone(ctx, item.SymlinkPath); !ok {
+		c.fail(ctx, item, fmt.Errorf("TorBox torrent deleted but CSI path still existed after %s", c.opt.CSIWait))
+		return
+	}
 
 	if err := c.opt.Repo.MarkArchived(ctx, item.ID); err != nil {
 		log.Error("failed to mark archived", "error", err)
@@ -245,7 +286,7 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 	}
 
 	_ = c.opt.Repo.Event(ctx, item.ID, "archived", "{}")
-	log.Info("prune complete; item archived")
+	log.Info("prune complete; TorBox torrent deleted and item archived", "torbox_torrent_id", torrent.ID)
 }
 
 func (c *Controller) arrClientFor(mediaType model.MediaType) (*arr.Client, error) {
@@ -284,6 +325,22 @@ func (c *Controller) waitForCSI(ctx context.Context, path string) bool {
 		}
 	}
 	return false
+}
+
+func (c *Controller) waitForCSIGone(ctx context.Context, path string) bool {
+	deadline := time.Now().Add(c.opt.CSIWait)
+	for time.Now().Before(deadline) {
+		if !c.opt.CSI.Exists(path) {
+			return true
+		}
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return !c.opt.CSI.Exists(path)
 }
 
 func (c *Controller) fail(ctx context.Context, item model.MediaCacheState, err error) {

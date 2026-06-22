@@ -66,6 +66,11 @@ spec:
                   name: rehydrator-secrets
                   key: decypharr-password
                   optional: true
+            - name: TORBOX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: torbox-api-key
             - name: HEALTH_ADDR
               value: ":8080"
           volumeMounts:

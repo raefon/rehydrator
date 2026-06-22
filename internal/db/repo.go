@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/raefon/rehydrator/internal/model"
 )
@@ -38,6 +39,7 @@ func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([
         SELECT id::text, tenant, media_type, arr_id, symlink_path, state,
                rearm_requested, cached_until, torbox_torrent_id,
                infohash, magnet, download_client, download_category, arr_title, source_title,
+               tmdb_id, tvdb_id,
                retry_count, last_checked, last_rehydrated, last_pruned, last_error
         FROM media_cache_state
         WHERE rearm_requested = true
@@ -58,6 +60,7 @@ func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCach
         SELECT id::text, tenant, media_type, arr_id, symlink_path, state,
                rearm_requested, cached_until, torbox_torrent_id,
                infohash, magnet, download_client, download_category, arr_title, source_title,
+               tmdb_id, tvdb_id,
                retry_count, last_checked, last_rehydrated, last_pruned, last_error
         FROM media_cache_state
         WHERE state = 'AVAILABLE'
@@ -90,6 +93,7 @@ const itemSelectColumns = `
     id::text, tenant, media_type, arr_id, symlink_path, state,
     rearm_requested, cached_until, torbox_torrent_id,
     infohash, magnet, download_client, download_category, arr_title, source_title,
+    tmdb_id, tvdb_id,
     retry_count, last_checked, last_rehydrated, last_pruned, last_error
 `
 
@@ -111,6 +115,8 @@ func scanItem(row itemRow) (model.MediaCacheState, error) {
 		&m.DownloadCategory,
 		&m.ArrTitle,
 		&m.SourceTitle,
+		&m.TMDBID,
+		&m.TVDBID,
 		&m.RetryCount,
 		&m.LastChecked,
 		&m.LastRehydrated,
@@ -132,20 +138,22 @@ func scanItems(rows itemRows) ([]model.MediaCacheState, error) {
 	return items, rows.Err()
 }
 
-func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int, title string, symlinkPath string, category string, cachedUntil time.Time) (model.MediaCacheState, error) {
+func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int, title string, symlinkPath string, category string, cachedUntil time.Time, tmdbID int, tvdbID int) (model.MediaCacheState, error) {
 	row := r.pool.QueryRow(ctx, `
         INSERT INTO media_cache_state (
             tenant, media_type, arr_id, symlink_path, state, rearm_requested,
-            cached_until, download_client, download_category, arr_title,
+            cached_until, download_client, download_category, arr_title, tmdb_id, tvdb_id,
             retry_count, last_error, last_checked
         )
-        VALUES ($1, 'movie', $2, $3, 'AVAILABLE', false, $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), 0, NULL, now())
+        VALUES ($1, 'movie', $2, $3, 'AVAILABLE', false, $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0), NULLIF($8, 0), 0, NULL, now())
         ON CONFLICT (tenant, media_type, arr_id)
         DO UPDATE SET
             symlink_path = EXCLUDED.symlink_path,
             download_client = 'decypharr',
             download_category = COALESCE(EXCLUDED.download_category, media_cache_state.download_category),
             arr_title = COALESCE(EXCLUDED.arr_title, media_cache_state.arr_title),
+            tmdb_id = COALESCE(EXCLUDED.tmdb_id, media_cache_state.tmdb_id),
+            tvdb_id = COALESCE(EXCLUDED.tvdb_id, media_cache_state.tvdb_id),
             state = CASE
                 WHEN media_cache_state.state = 'REQUESTED' THEN 'AVAILABLE'
                 ELSE media_cache_state.state
@@ -157,8 +165,133 @@ func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int
             END,
             last_checked = now()
         RETURNING `+itemSelectColumns+`
-    `, tenant, arrID, symlinkPath, cachedUntil, category, title)
+    `, tenant, arrID, symlinkPath, cachedUntil, category, title, tmdbID, tvdbID)
 	return scanItem(row)
+}
+
+type SeerrRequestUpsert struct {
+	Tenant     string
+	RequestKey string
+	MediaType  model.MediaType
+	TMDBID     int
+	ArrID      int
+	Title      string
+	Status     string
+	RawJSON    string
+}
+
+type SeerrRequestState struct {
+	IsNew            bool
+	RearmRequestedAt *time.Time
+}
+
+func (r *Repo) UpsertSeerrRequest(ctx context.Context, req SeerrRequestUpsert) (SeerrRequestState, error) {
+	var state SeerrRequestState
+	var existingRearmedAt *time.Time
+	err := r.pool.QueryRow(ctx, `
+        SELECT rearm_requested_at
+        FROM media_cache_seerr_requests
+        WHERE tenant = $1 AND request_key = $2
+    `, req.Tenant, req.RequestKey).Scan(&existingRearmedAt)
+	if err != nil && err != pgx.ErrNoRows {
+		return state, err
+	}
+
+	if err == pgx.ErrNoRows {
+		_, err = r.pool.Exec(ctx, `
+            INSERT INTO media_cache_seerr_requests (
+                tenant, request_key, media_type, tmdb_id, arr_id, title, status, raw
+            ) VALUES (
+                $1, $2, $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, ''), NULLIF($7, ''), COALESCE(NULLIF($8, '')::jsonb, '{}'::jsonb)
+            )
+        `, req.Tenant, req.RequestKey, req.MediaType, req.TMDBID, req.ArrID, req.Title, req.Status, req.RawJSON)
+		state.IsNew = true
+		return state, err
+	}
+
+	_, err = r.pool.Exec(ctx, `
+        UPDATE media_cache_seerr_requests
+        SET media_type = $3,
+            tmdb_id = COALESCE(NULLIF($4, 0), tmdb_id),
+            arr_id = COALESCE(NULLIF($5, 0), arr_id),
+            title = COALESCE(NULLIF($6, ''), title),
+            status = COALESCE(NULLIF($7, ''), status),
+            raw = COALESCE(NULLIF($8, '')::jsonb, raw),
+            last_seen_at = now()
+        WHERE tenant = $1 AND request_key = $2
+    `, req.Tenant, req.RequestKey, req.MediaType, req.TMDBID, req.ArrID, req.Title, req.Status, req.RawJSON)
+	state.RearmRequestedAt = existingRearmedAt
+	return state, err
+}
+
+func (r *Repo) MarkSeerrRequestRearmed(ctx context.Context, tenant string, requestKey string) error {
+	_, err := r.pool.Exec(ctx, `
+        UPDATE media_cache_seerr_requests
+        SET rearm_requested_at = now(), last_seen_at = now()
+        WHERE tenant = $1 AND request_key = $2
+    `, tenant, requestKey)
+	return err
+}
+
+func (r *Repo) RequestRearmByTMDB(ctx context.Context, tenant string, mediaType model.MediaType, tmdbID int, force bool) (model.MediaCacheState, bool, error) {
+	if tmdbID <= 0 {
+		return model.MediaCacheState{}, false, nil
+	}
+
+	statePredicate := "AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')"
+	if force {
+		statePredicate = ""
+	}
+
+	row := r.pool.QueryRow(ctx, `
+        UPDATE media_cache_state
+        SET state = 'ARCHIVED',
+            rearm_requested = true,
+            cached_until = NULL,
+            retry_count = 0,
+            last_error = NULL,
+            last_checked = now()
+        WHERE tenant = $1
+          AND media_type = $2
+          AND tmdb_id = $3
+          `+statePredicate+`
+        RETURNING `+itemSelectColumns+`
+    `, tenant, mediaType, tmdbID)
+
+	item, err := scanItem(row)
+	if err == pgx.ErrNoRows {
+		return model.MediaCacheState{}, false, nil
+	}
+	if err != nil {
+		return model.MediaCacheState{}, false, err
+	}
+	return item, true, nil
+}
+
+func (r *Repo) RequestRearmByArrIDIfArchived(ctx context.Context, tenant string, mediaType model.MediaType, arrID int) (model.MediaCacheState, bool, error) {
+	row := r.pool.QueryRow(ctx, `
+        UPDATE media_cache_state
+        SET state = 'ARCHIVED',
+            rearm_requested = true,
+            cached_until = NULL,
+            retry_count = 0,
+            last_error = NULL,
+            last_checked = now()
+        WHERE tenant = $1
+          AND media_type = $2
+          AND arr_id = $3
+          AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')
+        RETURNING `+itemSelectColumns+`
+    `, tenant, mediaType, arrID)
+
+	item, err := scanItem(row)
+	if err == pgx.ErrNoRows {
+		return model.MediaCacheState{}, false, nil
+	}
+	if err != nil {
+		return model.MediaCacheState{}, false, err
+	}
+	return item, true, nil
 }
 
 func (r *Repo) RequestRearm(ctx context.Context, tenant string, mediaType model.MediaType, arrID int) (model.MediaCacheState, error) {

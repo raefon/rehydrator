@@ -334,6 +334,7 @@ type Movie struct {
 	ID        int        `json:"id"`
 	Title     string     `json:"title"`
 	Path      string     `json:"path"`
+	TMDBID    int        `json:"tmdbId"`
 	MovieFile *MovieFile `json:"movieFile"`
 }
 

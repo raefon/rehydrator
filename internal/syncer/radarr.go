@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -85,7 +86,7 @@ func (s *RadarrSyncer) syncOnce(ctx context.Context) {
 		}
 		imported++
 
-		item, err := s.repo.UpsertImportedMovie(ctx, s.tenant, movie.ID, movie.Title, path, s.category, time.Now().Add(s.cacheGrace))
+		item, err := s.repo.UpsertImportedMovie(ctx, s.tenant, movie.ID, movie.Title, path, s.category, time.Now().Add(s.cacheGrace), movie.TMDBID, 0)
 		if err != nil {
 			slog.Warn("radarr seed sync failed to upsert movie", "movie_id", movie.ID, "title", movie.Title, "error", err)
 			continue
@@ -105,6 +106,7 @@ func (s *RadarrSyncer) syncOnce(ctx context.Context) {
 			payload, _ := json.Marshal(map[string]string{
 				"arr":          "radarr",
 				"arr_title":    movie.Title,
+				"tmdb_id":      fmt.Sprintf("%d", movie.TMDBID),
 				"infohash":     torrent.InfoHash,
 				"source_title": torrent.SourceTitle,
 				"category":     s.category,

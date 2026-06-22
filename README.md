@@ -11,9 +11,9 @@ Prune/delete: Rehydrator → TorBox API by infohash → provider cache removal
 
 Decypharr remains the queue/import path because it is the download-client bridge Radarr/Sonarr understand. TorBox is used only for prune/dehydrate because it owns the cached provider object.
 
-## v0.2.3 behavior change
+## V10 behavior change
 
-v0.2.3 keeps the v0.2.2 provider-authoritative prune behavior and adds automation scaffolding:
+V10 keeps the v9 provider-authoritative prune behavior and adds automation scaffolding:
 
 - Radarr seed/sync worker: polls Radarr movies and creates/refreshes `media_cache_state` rows for imported movies.
 - HTTP API on the existing health port:
@@ -287,3 +287,114 @@ kubectl run -n tenet-nofear101 curl-health --rm -it --restart=Never \
   --image=curlimages/curl -- \
   curl -i http://rehydrator:8080/healthz
 ```
+
+## v11: Seerr sync and webhook/API re-arm
+
+This version adds Seerr integration on top of the proven lifecycle split:
+
+- Re-arm/add: Rehydrator -> Decypharr qBittorrent-compatible API
+- Prune/delete: Rehydrator -> TorBox by infohash
+- Auto-seed: Radarr import sync
+- Auto-rearm trigger: Seerr request sync or Seerr webhook/API POST
+
+### Seerr sync worker
+
+Enable the polling worker with:
+
+```yaml
+seerr:
+  url: http://tenet-seerr:5055
+  api_key: ""
+  sync:
+    enabled: true
+    interval_seconds: 300
+    limit: 100
+```
+
+or environment variables:
+
+```bash
+SEERR_URL=http://tenet-seerr:5055
+SEERR_API_KEY=replace_me
+SEERR_SYNC_ENABLED=true
+SEERR_SYNC_INTERVAL_SECONDS=300
+SEERR_SYNC_LIMIT=100
+```
+
+The sync worker calls Seerr's `/api/v1/request` endpoint with `X-Api-Key`, records seen requests in `media_cache_seerr_requests`, and only treats a Seerr request as a one-time re-arm signal. This avoids an infinite loop where an old persistent Seerr request re-arms an item every time Rehydrator prunes it.
+
+### Seerr POST endpoints
+
+The API server now accepts Seerr-style POSTs:
+
+```bash
+POST /api/seerr/webhook
+POST /api/seerr/rearm
+POST /api/rearm/movie/tmdb/{tmdb_id}
+```
+
+`/api/seerr/webhook` is conservative by default: it only re-arms a matching row if that row is already `ARCHIVED`, `REQUESTED`, `BROKEN`, or `FAILED`.
+
+`/api/seerr/rearm` is the force endpoint: it can re-arm a matched movie even if the payload does not come from a poll-created request record.
+
+Example webhook payload:
+
+```json
+{
+  "mediaType": "movie",
+  "tmdbId": 12345,
+  "title": "Example Movie",
+  "requestId": 9001
+}
+```
+
+Example force payload:
+
+```bash
+curl -X POST http://localhost:8080/api/seerr/rearm \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{"mediaType":"movie","tmdbId":12345,"force":true}'
+```
+
+### DB migration
+
+Run this migration for existing databases:
+
+```bash
+psql "$POSTGRES_URL" -f migrations/006_seerr_sync.sql
+```
+
+The migration adds:
+
+- `media_cache_state.tmdb_id`
+- `media_cache_state.tvdb_id`
+- `media_cache_seerr_requests`
+
+### Suggested Seerr webhook template
+
+Configure Seerr's webhook notification agent to POST custom JSON to:
+
+```text
+http://tenet-rehydrator:8080/api/seerr/webhook
+```
+
+If you use an API token, set Seerr's Authorization Header to:
+
+```text
+Bearer YOUR_REHYDRATOR_API_TOKEN
+```
+
+Suggested JSON payload:
+
+```json
+{
+  "mediaType": "{{media_type}}",
+  "tmdbId": "{{media_tmdbid}}",
+  "title": "{{subject}}",
+  "event": "{{notification_type}}",
+  "requestId": "{{request_id}}"
+}
+```
+
+Variable names can differ between Seerr versions and notification events. If a variable does not render, keep the payload simple and use `tmdbId` plus `mediaType` as the primary keys.

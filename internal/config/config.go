@@ -22,6 +22,14 @@ sonarr:
   url: http://sonarr:8989
   api_key: ""
 
+seerr:
+  url: http://seerr:5055
+  api_key: ""
+  sync:
+    enabled: false
+    interval_seconds: 300
+    limit: 100
+
 decypharr:
   url: http://decypharr:8282
   username: ""
@@ -67,6 +75,14 @@ type Config struct {
 
 	SonarrURL    string
 	SonarrAPIKey string
+
+	SeerrURL    string
+	SeerrAPIKey string
+
+	SeerrSyncEnabled         bool
+	SeerrSyncIntervalSeconds int
+	SeerrSyncLimit           int
+	SeerrSyncInterval        time.Duration
 
 	DecypharrURL                string
 	DecypharrUsername           string
@@ -120,6 +136,16 @@ type fileConfig struct {
 		URL    string `yaml:"url"`
 		APIKey string `yaml:"api_key"`
 	} `yaml:"sonarr"`
+
+	Seerr struct {
+		URL    string `yaml:"url"`
+		APIKey string `yaml:"api_key"`
+		Sync   struct {
+			Enabled         *bool `yaml:"enabled"`
+			IntervalSeconds int   `yaml:"interval_seconds"`
+			Limit           int   `yaml:"limit"`
+		} `yaml:"sync"`
+	} `yaml:"seerr"`
 
 	Decypharr struct {
 		URL                string `yaml:"url"`
@@ -202,6 +228,10 @@ func defaults() Config {
 		APIEnabled:                    true,
 		RadarrSyncEnabled:             true,
 		RadarrSyncIntervalSeconds:     300,
+		SeerrURL:                      "http://seerr:5055",
+		SeerrSyncEnabled:              false,
+		SeerrSyncIntervalSeconds:      300,
+		SeerrSyncLimit:                100,
 		PruneWaitForCSIGone:           false,
 		RearmShortCircuitIfCSIVisible: false,
 		ReconcileIntervalSeconds:      30,
@@ -269,6 +299,22 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	}
 	if fc.Sonarr.APIKey != "" {
 		cfg.SonarrAPIKey = fc.Sonarr.APIKey
+	}
+
+	if fc.Seerr.URL != "" {
+		cfg.SeerrURL = fc.Seerr.URL
+	}
+	if fc.Seerr.APIKey != "" {
+		cfg.SeerrAPIKey = fc.Seerr.APIKey
+	}
+	if fc.Seerr.Sync.Enabled != nil {
+		cfg.SeerrSyncEnabled = *fc.Seerr.Sync.Enabled
+	}
+	if fc.Seerr.Sync.IntervalSeconds > 0 {
+		cfg.SeerrSyncIntervalSeconds = fc.Seerr.Sync.IntervalSeconds
+	}
+	if fc.Seerr.Sync.Limit > 0 {
+		cfg.SeerrSyncLimit = fc.Seerr.Sync.Limit
 	}
 
 	if fc.Decypharr.URL != "" {
@@ -343,6 +389,12 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.SonarrURL = getenv("SONARR_URL", cfg.SonarrURL)
 	cfg.SonarrAPIKey = getenv("SONARR_API_KEY", cfg.SonarrAPIKey)
 
+	cfg.SeerrURL = getenv("SEERR_URL", cfg.SeerrURL)
+	cfg.SeerrAPIKey = getenv("SEERR_API_KEY", cfg.SeerrAPIKey)
+	cfg.SeerrSyncEnabled = getenvBool("SEERR_SYNC_ENABLED", cfg.SeerrSyncEnabled)
+	cfg.SeerrSyncIntervalSeconds = getenvInt("SEERR_SYNC_INTERVAL_SECONDS", cfg.SeerrSyncIntervalSeconds)
+	cfg.SeerrSyncLimit = getenvInt("SEERR_SYNC_LIMIT", cfg.SeerrSyncLimit)
+
 	cfg.DecypharrURL = getenv("DECYPHARR_URL", cfg.DecypharrURL)
 	cfg.DecypharrUsername = getenv("DECYPHARR_USERNAME", cfg.DecypharrUsername)
 	cfg.DecypharrPassword = getenv("DECYPHARR_PASSWORD", cfg.DecypharrPassword)
@@ -374,6 +426,7 @@ func hydrateDurations(cfg *Config) {
 	cfg.CSIWait = time.Duration(cfg.CSIWaitSeconds) * time.Second
 	cfg.CacheGrace = time.Duration(cfg.CacheGraceHours) * time.Hour
 	cfg.RadarrSyncInterval = time.Duration(cfg.RadarrSyncIntervalSeconds) * time.Second
+	cfg.SeerrSyncInterval = time.Duration(cfg.SeerrSyncIntervalSeconds) * time.Second
 }
 
 func validate(cfg Config) error {
@@ -385,6 +438,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.RadarrURL == "" || cfg.RadarrAPIKey == "" {
 		return errors.New("RADARR_URL/RADARR_API_KEY or radarr.url/radarr.api_key are required")
+	}
+	if cfg.SeerrSyncEnabled && (cfg.SeerrURL == "" || cfg.SeerrAPIKey == "") {
+		return errors.New("SEERR_URL/SEERR_API_KEY or seerr.url/seerr.api_key are required when Seerr sync is enabled")
 	}
 	if cfg.DecypharrURL == "" {
 		return errors.New("DECYPHARR_URL or decypharr.url is required")

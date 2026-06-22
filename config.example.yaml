@@ -9,6 +9,14 @@ sonarr:
   url: http://tenet-sonarr:8989
   api_key: ""
 
+seerr:
+  url: http://tenet-seerr:5055
+  api_key: ""
+  sync:
+    enabled: false
+    interval_seconds: 300
+    limit: 100
+
 decypharr:
   url: http://tenet-decypharr:8282
   username: ""

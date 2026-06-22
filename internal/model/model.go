@@ -44,6 +44,8 @@ type MediaCacheState struct {
 	DownloadCategory *string
 	ArrTitle         *string
 	SourceTitle      *string
+	TMDBID           *int
+	TVDBID           *int
 
 	RetryCount int
 

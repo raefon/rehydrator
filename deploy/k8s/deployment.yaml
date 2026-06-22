@@ -58,6 +58,12 @@ spec:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: sonarr-api-key
+            - name: SEERR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: seerr-api-key
+                  optional: true
             - name: DECYPHARR_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -89,6 +95,14 @@ spec:
               value: "true"
             - name: RADARR_SYNC_INTERVAL_SECONDS
               value: "300"
+            - name: SEERR_URL
+              value: "http://tenet-seerr:5055"
+            - name: SEERR_SYNC_ENABLED
+              value: "false"
+            - name: SEERR_SYNC_INTERVAL_SECONDS
+              value: "300"
+            - name: SEERR_SYNC_LIMIT
+              value: "100"
             - name: PRUNE_WAIT_FOR_CSI_GONE
               value: "false"
             - name: REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE

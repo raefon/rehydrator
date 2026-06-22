@@ -15,6 +15,7 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/health"
+	"github.com/raefon/rehydrator/internal/seerr"
 	"github.com/raefon/rehydrator/internal/syncer"
 	"github.com/raefon/rehydrator/internal/torbox"
 )
@@ -58,6 +59,7 @@ func main() {
 	sonarrClient := arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey)
 	decypharrClient := decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword)
 	torboxClient := torbox.NewClient(cfg.TorBoxAPIKey)
+	seerrClient := seerr.NewClient(cfg.SeerrURL, cfg.SeerrAPIKey)
 
 	ctrl := controller.New(controller.Options{
 		Repo:                       repo,
@@ -95,6 +97,10 @@ func main() {
 		"api_enabled", cfg.APIEnabled,
 		"radarr_sync_enabled", cfg.RadarrSyncEnabled,
 		"radarr_sync_interval", cfg.RadarrSyncInterval.String(),
+		"seerr_url", cfg.SeerrURL,
+		"seerr_sync_enabled", cfg.SeerrSyncEnabled,
+		"seerr_sync_interval", cfg.SeerrSyncInterval.String(),
+		"seerr_sync_limit", cfg.SeerrSyncLimit,
 		"workers", cfg.ConcurrentWorkers,
 	)
 
@@ -121,6 +127,17 @@ func main() {
 			CacheGrace: cfg.CacheGrace,
 		})
 		go radarrSyncer.Run(ctx)
+	}
+
+	if cfg.SeerrSyncEnabled {
+		seerrSyncer := syncer.NewSeerr(syncer.SeerrOptions{
+			Repo:     repo,
+			Seerr:    seerrClient,
+			Tenant:   cfg.Tenant,
+			Interval: cfg.SeerrSyncInterval,
+			Limit:    cfg.SeerrSyncLimit,
+		})
+		go seerrSyncer.Run(ctx)
 	}
 
 	if err := ctrl.Run(ctx); err != nil {

@@ -9,6 +9,13 @@ data:
       url: http://tenet-radarr:7878
     sonarr:
       url: http://tenet-sonarr:8989
+    seerr:
+      url: http://tenet-seerr:5055
+      api_key: ""
+      sync:
+        enabled: false
+        interval_seconds: 300
+        limit: 100
     decypharr:
       url: http://tenet-decypharr:8282
       radarr_category: radarr

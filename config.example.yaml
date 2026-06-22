@@ -1,4 +1,5 @@
 postgres_url: ""
+tenant: tenet-nofear101
 
 radarr:
   url: http://tenet-radarr:7878
@@ -22,6 +23,14 @@ torbox:
 
 csi_path: /storage/media
 health_addr: ":8080"
+
+api:
+  enabled: true
+  token: ""
+
+radarr_sync:
+  enabled: true
+  interval_seconds: 300
 
 # Provider delete is authoritative; CSI/rclone can show stale library paths after prune.
 prune_wait_for_csi_gone: false

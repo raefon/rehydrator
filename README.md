@@ -11,13 +11,17 @@ Prune/delete: Rehydrator → TorBox API by infohash → provider cache removal
 
 Decypharr remains the queue/import path because it is the download-client bridge Radarr/Sonarr understand. TorBox is used only for prune/dehydrate because it owns the cached provider object.
 
-## v0.2.2 behavior change
+## v0.2.3 behavior change
 
-v0.2.2 fixes the stale CSI/rclone visibility issue found during live testing:
+v0.2.3 keeps the v0.2.2 provider-authoritative prune behavior and adds automation scaffolding:
 
-- Prune success is TorBox/provider-authoritative by default. After TorBox confirms delete, the item is marked `ARCHIVED` even if CSI still shows the old library path.
-- Re-arm does not short-circuit on CSI visibility by default. If an item is `ARCHIVED` and `rearm_requested=true`, Rehydrator queues the torrent through Decypharr even when the path still appears in the mount.
-- Old behavior can be restored with:
+- Radarr seed/sync worker: polls Radarr movies and creates/refreshes `media_cache_state` rows for imported movies.
+- HTTP API on the existing health port:
+  - `POST /api/rearm/movie/{radarr_id}` marks an item `ARCHIVED + rearm_requested=true`.
+  - `GET /api/state` returns recent state rows for the configured tenant.
+- Prune success is still TorBox/provider-authoritative by default. After TorBox confirms delete, the item is marked `ARCHIVED` even if CSI still shows the old library path.
+- Re-arm still does not short-circuit on CSI visibility by default. If an item is `ARCHIVED` and `rearm_requested=true`, Rehydrator queues the torrent through Decypharr even when the path still appears in the mount.
+- Old CSI-authoritative behavior can be restored with:
 
 ```yaml
 prune_wait_for_csi_gone: true
@@ -44,17 +48,20 @@ Radarr/Sonarr history
 
 - Durable identity is `infohash`.
 - `torbox_torrent_id` is optional and is filled during prune lookup when TorBox returns a matching torrent.
-- Rehydrator still does not create rows from Seerr/Radarr automatically. For current testing, seed `media_cache_state` after Radarr import or add a small Radarr seed worker later.
+- Rehydrator now creates/refreshes movie rows from Radarr imports when `radarr_sync.enabled=true`. It does not yet auto-trigger re-arm from Seerr/watchlist events; use the re-arm API for that.
 - Provider state is authoritative on prune. CSI/rclone can keep stale directory entries or persistent symlink paths visible after TorBox delete.
 - `ARCHIVED + rearm_requested=true` queues Decypharr by default even if CSI still shows the old library path.
 - Health endpoints are included:
   - `GET /healthz` → `200 ok`
   - `GET /readyz` → `200 ready`
+  - `POST /api/rearm/movie/{radarr_id}` → queue re-arm for a movie
+  - `GET /api/state` → list current tenant state
 
 ## Config
 
 ```yaml
 postgres_url: ""
+tenant: tenet-nofear101
 
 radarr:
   url: http://tenet-radarr:7878
@@ -80,6 +87,14 @@ torbox:
 csi_path: /storage/media
 health_addr: ":8080"
 
+api:
+  enabled: true
+  token: ""
+
+radarr_sync:
+  enabled: true
+  interval_seconds: 300
+
 # Provider delete is authoritative; CSI/rclone can show stale library paths after prune.
 prune_wait_for_csi_gone: false
 # When false, ARCHIVED+rearm_requested queues Decypharr even if CSI still shows the path.
@@ -97,6 +112,7 @@ Environment variables override file config:
 
 ```bash
 POSTGRES_URL=
+TENANT_NAME=tenet-nofear101
 RADARR_URL=
 RADARR_API_KEY=
 SONARR_URL=
@@ -109,6 +125,10 @@ DECYPHARR_SONARR_CATEGORY=sonarr
 TORBOX_API_KEY=
 CSI_PATH=/storage/media
 HEALTH_ADDR=:8080
+API_ENABLED=true
+API_TOKEN=
+RADARR_SYNC_ENABLED=true
+RADARR_SYNC_INTERVAL_SECONDS=300
 PRUNE_WAIT_FOR_CSI_GONE=false
 REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE=false
 DB_AUTO_MIGRATE=true
@@ -123,6 +143,8 @@ psql "$POSTGRES_URL" -f migrations/002_decypharr.sql
 psql "$POSTGRES_URL" -f migrations/003_torbox_prune.sql
 # Optional/no-op behavior note migration:
 psql "$POSTGRES_URL" -f migrations/004_v9_behavior_notes.sql
+# Optional/no-op v10 feature note migration:
+psql "$POSTGRES_URL" -f migrations/005_radarr_sync_api.sql
 ```
 
 Core columns:
@@ -135,6 +157,41 @@ download_client TEXT DEFAULT 'decypharr',
 download_category TEXT,
 arr_title TEXT,
 source_title TEXT
+```
+
+
+## Radarr seed sync and API trigger
+
+With `radarr_sync.enabled=true`, Rehydrator polls Radarr and upserts rows for imported movies. It does not overwrite `ARCHIVED` rows back to `AVAILABLE`; archived state remains authoritative until a re-arm trigger arrives.
+
+Check sync logs:
+
+```bash
+kubectl logs -n tenet-nofear101 deploy/tenet-rehydrator -f | grep 'radarr seed sync'
+```
+
+List state through the API:
+
+```bash
+kubectl run -n tenet-nofear101 rehydrator-api --rm -it --restart=Never \
+  --image=curlimages/curl -- \
+  curl -s http://rehydrator:8080/api/state
+```
+
+Trigger re-arm for Radarr movie ID 1:
+
+```bash
+kubectl run -n tenet-nofear101 rehydrator-rearm --rm -it --restart=Never \
+  --image=curlimages/curl -- \
+  curl -i -X POST http://rehydrator:8080/api/rearm/movie/1
+```
+
+If `api.token` / `API_TOKEN` is set, pass either header:
+
+```bash
+-H "Authorization: Bearer $API_TOKEN"
+# or
+-H "X-Rehydrator-Token: $API_TOKEN"
 ```
 
 ## Test commands

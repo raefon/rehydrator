@@ -12,6 +12,7 @@ import (
 )
 
 const DefaultConfigYAML = `postgres_url: ""
+tenant: ""
 
 radarr:
   url: http://radarr:7878
@@ -36,6 +37,14 @@ torbox:
 csi_path: /storage/media
 health_addr: ":8080"
 
+api:
+  enabled: true
+  token: ""
+
+radarr_sync:
+  enabled: true
+  interval_seconds: 300
+
 # Prune success is provider-authoritative by default. CSI/rclone can show stale paths.
 prune_wait_for_csi_gone: false
 # When false, ARCHIVED+rearm_requested always queues Decypharr even if CSI still shows the library path.
@@ -51,6 +60,7 @@ db_auto_migrate: false
 
 type Config struct {
 	PostgresURL string
+	Tenant      string
 
 	RadarrURL    string
 	RadarrAPIKey string
@@ -70,6 +80,13 @@ type Config struct {
 
 	CSIPath    string
 	HealthAddr string
+
+	APIEnabled bool
+	APIToken   string
+
+	RadarrSyncEnabled         bool
+	RadarrSyncIntervalSeconds int
+	RadarrSyncInterval        time.Duration
 
 	PruneWaitForCSIGone           bool
 	RearmShortCircuitIfCSIVisible bool
@@ -92,6 +109,7 @@ type Config struct {
 
 type fileConfig struct {
 	PostgresURL string `yaml:"postgres_url"`
+	Tenant      string `yaml:"tenant"`
 
 	Radarr struct {
 		URL    string `yaml:"url"`
@@ -118,6 +136,16 @@ type fileConfig struct {
 
 	CSIPath    string `yaml:"csi_path"`
 	HealthAddr string `yaml:"health_addr"`
+
+	API struct {
+		Enabled *bool  `yaml:"enabled"`
+		Token   string `yaml:"token"`
+	} `yaml:"api"`
+
+	RadarrSync struct {
+		Enabled         *bool `yaml:"enabled"`
+		IntervalSeconds int   `yaml:"interval_seconds"`
+	} `yaml:"radarr_sync"`
 
 	PruneWaitForCSIGone           bool `yaml:"prune_wait_for_csi_gone"`
 	RearmShortCircuitIfCSIVisible bool `yaml:"rearm_short_circuit_if_csi_visible"`
@@ -171,6 +199,9 @@ func defaults() Config {
 		DecypharrDeleteFilesOnPrune:   true,
 		CSIPath:                       "/storage/media",
 		HealthAddr:                    ":8080",
+		APIEnabled:                    true,
+		RadarrSyncEnabled:             true,
+		RadarrSyncIntervalSeconds:     300,
 		PruneWaitForCSIGone:           false,
 		RearmShortCircuitIfCSIVisible: false,
 		ReconcileIntervalSeconds:      30,
@@ -222,6 +253,9 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.PostgresURL != "" {
 		cfg.PostgresURL = fc.PostgresURL
 	}
+	if fc.Tenant != "" {
+		cfg.Tenant = fc.Tenant
+	}
 
 	if fc.Radarr.URL != "" {
 		cfg.RadarrURL = fc.Radarr.URL
@@ -266,6 +300,18 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.HealthAddr != "" {
 		cfg.HealthAddr = fc.HealthAddr
 	}
+	if fc.API.Enabled != nil {
+		cfg.APIEnabled = *fc.API.Enabled
+	}
+	if fc.API.Token != "" {
+		cfg.APIToken = fc.API.Token
+	}
+	if fc.RadarrSync.Enabled != nil {
+		cfg.RadarrSyncEnabled = *fc.RadarrSync.Enabled
+	}
+	if fc.RadarrSync.IntervalSeconds > 0 {
+		cfg.RadarrSyncIntervalSeconds = fc.RadarrSync.IntervalSeconds
+	}
 	cfg.PruneWaitForCSIGone = fc.PruneWaitForCSIGone
 	cfg.RearmShortCircuitIfCSIVisible = fc.RearmShortCircuitIfCSIVisible
 	if fc.ReconcileIntervalSeconds > 0 {
@@ -289,6 +335,7 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 
 func applyEnvOverrides(cfg *Config) {
 	cfg.PostgresURL = getenv("POSTGRES_URL", cfg.PostgresURL)
+	cfg.Tenant = getenv("TENANT", getenv("TENANT_NAME", cfg.Tenant))
 
 	cfg.RadarrURL = getenv("RADARR_URL", cfg.RadarrURL)
 	cfg.RadarrAPIKey = getenv("RADARR_API_KEY", cfg.RadarrAPIKey)
@@ -307,6 +354,10 @@ func applyEnvOverrides(cfg *Config) {
 
 	cfg.CSIPath = getenv("CSI_PATH", cfg.CSIPath)
 	cfg.HealthAddr = getenv("HEALTH_ADDR", cfg.HealthAddr)
+	cfg.APIEnabled = getenvBool("API_ENABLED", cfg.APIEnabled)
+	cfg.APIToken = getenv("API_TOKEN", cfg.APIToken)
+	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
+	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
 	cfg.PruneWaitForCSIGone = getenvBool("PRUNE_WAIT_FOR_CSI_GONE", cfg.PruneWaitForCSIGone)
 	cfg.RearmShortCircuitIfCSIVisible = getenvBool("REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE", cfg.RearmShortCircuitIfCSIVisible)
 
@@ -322,11 +373,15 @@ func hydrateDurations(cfg *Config) {
 	cfg.ReconcileInterval = time.Duration(cfg.ReconcileIntervalSeconds) * time.Second
 	cfg.CSIWait = time.Duration(cfg.CSIWaitSeconds) * time.Second
 	cfg.CacheGrace = time.Duration(cfg.CacheGraceHours) * time.Hour
+	cfg.RadarrSyncInterval = time.Duration(cfg.RadarrSyncIntervalSeconds) * time.Second
 }
 
 func validate(cfg Config) error {
 	if cfg.PostgresURL == "" {
 		return errors.New("POSTGRES_URL or postgres_url is required")
+	}
+	if cfg.Tenant == "" {
+		return errors.New("TENANT/TENANT_NAME or tenant is required")
 	}
 	if cfg.RadarrURL == "" || cfg.RadarrAPIKey == "" {
 		return errors.New("RADARR_URL/RADARR_API_KEY or radarr.url/radarr.api_key are required")

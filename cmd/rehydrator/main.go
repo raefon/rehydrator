@@ -15,6 +15,7 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/health"
+	"github.com/raefon/rehydrator/internal/syncer"
 	"github.com/raefon/rehydrator/internal/torbox"
 )
 
@@ -53,12 +54,17 @@ func main() {
 		slog.Info("database schema initialized")
 	}
 
+	radarrClient := arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey)
+	sonarrClient := arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey)
+	decypharrClient := decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword)
+	torboxClient := torbox.NewClient(cfg.TorBoxAPIKey)
+
 	ctrl := controller.New(controller.Options{
 		Repo:                       repo,
-		Radarr:                     arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey),
-		Sonarr:                     arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey),
-		Decypharr:                  decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword),
-		TorBox:                     torbox.NewClient(cfg.TorBoxAPIKey),
+		Radarr:                     radarrClient,
+		Sonarr:                     sonarrClient,
+		Decypharr:                  decypharrClient,
+		TorBox:                     torboxClient,
 		CSI:                        csi.NewChecker(cfg.CSIPath),
 		RadarrCategory:             cfg.DecypharrRadarrCategory,
 		SonarrCategory:             cfg.DecypharrSonarrCategory,
@@ -74,6 +80,7 @@ func main() {
 
 	slog.Info("rehydrator starting",
 		"config", cfg.ConfigPath,
+		"tenant", cfg.Tenant,
 		"interval", cfg.ReconcileInterval.String(),
 		"cache_grace", cfg.CacheGrace.String(),
 		"csi_path", cfg.CSIPath,
@@ -85,11 +92,36 @@ func main() {
 		"prune_wait_for_csi_gone", cfg.PruneWaitForCSIGone,
 		"rearm_short_circuit_if_csi_visible", cfg.RearmShortCircuitIfCSIVisible,
 		"health_addr", cfg.HealthAddr,
+		"api_enabled", cfg.APIEnabled,
+		"radarr_sync_enabled", cfg.RadarrSyncEnabled,
+		"radarr_sync_interval", cfg.RadarrSyncInterval.String(),
 		"workers", cfg.ConcurrentWorkers,
 	)
 
-	healthServer := health.NewServer(cfg.HealthAddr)
+	var healthServer *health.Server
+	if cfg.APIEnabled {
+		healthServer = health.NewAPIServer(health.APIOptions{
+			Addr:   cfg.HealthAddr,
+			Repo:   repo,
+			Tenant: cfg.Tenant,
+			Token:  cfg.APIToken,
+		})
+	} else {
+		healthServer = health.NewServer(cfg.HealthAddr)
+	}
 	go healthServer.Run(ctx)
+
+	if cfg.RadarrSyncEnabled {
+		radarrSyncer := syncer.NewRadarr(syncer.RadarrOptions{
+			Repo:       repo,
+			Radarr:     radarrClient,
+			Tenant:     cfg.Tenant,
+			Category:   cfg.DecypharrRadarrCategory,
+			Interval:   cfg.RadarrSyncInterval,
+			CacheGrace: cfg.CacheGrace,
+		})
+		go radarrSyncer.Run(ctx)
+	}
 
 	if err := ctrl.Run(ctx); err != nil {
 		slog.Error("controller stopped with error", "error", err)

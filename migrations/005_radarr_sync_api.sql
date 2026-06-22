@@ -1,0 +1,3 @@
+-- v10 does not require a schema change.
+-- It adds a Radarr seed/sync worker and HTTP API endpoints that use the existing
+-- media_cache_state columns added in v9.

@@ -39,6 +39,10 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           env:
+            - name: TENANT_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: POSTGRES_URL
               valueFrom:
                 secretKeyRef:
@@ -71,8 +75,20 @@ spec:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: torbox-api-key
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: api-token
+                  optional: true
             - name: HEALTH_ADDR
               value: ":8080"
+            - name: API_ENABLED
+              value: "true"
+            - name: RADARR_SYNC_ENABLED
+              value: "true"
+            - name: RADARR_SYNC_INTERVAL_SECONDS
+              value: "300"
             - name: PRUNE_WAIT_FOR_CSI_GONE
               value: "false"
             - name: REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE

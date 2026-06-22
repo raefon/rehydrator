@@ -82,37 +82,118 @@ type itemRows interface {
 	Err() error
 }
 
+type itemRow interface {
+	Scan(dest ...any) error
+}
+
+const itemSelectColumns = `
+    id::text, tenant, media_type, arr_id, symlink_path, state,
+    rearm_requested, cached_until, torbox_torrent_id,
+    infohash, magnet, download_client, download_category, arr_title, source_title,
+    retry_count, last_checked, last_rehydrated, last_pruned, last_error
+`
+
+func scanItem(row itemRow) (model.MediaCacheState, error) {
+	var m model.MediaCacheState
+	err := row.Scan(
+		&m.ID,
+		&m.Tenant,
+		&m.MediaType,
+		&m.ArrID,
+		&m.SymlinkPath,
+		&m.State,
+		&m.RearmRequested,
+		&m.CachedUntil,
+		&m.TorBoxTorrentID,
+		&m.InfoHash,
+		&m.Magnet,
+		&m.DownloadClient,
+		&m.DownloadCategory,
+		&m.ArrTitle,
+		&m.SourceTitle,
+		&m.RetryCount,
+		&m.LastChecked,
+		&m.LastRehydrated,
+		&m.LastPruned,
+		&m.LastError,
+	)
+	return m, err
+}
+
 func scanItems(rows itemRows) ([]model.MediaCacheState, error) {
 	items := make([]model.MediaCacheState, 0)
 	for rows.Next() {
-		var m model.MediaCacheState
-		if err := rows.Scan(
-			&m.ID,
-			&m.Tenant,
-			&m.MediaType,
-			&m.ArrID,
-			&m.SymlinkPath,
-			&m.State,
-			&m.RearmRequested,
-			&m.CachedUntil,
-			&m.TorBoxTorrentID,
-			&m.InfoHash,
-			&m.Magnet,
-			&m.DownloadClient,
-			&m.DownloadCategory,
-			&m.ArrTitle,
-			&m.SourceTitle,
-			&m.RetryCount,
-			&m.LastChecked,
-			&m.LastRehydrated,
-			&m.LastPruned,
-			&m.LastError,
-		); err != nil {
+		m, err := scanItem(rows)
+		if err != nil {
 			return nil, err
 		}
 		items = append(items, m)
 	}
 	return items, rows.Err()
+}
+
+func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int, title string, symlinkPath string, category string, cachedUntil time.Time) (model.MediaCacheState, error) {
+	row := r.pool.QueryRow(ctx, `
+        INSERT INTO media_cache_state (
+            tenant, media_type, arr_id, symlink_path, state, rearm_requested,
+            cached_until, download_client, download_category, arr_title,
+            retry_count, last_error, last_checked
+        )
+        VALUES ($1, 'movie', $2, $3, 'AVAILABLE', false, $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), 0, NULL, now())
+        ON CONFLICT (tenant, media_type, arr_id)
+        DO UPDATE SET
+            symlink_path = EXCLUDED.symlink_path,
+            download_client = 'decypharr',
+            download_category = COALESCE(EXCLUDED.download_category, media_cache_state.download_category),
+            arr_title = COALESCE(EXCLUDED.arr_title, media_cache_state.arr_title),
+            state = CASE
+                WHEN media_cache_state.state = 'REQUESTED' THEN 'AVAILABLE'
+                ELSE media_cache_state.state
+            END,
+            cached_until = CASE
+                WHEN media_cache_state.state IN ('REQUESTED', 'AVAILABLE', 'HOT', 'COOLING')
+                     AND media_cache_state.cached_until IS NULL THEN EXCLUDED.cached_until
+                ELSE media_cache_state.cached_until
+            END,
+            last_checked = now()
+        RETURNING `+itemSelectColumns+`
+    `, tenant, arrID, symlinkPath, cachedUntil, category, title)
+	return scanItem(row)
+}
+
+func (r *Repo) RequestRearm(ctx context.Context, tenant string, mediaType model.MediaType, arrID int) (model.MediaCacheState, error) {
+	row := r.pool.QueryRow(ctx, `
+        UPDATE media_cache_state
+        SET state = 'ARCHIVED',
+            rearm_requested = true,
+            cached_until = NULL,
+            retry_count = 0,
+            last_error = NULL,
+            last_checked = now()
+        WHERE tenant = $1
+          AND media_type = $2
+          AND arr_id = $3
+        RETURNING `+itemSelectColumns+`
+    `, tenant, mediaType, arrID)
+	return scanItem(row)
+}
+
+func (r *Repo) ListState(ctx context.Context, tenant string, limit int) ([]model.MediaCacheState, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+        SELECT `+itemSelectColumns+`
+        FROM media_cache_state
+        WHERE tenant = $1
+        ORDER BY updated_at DESC
+        LIMIT $2
+    `, tenant, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
 }
 
 func (r *Repo) MarkRearming(ctx context.Context, id string) error {

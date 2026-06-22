@@ -329,3 +329,51 @@ func firstN(s string, n int) string {
 	}
 	return s[:n]
 }
+
+type Movie struct {
+	ID        int        `json:"id"`
+	Title     string     `json:"title"`
+	Path      string     `json:"path"`
+	MovieFile *MovieFile `json:"movieFile"`
+}
+
+type MovieFile struct {
+	ID   int    `json:"id"`
+	Path string `json:"path"`
+}
+
+func (m Movie) ImportedPath() string {
+	if m.MovieFile == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.MovieFile.Path)
+}
+
+func (c *Client) Movies(ctx context.Context) ([]Movie, error) {
+	if c.base == "" || c.key == "" {
+		return nil, fmt.Errorf("%s client is not configured", c.name)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v3/movie", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.key)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := httpx.CheckStatus(resp); err != nil {
+		return nil, err
+	}
+
+	var movies []Movie
+	if err := json.NewDecoder(resp.Body).Decode(&movies); err != nil {
+		return nil, err
+	}
+
+	return movies, nil
+}

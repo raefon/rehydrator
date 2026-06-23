@@ -50,6 +50,9 @@ type MediaCacheState struct {
 	RetryCount  int
 	NextRetryAt *time.Time
 
+	LastPlayIntentAt *time.Time
+	PlayIntentCount  int
+
 	LastChecked    *time.Time
 	LastRehydrated *time.Time
 	LastPruned     *time.Time

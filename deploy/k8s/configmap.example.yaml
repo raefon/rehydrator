@@ -32,6 +32,10 @@ data:
       require_token: true
     metrics:
       enabled: true
+    playback:
+      enabled: true
+      rearm_on_play: true
+      cooldown_seconds: 300
     radarr_sync:
       enabled: true
       interval_seconds: 300

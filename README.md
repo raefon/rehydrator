@@ -448,3 +448,32 @@ curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/ref
 curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/refresh/seerr
 curl http://localhost:8080/metrics
 ```
+
+
+## v0.2.6 playback intent re-arm
+
+This version adds playback-triggered re-arm for Plex Pass native webhooks plus a generic playback endpoint.
+
+New config:
+
+```yaml
+playback:
+  enabled: true
+  rearm_on_play: true
+  cooldown_seconds: 300
+```
+
+New endpoints:
+
+```text
+POST /api/playback/plex
+POST /api/playback/event
+```
+
+Plex native webhooks can call:
+
+```text
+http://tenet-rehydrator:8080/api/playback/plex?token=<API_TOKEN>
+```
+
+When a playback-start style event matches an archived movie by TMDb ID, Rehydrator records `last_play_intent_at`, increments `play_intent_count`, and requests re-arm. Available items are recorded but ignored. See `docs/plex-playback-rearm.md` for Plex and pre-roll setup notes.

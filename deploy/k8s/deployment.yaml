@@ -94,6 +94,12 @@ spec:
               value: "true"
             - name: METRICS_ENABLED
               value: "true"
+            - name: PLAYBACK_ENABLED
+              value: "true"
+            - name: PLAYBACK_REARM_ON_PLAY
+              value: "true"
+            - name: PLAYBACK_COOLDOWN_SECONDS
+              value: "300"
             - name: RADARR_SYNC_ENABLED
               value: "true"
             - name: RADARR_SYNC_INTERVAL_SECONDS

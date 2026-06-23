@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS media_cache_state (
     retry_count INT NOT NULL DEFAULT 0,
     next_retry_at TIMESTAMPTZ,
 
+    last_play_intent_at TIMESTAMPTZ,
+    play_intent_count INT NOT NULL DEFAULT 0,
+
     last_checked TIMESTAMPTZ,
     last_rehydrated TIMESTAMPTZ,
     last_pruned TIMESTAMPTZ,
@@ -74,6 +77,10 @@ ALTER TABLE IF EXISTS media_cache_state
     ADD COLUMN IF NOT EXISTS tvdb_id INTEGER;
 ALTER TABLE IF EXISTS media_cache_state
     ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS last_play_intent_at TIMESTAMPTZ;
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS play_intent_count INT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS media_cache_seerr_requests (
     id BIGSERIAL PRIMARY KEY,
@@ -131,6 +138,9 @@ ON media_cache_state (torbox_torrent_id);
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_state_tmdb
 ON media_cache_state (tenant, media_type, tmdb_id);
+
+CREATE INDEX IF NOT EXISTS idx_media_cache_state_play_intent
+ON media_cache_state (tenant, last_play_intent_at);
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_seerr_requests_seen
 ON media_cache_seerr_requests (tenant, media_type, tmdb_id, last_seen_at);

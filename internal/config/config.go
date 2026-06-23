@@ -53,6 +53,11 @@ api:
 metrics:
   enabled: true
 
+playback:
+  enabled: true
+  rearm_on_play: true
+  cooldown_seconds: 300
+
 radarr_sync:
   enabled: true
   interval_seconds: 300
@@ -111,6 +116,11 @@ type Config struct {
 	APIRequireToken bool
 
 	MetricsEnabled bool
+
+	PlaybackEnabled         bool
+	PlaybackRearmOnPlay     bool
+	PlaybackCooldownSeconds int
+	PlaybackCooldown        time.Duration
 
 	RadarrSyncEnabled         bool
 	RadarrSyncIntervalSeconds int
@@ -189,6 +199,12 @@ type fileConfig struct {
 		Enabled *bool `yaml:"enabled"`
 	} `yaml:"metrics"`
 
+	Playback struct {
+		Enabled         *bool `yaml:"enabled"`
+		RearmOnPlay     *bool `yaml:"rearm_on_play"`
+		CooldownSeconds int   `yaml:"cooldown_seconds"`
+	} `yaml:"playback"`
+
 	RadarrSync struct {
 		Enabled         *bool `yaml:"enabled"`
 		IntervalSeconds int   `yaml:"interval_seconds"`
@@ -253,6 +269,9 @@ func defaults() Config {
 		APIEnabled:                    true,
 		APIRequireToken:               true,
 		MetricsEnabled:                true,
+		PlaybackEnabled:               true,
+		PlaybackRearmOnPlay:           true,
+		PlaybackCooldownSeconds:       300,
 		RadarrSyncEnabled:             true,
 		RadarrSyncIntervalSeconds:     300,
 		SeerrURL:                      "http://seerr:5055",
@@ -389,6 +408,15 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.Metrics.Enabled != nil {
 		cfg.MetricsEnabled = *fc.Metrics.Enabled
 	}
+	if fc.Playback.Enabled != nil {
+		cfg.PlaybackEnabled = *fc.Playback.Enabled
+	}
+	if fc.Playback.RearmOnPlay != nil {
+		cfg.PlaybackRearmOnPlay = *fc.Playback.RearmOnPlay
+	}
+	if fc.Playback.CooldownSeconds > 0 {
+		cfg.PlaybackCooldownSeconds = fc.Playback.CooldownSeconds
+	}
 	if fc.RadarrSync.Enabled != nil {
 		cfg.RadarrSyncEnabled = *fc.RadarrSync.Enabled
 	}
@@ -459,6 +487,9 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.APIToken = getenv("API_TOKEN", cfg.APIToken)
 	cfg.APIRequireToken = getenvBool("API_REQUIRE_TOKEN", cfg.APIRequireToken)
 	cfg.MetricsEnabled = getenvBool("METRICS_ENABLED", cfg.MetricsEnabled)
+	cfg.PlaybackEnabled = getenvBool("PLAYBACK_ENABLED", cfg.PlaybackEnabled)
+	cfg.PlaybackRearmOnPlay = getenvBool("PLAYBACK_REARM_ON_PLAY", cfg.PlaybackRearmOnPlay)
+	cfg.PlaybackCooldownSeconds = getenvInt("PLAYBACK_COOLDOWN_SECONDS", cfg.PlaybackCooldownSeconds)
 	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
 	cfg.PruneEnabled = getenvBool("PRUNE_ENABLED", cfg.PruneEnabled)
@@ -482,6 +513,7 @@ func hydrateDurations(cfg *Config) {
 	cfg.CacheGrace = time.Duration(cfg.CacheGraceHours) * time.Hour
 	cfg.RadarrSyncInterval = time.Duration(cfg.RadarrSyncIntervalSeconds) * time.Second
 	cfg.SeerrSyncInterval = time.Duration(cfg.SeerrSyncIntervalSeconds) * time.Second
+	cfg.PlaybackCooldown = time.Duration(cfg.PlaybackCooldownSeconds) * time.Second
 }
 
 func validate(cfg Config) error {

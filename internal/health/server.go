@@ -83,6 +83,7 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/rearm/movie/", api.handleRearmMovie)
 		mux.HandleFunc("/api/refresh/radarr", api.handleRefreshRadarr)
 		mux.HandleFunc("/api/refresh/seerr", api.handleRefreshSeerr)
+		mux.HandleFunc("/api/radarr/webhook", api.handleRadarrWebhook)
 		mux.HandleFunc("/api/seerr/webhook", api.handleSeerrWebhook)
 		mux.HandleFunc("/api/seerr/rearm", api.handleSeerrRearm)
 		mux.HandleFunc("/api/playback/plex", api.handlePlexPlayback)
@@ -153,6 +154,8 @@ func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "rehydrator_seerr_rearmed_total{tenant=%q} %d\n", h.tenant, snap.SeerrRearmed)
 	_, _ = fmt.Fprintf(w, "rehydrator_playback_intent_rows{tenant=%q} %d\n", h.tenant, snap.PlaybackIntentRows)
 	_, _ = fmt.Fprintf(w, "rehydrator_playback_intents_total{tenant=%q} %d\n", h.tenant, snap.PlaybackIntentTotal)
+	_, _ = fmt.Fprintf(w, "rehydrator_unmatched_playback_intents_total{tenant=%q} %d\n", h.tenant, snap.UnmatchedPlaybackTotal)
+	_, _ = fmt.Fprintf(w, "rehydrator_unmatched_playback_intents_open{tenant=%q} %d\n", h.tenant, snap.UnmatchedPlaybackOpen)
 	_, _ = fmt.Fprintf(w, "rehydrator_events_total{tenant=%q} %d\n", h.tenant, snap.EventsTotal)
 	states := make([]string, 0, len(snap.ItemsByState))
 	for state := range snap.ItemsByState {
@@ -274,6 +277,65 @@ func (h *apiHandler) handleRefresh(w http.ResponseWriter, r *http.Request, name 
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": name})
 }
 
+func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	defer r.Body.Close()
+	var payload map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json payload", http.StatusBadRequest)
+		return
+	}
+	raw, _ := json.Marshal(payload)
+	movie := firstMap(payload, "movie", "Movie")
+	movieFile := firstMap(payload, "movieFile", "MovieFile", "movie_file")
+	arrID := firstInt(movie, "id", "movieId", "radarrId")
+	if arrID == 0 {
+		arrID = firstInt(payload, "movieId", "radarrId", "arrId")
+	}
+	tmdbID := firstInt(movie, "tmdbId", "tmdbID")
+	if tmdbID == 0 {
+		tmdbID = firstInt(payload, "tmdbId", "tmdbID")
+	}
+	title := firstNonEmptyString(firstString(movie, "title", "name"), firstString(payload, "title", "movieTitle"))
+	eventType := firstString(payload, "eventType", "event", "type")
+	importedPath := firstNonEmptyString(firstString(movieFile, "path"), firstString(payload, "movieFilePath", "path"))
+
+	if arrID > 0 {
+		item, err := h.repo.UpsertRequestedRadarrMovie(r.Context(), h.tenant, arrID, title, tmdbID)
+		if err == nil {
+			_ = h.repo.Event(r.Context(), item.ID, "radarr_webhook_received", string(raw))
+		}
+	}
+
+	refreshed := false
+	if h.refreshRadarr != nil {
+		if err := h.refreshRadarr(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		refreshed = true
+	}
+
+	item, found, err := h.findPlaybackMatch(r.Context(), playbackIntent{MediaType: model.MediaMovie, ArrID: arrID, TMDBID: tmdbID})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if found {
+		_ = h.repo.Event(r.Context(), item.ID, "radarr_webhook_seeded", string(raw))
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "refresh": refreshed, "event": eventType, "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State, "imported_path": importedPath})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "refresh": refreshed, "event": eventType, "arr_id": arrID, "tmdb_id": tmdbID, "title": title})
+}
+
 func (h *apiHandler) handleSeerrWebhook(w http.ResponseWriter, r *http.Request) {
 	h.handleSeerrPost(w, r, false)
 }
@@ -341,6 +403,13 @@ func (h *apiHandler) handleSeerrPost(w http.ResponseWriter, r *http.Request, for
 	}
 	raw, _ := json.Marshal(payload)
 	_, _ = h.repo.UpsertSeerrRequest(r.Context(), db.SeerrRequestUpsert{Tenant: h.tenant, RequestKey: requestKey, MediaType: mediaType, TMDBID: tmdbID, ArrID: arrID, Title: title, Status: status, RawJSON: string(raw)})
+	if tmdbID > 0 {
+		placeholder, created, err := h.repo.UpsertRequestedMoviePlaceholder(r.Context(), h.tenant, tmdbID, title, status)
+		if err == nil && created {
+			_ = h.repo.Event(r.Context(), placeholder.ID, "seerr_webhook_placeholder_created", string(raw))
+			slog.Info("Seerr webhook created requested placeholder", "tenant", h.tenant, "tmdb_id", tmdbID, "arr_id", placeholder.ArrID, "title", title)
+		}
+	}
 
 	var item model.MediaCacheState
 	var matched bool
@@ -439,29 +508,48 @@ func (h *apiHandler) handlePlaybackIntent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var item model.MediaCacheState
-	var found bool
-	var err error
-	if intent.ArrID > 0 {
-		item, found, err = h.repo.GetState(r.Context(), h.tenant, intent.MediaType, intent.ArrID)
-	} else if intent.TMDBID > 0 {
-		item, found, err = h.repo.GetStateByTMDB(r.Context(), h.tenant, intent.MediaType, intent.TMDBID)
-	}
+	item, found, err := h.findPlaybackMatch(r.Context(), intent)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	refreshed := false
 	if !found {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "source": intent.Source, "event": intent.Event, "media_type": intent.MediaType, "arr_id": intent.ArrID, "tmdb_id": intent.TMDBID, "message": "playback intent accepted, but no tracked movie row matched"})
+		_ = h.repo.RecordUnmatchedPlaybackIntent(r.Context(), db.PlaybackIntentUpsert{Tenant: h.tenant, MediaType: intent.MediaType, ArrID: intent.ArrID, TMDBID: intent.TMDBID, Source: intent.Source, Event: intent.Event, Title: intent.Title, User: intent.User, RawJSON: intent.eventJSON()})
+		if h.refreshRadarr != nil {
+			if err := h.refreshRadarr(r.Context()); err != nil {
+				slog.Warn("playback unmatched Radarr refresh failed", "tenant", h.tenant, "source", intent.Source, "event", intent.Event, "tmdb_id", intent.TMDBID, "arr_id", intent.ArrID, "error", err)
+			} else {
+				refreshed = true
+				item, found, err = h.findPlaybackMatch(r.Context(), intent)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+	}
+
+	if !found {
+		slog.Info("playback intent accepted but no tracked movie matched", "tenant", h.tenant, "source", intent.Source, "event", intent.Event, "tmdb_id", intent.TMDBID, "arr_id", intent.ArrID, "title", intent.Title, "radarr_refreshed", refreshed)
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "source": intent.Source, "event": intent.Event, "media_type": intent.MediaType, "arr_id": intent.ArrID, "tmdb_id": intent.TMDBID, "radarr_refreshed": refreshed, "message": "playback intent stored; no tracked movie row matched yet"})
 		return
 	}
 
+	_ = h.repo.MarkPlaybackIntentMatched(r.Context(), h.tenant, intent.MediaType, intent.TMDBID, item.ArrID, item.ID)
 	_ = h.repo.RecordPlaybackIntent(r.Context(), item.ID)
 	_ = h.repo.Event(r.Context(), item.ID, "playback_intent_received", intent.eventJSON())
 
+	if item.ArrID < 0 || item.SymlinkPath == "" {
+		_ = h.repo.Event(r.Context(), item.ID, "playback_ignored_requested_placeholder", intent.eventJSON())
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "action": "requested_placeholder", "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State, "radarr_refreshed": refreshed})
+		return
+	}
+
 	if item.State == model.StateAvailable || item.State == model.StateHot || item.State == model.StateCooling {
 		_ = h.repo.Event(r.Context(), item.ID, "playback_ignored_available", intent.eventJSON())
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "matched": true, "action": "already_available", "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "matched": true, "action": "already_available", "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State, "radarr_refreshed": refreshed})
 		return
 	}
 
@@ -482,7 +570,17 @@ func (h *apiHandler) handlePlaybackIntent(w http.ResponseWriter, r *http.Request
 	}
 	_ = h.repo.Event(r.Context(), item.ID, "playback_rearm_requested", intent.eventJSON())
 	slog.Info("playback intent requested rearm", "tenant", h.tenant, "source", intent.Source, "event", intent.Event, "media_type", intent.MediaType, "arr_id", item.ArrID, "tmdb_id", valueInt(item.TMDBID), "title", firstNonEmptyString(intent.Title, valueString(item.ArrTitle)))
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "action": "rearm_requested", "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State, "source": intent.Source})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "action": "rearm_requested", "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State, "source": intent.Source, "radarr_refreshed": refreshed})
+}
+
+func (h *apiHandler) findPlaybackMatch(ctx context.Context, intent playbackIntent) (model.MediaCacheState, bool, error) {
+	if intent.ArrID > 0 {
+		return h.repo.GetState(ctx, h.tenant, intent.MediaType, intent.ArrID)
+	}
+	if intent.TMDBID > 0 {
+		return h.repo.GetStateByTMDB(ctx, h.tenant, intent.MediaType, intent.TMDBID)
+	}
+	return model.MediaCacheState{}, false, nil
 }
 
 func decodePlexWebhookPayload(r *http.Request) (map[string]any, string, error) {

@@ -27,7 +27,7 @@ seerr:
   api_key: ""
   sync:
     enabled: false
-    interval_seconds: 300
+    interval_seconds: 120
     limit: 100
 
 decypharr:
@@ -56,11 +56,11 @@ metrics:
 playback:
   enabled: true
   rearm_on_play: true
-  cooldown_seconds: 300
+  cooldown_seconds: 60
 
 radarr_sync:
   enabled: true
-  interval_seconds: 300
+  interval_seconds: 60
 
 prune_enabled: true
 rearm_enabled: true
@@ -72,7 +72,7 @@ prune_wait_for_csi_gone: false
 # When false, ARCHIVED+rearm_requested always queues Decypharr even if CSI still shows the library path.
 rearm_short_circuit_if_csi_visible: false
 
-reconcile_interval_seconds: 30
+reconcile_interval_seconds: 15
 csi_wait_seconds: 300
 cache_grace_hours: 24
 max_retries: 10
@@ -271,12 +271,12 @@ func defaults() Config {
 		MetricsEnabled:                true,
 		PlaybackEnabled:               true,
 		PlaybackRearmOnPlay:           true,
-		PlaybackCooldownSeconds:       300,
+		PlaybackCooldownSeconds:       60,
 		RadarrSyncEnabled:             true,
-		RadarrSyncIntervalSeconds:     300,
+		RadarrSyncIntervalSeconds:     60,
 		SeerrURL:                      "http://seerr:5055",
 		SeerrSyncEnabled:              false,
-		SeerrSyncIntervalSeconds:      300,
+		SeerrSyncIntervalSeconds:      120,
 		SeerrSyncLimit:                100,
 		PruneEnabled:                  true,
 		RearmEnabled:                  true,
@@ -284,7 +284,7 @@ func defaults() Config {
 		MaxRearmsPerRun:               25,
 		PruneWaitForCSIGone:           false,
 		RearmShortCircuitIfCSIVisible: false,
-		ReconcileIntervalSeconds:      30,
+		ReconcileIntervalSeconds:      15,
 		CSIWaitSeconds:                300,
 		CacheGraceHours:               24,
 		MaxRetries:                    10,

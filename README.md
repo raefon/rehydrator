@@ -48,7 +48,7 @@ Radarr/Sonarr history
 
 - Durable identity is `infohash`.
 - `torbox_torrent_id` is optional and is filled during prune lookup when TorBox returns a matching torrent.
-- Rehydrator now creates/refreshes movie rows from Radarr imports when `radarr_sync.enabled=true`. It does not yet auto-trigger re-arm from Seerr/watchlist events; use the re-arm API for that.
+- Rehydrator creates/refreshes movie rows from Radarr imports when `radarr_sync.enabled=true`. v0.2.7 also supports Seerr REQUESTED placeholders, Radarr Connect webhook seeding, and playback-intent matching for archived movies.
 - Provider state is authoritative on prune. CSI/rclone can keep stale directory entries or persistent symlink paths visible after TorBox delete.
 - `ARCHIVED + rearm_requested=true` queues Decypharr by default even if CSI still shows the old library path.
 - Health endpoints are included:
@@ -93,14 +93,14 @@ api:
 
 radarr_sync:
   enabled: true
-  interval_seconds: 300
+  interval_seconds: 60
 
 # Provider delete is authoritative; CSI/rclone can show stale library paths after prune.
 prune_wait_for_csi_gone: false
 # When false, ARCHIVED+rearm_requested queues Decypharr even if CSI still shows the path.
 rearm_short_circuit_if_csi_visible: false
 
-reconcile_interval_seconds: 30
+reconcile_interval_seconds: 15
 csi_wait_seconds: 300
 cache_grace_hours: 24
 max_retries: 10
@@ -128,7 +128,7 @@ HEALTH_ADDR=:8080
 API_ENABLED=true
 API_TOKEN=
 RADARR_SYNC_ENABLED=true
-RADARR_SYNC_INTERVAL_SECONDS=300
+RADARR_SYNC_INTERVAL_SECONDS=60
 PRUNE_WAIT_FOR_CSI_GONE=false
 REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE=false
 DB_AUTO_MIGRATE=true
@@ -307,7 +307,7 @@ seerr:
   api_key: ""
   sync:
     enabled: true
-    interval_seconds: 300
+    interval_seconds: 60
     limit: 100
 ```
 
@@ -477,3 +477,75 @@ http://tenet-rehydrator:8080/api/playback/plex?token=<API_TOKEN>
 ```
 
 When a playback-start style event matches an archived movie by TMDb ID, Rehydrator records `last_play_intent_at`, increments `play_intent_count`, and requests re-arm. Available items are recorded but ignored. See `docs/plex-playback-rearm.md` for Plex and pre-roll setup notes.
+
+## v0.2.7 event-driven seeding
+
+v0.2.7 closes the race where Plex playback can happen before the periodic Radarr sync has created a `media_cache_state` row.
+
+New behavior:
+
+```text
+Seerr request/webhook
+→ Rehydrator creates a REQUESTED placeholder row by TMDb ID using a temporary negative arr_id
+→ Radarr webhook or Radarr sync promotes the placeholder to the real Radarr movie ID
+→ Radarr import fills symlink_path/infohash/cached_until
+→ Plex playback webhook can attach last_play_intent_at/play_intent_count immediately when a row exists
+```
+
+If a Plex playback event still arrives before a row exists, Rehydrator now stores the unmatched playback intent, immediately triggers a Radarr refresh if configured, then tries matching again before returning.
+
+New endpoints:
+
+```http
+POST /api/radarr/webhook
+POST /api/playback/plex
+POST /api/playback/event
+```
+
+Recommended Radarr Connect webhook URL:
+
+```text
+http://tenet-rehydrator:8080/api/radarr/webhook?token=YOUR_API_TOKEN
+```
+
+Recommended Radarr Connect events:
+
+```text
+On Movie Added: yes
+On Download/Import: yes
+On Upgrade: yes
+On Rename: optional
+```
+
+New migration:
+
+```bash
+psql "$POSTGRES_URL" -f migrations/009_event_driven_seed.sql
+```
+
+New metrics:
+
+```text
+rehydrator_unmatched_playback_intents_total
+rehydrator_unmatched_playback_intents_open
+```
+
+More responsive defaults for this version:
+
+```yaml
+playback:
+  cooldown_seconds: 60
+radarr_sync:
+  interval_seconds: 60
+reconcile_interval_seconds: 15
+```
+
+For aggressive testing, you can temporarily use:
+
+```yaml
+playback:
+  cooldown_seconds: 30
+radarr_sync:
+  interval_seconds: 15
+reconcile_interval_seconds: 10
+```

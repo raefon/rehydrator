@@ -14,16 +14,18 @@ type Repo struct {
 }
 
 type MetricsSnapshot struct {
-	Tenant              string
-	ItemsByState        map[string]int64
-	SeerrRequests       int64
-	SeerrRearmed        int64
-	EventsTotal         int64
-	FailedItems         int64
-	RearmRequested      int64
-	ExpiredPruneQueued  int64
-	PlaybackIntentRows  int64
-	PlaybackIntentTotal int64
+	Tenant                 string
+	ItemsByState           map[string]int64
+	SeerrRequests          int64
+	SeerrRearmed           int64
+	EventsTotal            int64
+	FailedItems            int64
+	RearmRequested         int64
+	ExpiredPruneQueued     int64
+	PlaybackIntentRows     int64
+	PlaybackIntentTotal    int64
+	UnmatchedPlaybackTotal int64
+	UnmatchedPlaybackOpen  int64
 }
 
 func New(ctx context.Context, url string) (*Repo, error) {
@@ -183,6 +185,51 @@ func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCach
 }
 
 func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int, title string, symlinkPath string, category string, cachedUntil time.Time, tmdbID int, tvdbID int) (model.MediaCacheState, error) {
+	// If Seerr created a placeholder row before Radarr imported the movie, promote it
+	// to the real Radarr ID instead of creating a second row. Placeholder rows use a
+	// negative arr_id derived from TMDb because the historical schema requires arr_id.
+	if tmdbID > 0 && arrID > 0 {
+		row := r.pool.QueryRow(ctx, `
+            UPDATE media_cache_state m
+            SET arr_id = $2,
+                symlink_path = $3,
+                download_client = 'decypharr',
+                download_category = NULLIF($5, ''),
+                arr_title = COALESCE(NULLIF($6, ''), m.arr_title),
+                tmdb_id = NULLIF($7, 0),
+                tvdb_id = COALESCE(NULLIF($8, 0), m.tvdb_id),
+                state = CASE
+                    WHEN m.state IN ('REQUESTED', 'AVAILABLE', 'HOT', 'COOLING') THEN 'AVAILABLE'
+                    ELSE m.state
+                END,
+                cached_until = CASE
+                    WHEN m.state IN ('REQUESTED', 'AVAILABLE', 'HOT', 'COOLING')
+                         AND m.cached_until IS NULL THEN $4
+                    ELSE m.cached_until
+                END,
+                last_checked = now()
+            WHERE m.tenant = $1
+              AND m.media_type = 'movie'
+              AND m.tmdb_id = $7
+              AND m.arr_id < 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM media_cache_state existing
+                  WHERE existing.tenant = $1
+                    AND existing.media_type = 'movie'
+                    AND existing.arr_id = $2
+              )
+            RETURNING `+itemSelectColumns+`
+        `, tenant, arrID, symlinkPath, cachedUntil, category, title, tmdbID, tvdbID)
+		item, err := scanItem(row)
+		if err == nil {
+			return item, nil
+		}
+		if err != pgx.ErrNoRows {
+			return model.MediaCacheState{}, err
+		}
+	}
+
 	row := r.pool.QueryRow(ctx, `
         INSERT INTO media_cache_state (
             tenant, media_type, arr_id, symlink_path, state, rearm_requested,
@@ -210,6 +257,96 @@ func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int
             last_checked = now()
         RETURNING `+itemSelectColumns+`
     `, tenant, arrID, symlinkPath, cachedUntil, category, title, tmdbID, tvdbID)
+	return scanItem(row)
+}
+
+func placeholderArrID(tmdbID int) int {
+	if tmdbID < 0 {
+		return tmdbID
+	}
+	return -tmdbID
+}
+
+func (r *Repo) UpsertRequestedMoviePlaceholder(ctx context.Context, tenant string, tmdbID int, title string, status string) (model.MediaCacheState, bool, error) {
+	if tmdbID <= 0 {
+		return model.MediaCacheState{}, false, pgx.ErrNoRows
+	}
+	if existing, found, err := r.GetStateByTMDB(ctx, tenant, model.MediaMovie, tmdbID); err != nil {
+		return model.MediaCacheState{}, false, err
+	} else if found {
+		return existing, false, nil
+	}
+	arrID := placeholderArrID(tmdbID)
+	row := r.pool.QueryRow(ctx, `
+        INSERT INTO media_cache_state (
+            tenant, media_type, arr_id, symlink_path, state, rearm_requested,
+            cached_until, download_client, download_category, arr_title, tmdb_id,
+            retry_count, next_retry_at, last_error, last_checked
+        )
+        VALUES ($1, 'movie', $2, '', 'REQUESTED', false, NULL, 'decypharr', 'radarr', NULLIF($3, ''), $4, 0, NULL, NULL, now())
+        ON CONFLICT (tenant, media_type, arr_id)
+        DO UPDATE SET
+            arr_title = COALESCE(NULLIF($3, ''), media_cache_state.arr_title),
+            tmdb_id = COALESCE(media_cache_state.tmdb_id, $4),
+            last_checked = now()
+        RETURNING `+itemSelectColumns+`
+    `, tenant, arrID, title, tmdbID)
+	item, err := scanItem(row)
+	if err != nil {
+		return model.MediaCacheState{}, false, err
+	}
+	return item, true, nil
+}
+
+func (r *Repo) UpsertRequestedRadarrMovie(ctx context.Context, tenant string, arrID int, title string, tmdbID int) (model.MediaCacheState, error) {
+	if arrID <= 0 {
+		return model.MediaCacheState{}, pgx.ErrNoRows
+	}
+	if tmdbID > 0 {
+		row := r.pool.QueryRow(ctx, `
+            UPDATE media_cache_state m
+            SET arr_id = $2,
+                arr_title = COALESCE(NULLIF($3, ''), m.arr_title),
+                tmdb_id = $4,
+                last_checked = now()
+            WHERE m.tenant = $1
+              AND m.media_type = 'movie'
+              AND m.tmdb_id = $4
+              AND m.arr_id < 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM media_cache_state existing
+                  WHERE existing.tenant = $1
+                    AND existing.media_type = 'movie'
+                    AND existing.arr_id = $2
+              )
+            RETURNING `+itemSelectColumns+`
+        `, tenant, arrID, title, tmdbID)
+		item, err := scanItem(row)
+		if err == nil {
+			return item, nil
+		}
+		if err != pgx.ErrNoRows {
+			return model.MediaCacheState{}, err
+		}
+	}
+	row := r.pool.QueryRow(ctx, `
+        INSERT INTO media_cache_state (
+            tenant, media_type, arr_id, symlink_path, state, rearm_requested,
+            cached_until, download_client, download_category, arr_title, tmdb_id,
+            retry_count, next_retry_at, last_error, last_checked
+        ) VALUES (
+            $1, 'movie', $2, '', 'REQUESTED', false,
+            NULL, 'decypharr', 'radarr', NULLIF($3, ''), NULLIF($4, 0),
+            0, NULL, NULL, now()
+        )
+        ON CONFLICT (tenant, media_type, arr_id)
+        DO UPDATE SET
+            arr_title = COALESCE(EXCLUDED.arr_title, media_cache_state.arr_title),
+            tmdb_id = COALESCE(EXCLUDED.tmdb_id, media_cache_state.tmdb_id),
+            last_checked = now()
+        RETURNING `+itemSelectColumns+`
+    `, tenant, arrID, title, tmdbID)
 	return scanItem(row)
 }
 
@@ -335,6 +472,7 @@ func (r *Repo) RequestRearmByTMDB(ctx context.Context, tenant string, mediaType 
         WHERE tenant = $1
           AND media_type = $2
           AND tmdb_id = $3
+          AND arr_id > 0
           `+statePredicate+`
         RETURNING `+itemSelectColumns+`
     `, tenant, mediaType, tmdbID)
@@ -463,6 +601,52 @@ func (r *Repo) GetStateByTMDB(ctx context.Context, tenant string, mediaType mode
 		return model.MediaCacheState{}, false, err
 	}
 	return item, true, nil
+}
+
+type PlaybackIntentUpsert struct {
+	Tenant    string
+	MediaType model.MediaType
+	ArrID     int
+	TMDBID    int
+	Source    string
+	Event     string
+	Title     string
+	User      string
+	RawJSON   string
+}
+
+func (r *Repo) RecordUnmatchedPlaybackIntent(ctx context.Context, intent PlaybackIntentUpsert) error {
+	_, err := r.pool.Exec(ctx, `
+        INSERT INTO media_cache_playback_intents (
+            tenant, media_type, arr_id, tmdb_id, source, event, title, username, raw,
+            first_seen_at, last_seen_at, seen_count
+        ) VALUES (
+            $1, $2, NULLIF($3, 0), NULLIF($4, 0), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), COALESCE(NULLIF($9, '')::jsonb, '{}'::jsonb),
+            now(), now(), 1
+        )
+        ON CONFLICT (tenant, media_type, source, event, tmdb_id, arr_id)
+        DO UPDATE SET
+            title = COALESCE(EXCLUDED.title, media_cache_playback_intents.title),
+            username = COALESCE(EXCLUDED.username, media_cache_playback_intents.username),
+            raw = EXCLUDED.raw,
+            last_seen_at = now(),
+            seen_count = media_cache_playback_intents.seen_count + 1
+    `, intent.Tenant, intent.MediaType, intent.ArrID, intent.TMDBID, intent.Source, intent.Event, intent.Title, intent.User, intent.RawJSON)
+	return err
+}
+
+func (r *Repo) MarkPlaybackIntentMatched(ctx context.Context, tenant string, mediaType model.MediaType, tmdbID int, arrID int, mediaID string) error {
+	_, err := r.pool.Exec(ctx, `
+        UPDATE media_cache_playback_intents
+        SET matched_media_id = $5,
+            matched_at = now(),
+            last_seen_at = now()
+        WHERE tenant = $1
+          AND media_type = $2
+          AND (tmdb_id = NULLIF($3, 0) OR arr_id = NULLIF($4, 0))
+          AND matched_media_id IS NULL
+    `, tenant, mediaType, tmdbID, arrID, mediaID)
+	return err
 }
 
 func (r *Repo) RecordPlaybackIntent(ctx context.Context, id string) error {
@@ -629,5 +813,7 @@ func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, err
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state = 'AVAILABLE' AND cached_until IS NOT NULL AND cached_until < now()`, tenant).Scan(&s.ExpiredPruneQueued)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND last_play_intent_at IS NOT NULL`, tenant).Scan(&s.PlaybackIntentRows)
 	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(sum(play_intent_count), 0) FROM media_cache_state WHERE tenant = $1`, tenant).Scan(&s.PlaybackIntentTotal)
+	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(sum(seen_count), 0) FROM media_cache_playback_intents WHERE tenant = $1`, tenant).Scan(&s.UnmatchedPlaybackTotal)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_playback_intents WHERE tenant = $1 AND matched_media_id IS NULL`, tenant).Scan(&s.UnmatchedPlaybackOpen)
 	return s, nil
 }

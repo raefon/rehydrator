@@ -99,17 +99,17 @@ spec:
             - name: PLAYBACK_REARM_ON_PLAY
               value: "true"
             - name: PLAYBACK_COOLDOWN_SECONDS
-              value: "300"
+              value: "60"
             - name: RADARR_SYNC_ENABLED
               value: "true"
             - name: RADARR_SYNC_INTERVAL_SECONDS
-              value: "300"
+              value: "60"
             - name: SEERR_URL
               value: "http://tenet-seerr:5055"
             - name: SEERR_SYNC_ENABLED
               value: "false"
             - name: SEERR_SYNC_INTERVAL_SECONDS
-              value: "300"
+              value: "120"
             - name: SEERR_SYNC_LIMIT
               value: "100"
             - name: PRUNE_ENABLED

@@ -90,6 +90,20 @@ func (s *SeerrSyncer) SyncOnce(ctx context.Context) error {
 			newRequests++
 		}
 
+		placeholder, created, err := s.repo.UpsertRequestedMoviePlaceholder(ctx, s.tenant, req.TMDBID, req.Title, req.Status)
+		if err != nil {
+			slog.Warn("seerr request sync failed to create requested placeholder", "request_key", req.RequestKey, "tmdb_id", req.TMDBID, "error", err)
+		} else if created {
+			payload, _ := json.Marshal(map[string]any{
+				"request_key": req.RequestKey,
+				"tmdb_id":     req.TMDBID,
+				"title":       req.Title,
+				"source":      "seerr_sync",
+			})
+			_ = s.repo.Event(ctx, placeholder.ID, "seerr_requested_placeholder_created", string(payload))
+			slog.Info("seerr request created requested placeholder", "request_key", req.RequestKey, "tmdb_id", req.TMDBID, "arr_id", placeholder.ArrID, "title", req.Title)
+		}
+
 		// Polling is intentionally one-shot per Seerr request key. Persistent request rows
 		// should not re-arm every time Rehydrator prunes an item later.
 		if !state.IsNew || state.RearmRequestedAt != nil {

@@ -48,7 +48,7 @@ Radarr/Sonarr history
 
 - Durable identity is `infohash`.
 - `torbox_torrent_id` is optional and is filled during prune lookup when TorBox returns a matching torrent.
-- Rehydrator creates/refreshes movie rows from Radarr imports when `radarr_sync.enabled=true`. v0.2.7 also supports Seerr REQUESTED placeholders, Radarr Connect webhook seeding, and playback-intent matching for archived movies.
+- Rehydrator creates/refreshes movie rows from Radarr imports when `radarr_sync.enabled=true`. v0.2.7 supports Seerr REQUESTED placeholders, Radarr Connect webhook seeding, and playback-intent matching for archived movies. v0.2.8 filters Plex pre-roll playback events so they do not create unmatched playback noise.
 - Provider state is authoritative on prune. CSI/rclone can keep stale directory entries or persistent symlink paths visible after TorBox delete.
 - `ARCHIVED + rearm_requested=true` queues Decypharr by default even if CSI still shows the old library path.
 - Health endpoints are included:
@@ -548,4 +548,53 @@ playback:
 radarr_sync:
   interval_seconds: 15
 reconcile_interval_seconds: 10
+```
+
+## v0.2.8 pre-roll ignore patch
+
+v0.2.8 filters Plex Cinema Trailer/pre-roll playback events before unmatched playback storage and before immediate Radarr refresh.
+
+Why: Plex emits a normal `media.play` webhook for the pre-roll MP4 itself. Without filtering, Rehydrator stores noisy unmatched playback intents such as `title=rehydrator-preroll tmdb_id=0` and performs unnecessary Radarr refreshes.
+
+New config:
+
+```yaml
+playback:
+  enabled: true
+  rearm_on_play: true
+  cooldown_seconds: 60
+  ignored_titles:
+    - rehydrator-preroll
+  ignored_title_contains:
+    - preroll
+    - pre-roll
+```
+
+Equivalent env:
+
+```bash
+PLAYBACK_IGNORED_TITLES=rehydrator-preroll
+PLAYBACK_IGNORED_TITLE_CONTAINS=preroll,pre-roll
+```
+
+New migration:
+
+```bash
+psql "$POSTGRES_URL" -f migrations/010_playback_ignore_preroll.sql
+```
+
+New metric:
+
+```text
+rehydrator_playback_ignored_total
+```
+
+Ignored pre-roll behavior:
+
+```text
+Plex media.play for title rehydrator-preroll
+→ Rehydrator returns {"ignored":true,"reason":"ignored_title"}
+→ no unmatched playback row
+→ no immediate Radarr refresh
+→ no re-arm attempt
 ```

@@ -100,6 +100,10 @@ spec:
               value: "true"
             - name: PLAYBACK_COOLDOWN_SECONDS
               value: "60"
+            - name: PLAYBACK_IGNORED_TITLES
+              value: "rehydrator-preroll"
+            - name: PLAYBACK_IGNORED_TITLE_CONTAINS
+              value: "preroll,pre-roll"
             - name: RADARR_SYNC_ENABLED
               value: "true"
             - name: RADARR_SYNC_INTERVAL_SECONDS

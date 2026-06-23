@@ -108,6 +108,8 @@ func main() {
 		"playback_enabled", cfg.PlaybackEnabled,
 		"playback_rearm_on_play", cfg.PlaybackRearmOnPlay,
 		"playback_cooldown", cfg.PlaybackCooldown.String(),
+		"playback_ignored_titles", cfg.PlaybackIgnoredTitles,
+		"playback_ignored_title_contains", cfg.PlaybackIgnoredTitleContains,
 		"radarr_sync_enabled", cfg.RadarrSyncEnabled,
 		"radarr_sync_interval", cfg.RadarrSyncInterval.String(),
 		"seerr_url", cfg.SeerrURL,
@@ -153,17 +155,19 @@ func main() {
 	var healthServer *health.Server
 	if cfg.APIEnabled {
 		healthServer = health.NewAPIServer(health.APIOptions{
-			Addr:                cfg.HealthAddr,
-			Repo:                repo,
-			Tenant:              cfg.Tenant,
-			Token:               cfg.APIToken,
-			RequireToken:        cfg.APIRequireToken,
-			MetricsEnabled:      cfg.MetricsEnabled,
-			PlaybackEnabled:     cfg.PlaybackEnabled,
-			PlaybackRearmOnPlay: cfg.PlaybackRearmOnPlay,
-			PlaybackCooldown:    cfg.PlaybackCooldown,
-			RefreshRadarr:       refreshRadarr,
-			RefreshSeerr:        refreshSeerr,
+			Addr:                         cfg.HealthAddr,
+			Repo:                         repo,
+			Tenant:                       cfg.Tenant,
+			Token:                        cfg.APIToken,
+			RequireToken:                 cfg.APIRequireToken,
+			MetricsEnabled:               cfg.MetricsEnabled,
+			PlaybackEnabled:              cfg.PlaybackEnabled,
+			PlaybackRearmOnPlay:          cfg.PlaybackRearmOnPlay,
+			PlaybackCooldown:             cfg.PlaybackCooldown,
+			PlaybackIgnoredTitles:        cfg.PlaybackIgnoredTitles,
+			PlaybackIgnoredTitleContains: cfg.PlaybackIgnoredTitleContains,
+			RefreshRadarr:                refreshRadarr,
+			RefreshSeerr:                 refreshSeerr,
 		})
 	} else {
 		healthServer = health.NewServer(cfg.HealthAddr)

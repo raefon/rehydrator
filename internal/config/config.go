@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -57,6 +58,13 @@ playback:
   enabled: true
   rearm_on_play: true
   cooldown_seconds: 60
+  # Plex pre-roll itself emits media.play webhooks. Ignore it so it does not
+  # create unmatched playback rows or trigger immediate Radarr refreshes.
+  ignored_titles:
+    - rehydrator-preroll
+  ignored_title_contains:
+    - preroll
+    - pre-roll
 
 radarr_sync:
   enabled: true
@@ -117,10 +125,12 @@ type Config struct {
 
 	MetricsEnabled bool
 
-	PlaybackEnabled         bool
-	PlaybackRearmOnPlay     bool
-	PlaybackCooldownSeconds int
-	PlaybackCooldown        time.Duration
+	PlaybackEnabled              bool
+	PlaybackRearmOnPlay          bool
+	PlaybackCooldownSeconds      int
+	PlaybackCooldown             time.Duration
+	PlaybackIgnoredTitles        []string
+	PlaybackIgnoredTitleContains []string
 
 	RadarrSyncEnabled         bool
 	RadarrSyncIntervalSeconds int
@@ -200,9 +210,11 @@ type fileConfig struct {
 	} `yaml:"metrics"`
 
 	Playback struct {
-		Enabled         *bool `yaml:"enabled"`
-		RearmOnPlay     *bool `yaml:"rearm_on_play"`
-		CooldownSeconds int   `yaml:"cooldown_seconds"`
+		Enabled              *bool    `yaml:"enabled"`
+		RearmOnPlay          *bool    `yaml:"rearm_on_play"`
+		CooldownSeconds      int      `yaml:"cooldown_seconds"`
+		IgnoredTitles        []string `yaml:"ignored_titles"`
+		IgnoredTitleContains []string `yaml:"ignored_title_contains"`
 	} `yaml:"playback"`
 
 	RadarrSync struct {
@@ -272,6 +284,8 @@ func defaults() Config {
 		PlaybackEnabled:               true,
 		PlaybackRearmOnPlay:           true,
 		PlaybackCooldownSeconds:       60,
+		PlaybackIgnoredTitles:         []string{"rehydrator-preroll"},
+		PlaybackIgnoredTitleContains:  []string{"preroll", "pre-roll"},
 		RadarrSyncEnabled:             true,
 		RadarrSyncIntervalSeconds:     60,
 		SeerrURL:                      "http://seerr:5055",
@@ -417,6 +431,12 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.Playback.CooldownSeconds > 0 {
 		cfg.PlaybackCooldownSeconds = fc.Playback.CooldownSeconds
 	}
+	if len(fc.Playback.IgnoredTitles) > 0 {
+		cfg.PlaybackIgnoredTitles = normalizeStringList(fc.Playback.IgnoredTitles)
+	}
+	if len(fc.Playback.IgnoredTitleContains) > 0 {
+		cfg.PlaybackIgnoredTitleContains = normalizeStringList(fc.Playback.IgnoredTitleContains)
+	}
 	if fc.RadarrSync.Enabled != nil {
 		cfg.RadarrSyncEnabled = *fc.RadarrSync.Enabled
 	}
@@ -490,6 +510,8 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.PlaybackEnabled = getenvBool("PLAYBACK_ENABLED", cfg.PlaybackEnabled)
 	cfg.PlaybackRearmOnPlay = getenvBool("PLAYBACK_REARM_ON_PLAY", cfg.PlaybackRearmOnPlay)
 	cfg.PlaybackCooldownSeconds = getenvInt("PLAYBACK_COOLDOWN_SECONDS", cfg.PlaybackCooldownSeconds)
+	cfg.PlaybackIgnoredTitles = getenvCSV("PLAYBACK_IGNORED_TITLES", cfg.PlaybackIgnoredTitles)
+	cfg.PlaybackIgnoredTitleContains = getenvCSV("PLAYBACK_IGNORED_TITLE_CONTAINS", cfg.PlaybackIgnoredTitleContains)
 	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
 	cfg.PruneEnabled = getenvBool("PRUNE_ENABLED", cfg.PruneEnabled)
@@ -555,6 +577,32 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getenvCSV(key string, fallback []string) []string {
+	raw := os.Getenv(key)
+	if strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	parts := strings.Split(raw, ",")
+	return normalizeStringList(parts)
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, v := range values {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func getenvInt(key string, fallback int) int {

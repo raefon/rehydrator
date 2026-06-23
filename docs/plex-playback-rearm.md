@@ -62,3 +62,18 @@ curl -i -X POST \
 Plex's movie pre-roll can point at a short local MP4 that tells users the cache may be waking up. This is optional but useful because archived items may need 30-120 seconds before the second play attempt succeeds.
 
 Create a small MP4 with `scripts/create-rehydrator-preroll.sh`, mount it somewhere Plex can read, and add that file path to Plex's cinema trailer/pre-roll setting.
+
+## Pre-roll webhook filtering in v0.2.8
+
+Plex sends a separate `media.play` webhook for the pre-roll MP4 itself. If your pre-roll file is named `rehydrator-preroll.mp4`, keep the default ignore settings:
+
+```yaml
+playback:
+  ignored_titles:
+    - rehydrator-preroll
+  ignored_title_contains:
+    - preroll
+    - pre-roll
+```
+
+This prevents the pre-roll from creating unmatched playback intent rows or triggering an unnecessary Radarr refresh.

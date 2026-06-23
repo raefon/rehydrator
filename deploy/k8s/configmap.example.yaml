@@ -36,6 +36,11 @@ data:
       enabled: true
       rearm_on_play: true
       cooldown_seconds: 60
+      ignored_titles:
+        - rehydrator-preroll
+      ignored_title_contains:
+        - preroll
+        - pre-roll
     radarr_sync:
       enabled: true
       interval_seconds: 60

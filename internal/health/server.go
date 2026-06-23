@@ -22,17 +22,19 @@ type Server struct {
 }
 
 type APIOptions struct {
-	Addr                string
-	Repo                *db.Repo
-	Tenant              string
-	Token               string
-	RequireToken        bool
-	MetricsEnabled      bool
-	PlaybackEnabled     bool
-	PlaybackRearmOnPlay bool
-	PlaybackCooldown    time.Duration
-	RefreshRadarr       func(context.Context) error
-	RefreshSeerr        func(context.Context) error
+	Addr                         string
+	Repo                         *db.Repo
+	Tenant                       string
+	Token                        string
+	RequireToken                 bool
+	MetricsEnabled               bool
+	PlaybackEnabled              bool
+	PlaybackRearmOnPlay          bool
+	PlaybackCooldown             time.Duration
+	PlaybackIgnoredTitles        []string
+	PlaybackIgnoredTitleContains []string
+	RefreshRadarr                func(context.Context) error
+	RefreshSeerr                 func(context.Context) error
 }
 
 func NewServer(addr string) *Server {
@@ -65,16 +67,18 @@ func newServer(opt APIOptions) *Server {
 
 	if opt.Repo != nil {
 		api := &apiHandler{
-			repo:                opt.Repo,
-			tenant:              opt.Tenant,
-			token:               opt.Token,
-			requireToken:        opt.RequireToken,
-			metricsEnabled:      opt.MetricsEnabled,
-			playbackEnabled:     opt.PlaybackEnabled,
-			playbackRearmOnPlay: opt.PlaybackRearmOnPlay,
-			playbackCooldown:    opt.PlaybackCooldown,
-			refreshRadarr:       opt.RefreshRadarr,
-			refreshSeerr:        opt.RefreshSeerr,
+			repo:                         opt.Repo,
+			tenant:                       opt.Tenant,
+			token:                        opt.Token,
+			requireToken:                 opt.RequireToken,
+			metricsEnabled:               opt.MetricsEnabled,
+			playbackEnabled:              opt.PlaybackEnabled,
+			playbackRearmOnPlay:          opt.PlaybackRearmOnPlay,
+			playbackCooldown:             opt.PlaybackCooldown,
+			playbackIgnoredTitles:        normalizeIgnoredList(opt.PlaybackIgnoredTitles),
+			playbackIgnoredTitleContains: normalizeIgnoredList(opt.PlaybackIgnoredTitleContains),
+			refreshRadarr:                opt.RefreshRadarr,
+			refreshSeerr:                 opt.RefreshSeerr,
 		}
 		mux.HandleFunc("/metrics", api.handleMetrics)
 		mux.HandleFunc("/api/state/movie/", api.handleStateMovie)
@@ -118,16 +122,18 @@ func (s *Server) Run(ctx context.Context) {
 }
 
 type apiHandler struct {
-	repo                *db.Repo
-	tenant              string
-	token               string
-	requireToken        bool
-	metricsEnabled      bool
-	playbackEnabled     bool
-	playbackRearmOnPlay bool
-	playbackCooldown    time.Duration
-	refreshRadarr       func(context.Context) error
-	refreshSeerr        func(context.Context) error
+	repo                         *db.Repo
+	tenant                       string
+	token                        string
+	requireToken                 bool
+	metricsEnabled               bool
+	playbackEnabled              bool
+	playbackRearmOnPlay          bool
+	playbackCooldown             time.Duration
+	playbackIgnoredTitles        []string
+	playbackIgnoredTitleContains []string
+	refreshRadarr                func(context.Context) error
+	refreshSeerr                 func(context.Context) error
 }
 
 func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +162,7 @@ func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "rehydrator_playback_intents_total{tenant=%q} %d\n", h.tenant, snap.PlaybackIntentTotal)
 	_, _ = fmt.Fprintf(w, "rehydrator_unmatched_playback_intents_total{tenant=%q} %d\n", h.tenant, snap.UnmatchedPlaybackTotal)
 	_, _ = fmt.Fprintf(w, "rehydrator_unmatched_playback_intents_open{tenant=%q} %d\n", h.tenant, snap.UnmatchedPlaybackOpen)
+	_, _ = fmt.Fprintf(w, "rehydrator_playback_ignored_total{tenant=%q} %d\n", h.tenant, snap.PlaybackIgnoredTotal)
 	_, _ = fmt.Fprintf(w, "rehydrator_events_total{tenant=%q} %d\n", h.tenant, snap.EventsTotal)
 	states := make([]string, 0, len(snap.ItemsByState))
 	for state := range snap.ItemsByState {
@@ -507,6 +514,12 @@ func (h *apiHandler) handlePlaybackIntent(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "ignored": true, "message": "playback event ignored", "event": intent.Event})
 		return
 	}
+	if ignored, reason := h.isIgnoredPlaybackIntent(intent); ignored {
+		_ = h.repo.RecordIgnoredPlaybackIntent(r.Context(), db.PlaybackIgnoredIntent{Tenant: h.tenant, Source: intent.Source, Event: intent.Event, Title: intent.Title, Reason: reason, RawJSON: intent.eventJSON()})
+		slog.Debug("playback intent ignored", "tenant", h.tenant, "source", intent.Source, "event", intent.Event, "title", intent.Title, "reason", reason)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "matched": false, "ignored": true, "action": "ignored", "reason": reason, "source": intent.Source, "event": intent.Event, "title": intent.Title})
+		return
+	}
 
 	item, found, err := h.findPlaybackMatch(r.Context(), intent)
 	if err != nil {
@@ -571,6 +584,41 @@ func (h *apiHandler) handlePlaybackIntent(w http.ResponseWriter, r *http.Request
 	_ = h.repo.Event(r.Context(), item.ID, "playback_rearm_requested", intent.eventJSON())
 	slog.Info("playback intent requested rearm", "tenant", h.tenant, "source", intent.Source, "event", intent.Event, "media_type", intent.MediaType, "arr_id", item.ArrID, "tmdb_id", valueInt(item.TMDBID), "title", firstNonEmptyString(intent.Title, valueString(item.ArrTitle)))
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "action": "rearm_requested", "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State, "source": intent.Source, "radarr_refreshed": refreshed})
+}
+
+func (h *apiHandler) isIgnoredPlaybackIntent(intent playbackIntent) (bool, string) {
+	title := strings.ToLower(strings.TrimSpace(intent.Title))
+	if title == "" {
+		return false, ""
+	}
+	for _, ignored := range h.playbackIgnoredTitles {
+		if title == ignored {
+			return true, "ignored_title"
+		}
+	}
+	for _, contains := range h.playbackIgnoredTitleContains {
+		if contains != "" && strings.Contains(title, contains) {
+			return true, "ignored_title_contains"
+		}
+	}
+	return false, ""
+}
+
+func normalizeIgnoredList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, v := range values {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (h *apiHandler) findPlaybackMatch(ctx context.Context, intent playbackIntent) (model.MediaCacheState, bool, error) {

@@ -26,6 +26,7 @@ type MetricsSnapshot struct {
 	PlaybackIntentTotal    int64
 	UnmatchedPlaybackTotal int64
 	UnmatchedPlaybackOpen  int64
+	PlaybackIgnoredTotal   int64
 }
 
 func New(ctx context.Context, url string) (*Repo, error) {
@@ -635,6 +636,26 @@ func (r *Repo) RecordUnmatchedPlaybackIntent(ctx context.Context, intent Playbac
 	return err
 }
 
+type PlaybackIgnoredIntent struct {
+	Tenant  string
+	Source  string
+	Event   string
+	Title   string
+	Reason  string
+	RawJSON string
+}
+
+func (r *Repo) RecordIgnoredPlaybackIntent(ctx context.Context, intent PlaybackIgnoredIntent) error {
+	_, err := r.pool.Exec(ctx, `
+        INSERT INTO media_cache_playback_ignored (
+            tenant, source, event, title, reason, raw, created_at
+        ) VALUES (
+            $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, COALESCE(NULLIF($6, '')::jsonb, '{}'::jsonb), now()
+        )
+    `, intent.Tenant, intent.Source, intent.Event, intent.Title, intent.Reason, intent.RawJSON)
+	return err
+}
+
 func (r *Repo) MarkPlaybackIntentMatched(ctx context.Context, tenant string, mediaType model.MediaType, tmdbID int, arrID int, mediaID string) error {
 	_, err := r.pool.Exec(ctx, `
         UPDATE media_cache_playback_intents
@@ -815,5 +836,6 @@ func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, err
 	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(sum(play_intent_count), 0) FROM media_cache_state WHERE tenant = $1`, tenant).Scan(&s.PlaybackIntentTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(sum(seen_count), 0) FROM media_cache_playback_intents WHERE tenant = $1`, tenant).Scan(&s.UnmatchedPlaybackTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_playback_intents WHERE tenant = $1 AND matched_media_id IS NULL`, tenant).Scan(&s.UnmatchedPlaybackOpen)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_playback_ignored WHERE tenant = $1`, tenant).Scan(&s.PlaybackIgnoredTotal)
 	return s, nil
 }

@@ -34,7 +34,7 @@ type MediaCacheState struct {
 	RearmRequested bool
 	CachedUntil    *time.Time
 
-	// Provider-specific legacy field. New Decypharr-first flow uses InfoHash.
+	// Provider-specific legacy/debug field. Current prune flow looks this up by InfoHash.
 	TorBoxTorrentID *string
 
 	// Decypharr/qBittorrent lifecycle identity.
@@ -47,7 +47,8 @@ type MediaCacheState struct {
 	TMDBID           *int
 	TVDBID           *int
 
-	RetryCount int
+	RetryCount  int
+	NextRetryAt *time.Time
 
 	LastChecked    *time.Time
 	LastRehydrated *time.Time

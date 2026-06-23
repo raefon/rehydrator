@@ -27,6 +27,10 @@ type Options struct {
 	RadarrCategory             string
 	SonarrCategory             string
 	DeleteFilesOnPrune         bool
+	PruneEnabled               bool
+	RearmEnabled               bool
+	MaxPrunesPerRun            int
+	MaxRearmsPerRun            int
 	PruneWaitForCSIGone        bool
 	RearmShortCircuitIfVisible bool
 	Interval                   time.Duration
@@ -43,6 +47,12 @@ type Controller struct {
 func New(opt Options) *Controller {
 	if opt.ConcurrentWorkers <= 0 {
 		opt.ConcurrentWorkers = 4
+	}
+	if opt.MaxPrunesPerRun <= 0 {
+		opt.MaxPrunesPerRun = opt.ConcurrentWorkers
+	}
+	if opt.MaxRearmsPerRun <= 0 {
+		opt.MaxRearmsPerRun = opt.ConcurrentWorkers
 	}
 	if opt.Interval <= 0 {
 		opt.Interval = 30 * time.Second
@@ -82,12 +92,16 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 func (c *Controller) reconcile(ctx context.Context) {
-	c.reconcileRearms(ctx)
-	c.reconcilePrunes(ctx)
+	if c.opt.RearmEnabled {
+		c.reconcileRearms(ctx)
+	}
+	if c.opt.PruneEnabled {
+		c.reconcilePrunes(ctx)
+	}
 }
 
 func (c *Controller) reconcileRearms(ctx context.Context) {
-	items, err := c.opt.Repo.RearmWorkItems(ctx, c.opt.ConcurrentWorkers, c.opt.MaxRetries)
+	items, err := c.opt.Repo.RearmWorkItems(ctx, c.opt.MaxRearmsPerRun, c.opt.MaxRetries)
 	if err != nil {
 		slog.Error("failed to load rearm work items", "error", err)
 		return
@@ -96,7 +110,7 @@ func (c *Controller) reconcileRearms(ctx context.Context) {
 }
 
 func (c *Controller) reconcilePrunes(ctx context.Context) {
-	items, err := c.opt.Repo.PruneWorkItems(ctx, c.opt.ConcurrentWorkers)
+	items, err := c.opt.Repo.PruneWorkItems(ctx, c.opt.MaxPrunesPerRun)
 	if err != nil {
 		slog.Error("failed to load prune work items", "error", err)
 		return

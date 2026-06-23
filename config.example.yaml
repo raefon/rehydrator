@@ -34,11 +34,20 @@ health_addr: ":8080"
 
 api:
   enabled: true
-  token: ""
+  token: "replace_me"
+  require_token: true
+
+metrics:
+  enabled: true
 
 radarr_sync:
   enabled: true
   interval_seconds: 300
+
+prune_enabled: true
+rearm_enabled: true
+max_prunes_per_run: 25
+max_rearms_per_run: 25
 
 # Provider delete is authoritative; CSI/rclone can show stale library paths after prune.
 prune_wait_for_csi_gone: false

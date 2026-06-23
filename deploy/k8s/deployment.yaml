@@ -86,10 +86,13 @@ spec:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: api-token
-                  optional: true
             - name: HEALTH_ADDR
               value: ":8080"
             - name: API_ENABLED
+              value: "true"
+            - name: API_REQUIRE_TOKEN
+              value: "true"
+            - name: METRICS_ENABLED
               value: "true"
             - name: RADARR_SYNC_ENABLED
               value: "true"
@@ -103,6 +106,14 @@ spec:
               value: "300"
             - name: SEERR_SYNC_LIMIT
               value: "100"
+            - name: PRUNE_ENABLED
+              value: "true"
+            - name: REARM_ENABLED
+              value: "true"
+            - name: MAX_PRUNES_PER_RUN
+              value: "25"
+            - name: MAX_REARMS_PER_RUN
+              value: "25"
             - name: PRUNE_WAIT_FOR_CSI_GONE
               value: "false"
             - name: REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE

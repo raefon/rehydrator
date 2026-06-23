@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS media_cache_state (
     tvdb_id INTEGER,
 
     retry_count INT NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMPTZ,
 
     last_checked TIMESTAMPTZ,
     last_rehydrated TIMESTAMPTZ,
@@ -71,6 +72,8 @@ ALTER TABLE IF EXISTS media_cache_state
     ADD COLUMN IF NOT EXISTS tmdb_id INTEGER;
 ALTER TABLE IF EXISTS media_cache_state
     ADD COLUMN IF NOT EXISTS tvdb_id INTEGER;
+ALTER TABLE IF EXISTS media_cache_state
+    ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS media_cache_seerr_requests (
     id BIGSERIAL PRIMARY KEY,
@@ -112,7 +115,7 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_state_rearm_work
-ON media_cache_state (rearm_requested, state, retry_count, updated_at);
+ON media_cache_state (rearm_requested, state, retry_count, next_retry_at, updated_at);
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_state_prune_work
 ON media_cache_state (state, cached_until);

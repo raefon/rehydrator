@@ -29,9 +29,16 @@ data:
     api:
       enabled: true
       token: ""
+      require_token: true
+    metrics:
+      enabled: true
     radarr_sync:
       enabled: true
       interval_seconds: 300
+    prune_enabled: true
+    rearm_enabled: true
+    max_prunes_per_run: 25
+    max_rearms_per_run: 25
     prune_wait_for_csi_gone: false
     rearm_short_circuit_if_csi_visible: false
     reconcile_interval_seconds: 30

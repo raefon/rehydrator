@@ -48,10 +48,19 @@ health_addr: ":8080"
 api:
   enabled: true
   token: ""
+  require_token: true
+
+metrics:
+  enabled: true
 
 radarr_sync:
   enabled: true
   interval_seconds: 300
+
+prune_enabled: true
+rearm_enabled: true
+max_prunes_per_run: 25
+max_rearms_per_run: 25
 
 # Prune success is provider-authoritative by default. CSI/rclone can show stale paths.
 prune_wait_for_csi_gone: false
@@ -97,13 +106,20 @@ type Config struct {
 	CSIPath    string
 	HealthAddr string
 
-	APIEnabled bool
-	APIToken   string
+	APIEnabled      bool
+	APIToken        string
+	APIRequireToken bool
+
+	MetricsEnabled bool
 
 	RadarrSyncEnabled         bool
 	RadarrSyncIntervalSeconds int
 	RadarrSyncInterval        time.Duration
 
+	PruneEnabled                  bool
+	RearmEnabled                  bool
+	MaxPrunesPerRun               int
+	MaxRearmsPerRun               int
 	PruneWaitForCSIGone           bool
 	RearmShortCircuitIfCSIVisible bool
 
@@ -164,17 +180,26 @@ type fileConfig struct {
 	HealthAddr string `yaml:"health_addr"`
 
 	API struct {
-		Enabled *bool  `yaml:"enabled"`
-		Token   string `yaml:"token"`
+		Enabled      *bool  `yaml:"enabled"`
+		Token        string `yaml:"token"`
+		RequireToken *bool  `yaml:"require_token"`
 	} `yaml:"api"`
+
+	Metrics struct {
+		Enabled *bool `yaml:"enabled"`
+	} `yaml:"metrics"`
 
 	RadarrSync struct {
 		Enabled         *bool `yaml:"enabled"`
 		IntervalSeconds int   `yaml:"interval_seconds"`
 	} `yaml:"radarr_sync"`
 
-	PruneWaitForCSIGone           bool `yaml:"prune_wait_for_csi_gone"`
-	RearmShortCircuitIfCSIVisible bool `yaml:"rearm_short_circuit_if_csi_visible"`
+	PruneEnabled                  *bool `yaml:"prune_enabled"`
+	RearmEnabled                  *bool `yaml:"rearm_enabled"`
+	MaxPrunesPerRun               int   `yaml:"max_prunes_per_run"`
+	MaxRearmsPerRun               int   `yaml:"max_rearms_per_run"`
+	PruneWaitForCSIGone           bool  `yaml:"prune_wait_for_csi_gone"`
+	RearmShortCircuitIfCSIVisible bool  `yaml:"rearm_short_circuit_if_csi_visible"`
 
 	ReconcileIntervalSeconds int  `yaml:"reconcile_interval_seconds"`
 	CSIWaitSeconds           int  `yaml:"csi_wait_seconds"`
@@ -226,12 +251,18 @@ func defaults() Config {
 		CSIPath:                       "/storage/media",
 		HealthAddr:                    ":8080",
 		APIEnabled:                    true,
+		APIRequireToken:               true,
+		MetricsEnabled:                true,
 		RadarrSyncEnabled:             true,
 		RadarrSyncIntervalSeconds:     300,
 		SeerrURL:                      "http://seerr:5055",
 		SeerrSyncEnabled:              false,
 		SeerrSyncIntervalSeconds:      300,
 		SeerrSyncLimit:                100,
+		PruneEnabled:                  true,
+		RearmEnabled:                  true,
+		MaxPrunesPerRun:               25,
+		MaxRearmsPerRun:               25,
 		PruneWaitForCSIGone:           false,
 		RearmShortCircuitIfCSIVisible: false,
 		ReconcileIntervalSeconds:      30,
@@ -352,11 +383,29 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.API.Token != "" {
 		cfg.APIToken = fc.API.Token
 	}
+	if fc.API.RequireToken != nil {
+		cfg.APIRequireToken = *fc.API.RequireToken
+	}
+	if fc.Metrics.Enabled != nil {
+		cfg.MetricsEnabled = *fc.Metrics.Enabled
+	}
 	if fc.RadarrSync.Enabled != nil {
 		cfg.RadarrSyncEnabled = *fc.RadarrSync.Enabled
 	}
 	if fc.RadarrSync.IntervalSeconds > 0 {
 		cfg.RadarrSyncIntervalSeconds = fc.RadarrSync.IntervalSeconds
+	}
+	if fc.PruneEnabled != nil {
+		cfg.PruneEnabled = *fc.PruneEnabled
+	}
+	if fc.RearmEnabled != nil {
+		cfg.RearmEnabled = *fc.RearmEnabled
+	}
+	if fc.MaxPrunesPerRun > 0 {
+		cfg.MaxPrunesPerRun = fc.MaxPrunesPerRun
+	}
+	if fc.MaxRearmsPerRun > 0 {
+		cfg.MaxRearmsPerRun = fc.MaxRearmsPerRun
 	}
 	cfg.PruneWaitForCSIGone = fc.PruneWaitForCSIGone
 	cfg.RearmShortCircuitIfCSIVisible = fc.RearmShortCircuitIfCSIVisible
@@ -408,8 +457,14 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.HealthAddr = getenv("HEALTH_ADDR", cfg.HealthAddr)
 	cfg.APIEnabled = getenvBool("API_ENABLED", cfg.APIEnabled)
 	cfg.APIToken = getenv("API_TOKEN", cfg.APIToken)
+	cfg.APIRequireToken = getenvBool("API_REQUIRE_TOKEN", cfg.APIRequireToken)
+	cfg.MetricsEnabled = getenvBool("METRICS_ENABLED", cfg.MetricsEnabled)
 	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
+	cfg.PruneEnabled = getenvBool("PRUNE_ENABLED", cfg.PruneEnabled)
+	cfg.RearmEnabled = getenvBool("REARM_ENABLED", cfg.RearmEnabled)
+	cfg.MaxPrunesPerRun = getenvInt("MAX_PRUNES_PER_RUN", cfg.MaxPrunesPerRun)
+	cfg.MaxRearmsPerRun = getenvInt("MAX_REARMS_PER_RUN", cfg.MaxRearmsPerRun)
 	cfg.PruneWaitForCSIGone = getenvBool("PRUNE_WAIT_FOR_CSI_GONE", cfg.PruneWaitForCSIGone)
 	cfg.RearmShortCircuitIfCSIVisible = getenvBool("REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE", cfg.RearmShortCircuitIfCSIVisible)
 
@@ -456,6 +511,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.HealthAddr == "" {
 		return errors.New("HEALTH_ADDR or health_addr is required")
+	}
+	if cfg.APIEnabled && cfg.APIRequireToken && cfg.APIToken == "" {
+		return errors.New("API_TOKEN is required when API_REQUIRE_TOKEN=true")
 	}
 	return nil
 }

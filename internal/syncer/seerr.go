@@ -39,7 +39,7 @@ func NewSeerr(opt SeerrOptions) *SeerrSyncer {
 
 func (s *SeerrSyncer) Run(ctx context.Context) {
 	slog.Info("seerr request sync starting", "tenant", s.tenant, "interval", s.interval, "limit", s.limit)
-	s.syncOnce(ctx)
+	_ = s.SyncOnce(ctx)
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -50,16 +50,16 @@ func (s *SeerrSyncer) Run(ctx context.Context) {
 			slog.Info("seerr request sync stopped")
 			return
 		case <-ticker.C:
-			s.syncOnce(ctx)
+			_ = s.SyncOnce(ctx)
 		}
 	}
 }
 
-func (s *SeerrSyncer) syncOnce(ctx context.Context) {
+func (s *SeerrSyncer) SyncOnce(ctx context.Context) error {
 	requests, err := s.seerr.Requests(ctx, s.limit)
 	if err != nil {
 		slog.Error("seerr request sync failed to list requests", "error", err)
-		return
+		return err
 	}
 
 	seen := 0
@@ -122,4 +122,5 @@ func (s *SeerrSyncer) syncOnce(ctx context.Context) {
 	}
 
 	slog.Info("seerr request sync complete", "requests_seen", seen, "new_requests", newRequests, "rearm_requested", rearmRequested, "not_tracked", notTracked)
+	return nil
 }

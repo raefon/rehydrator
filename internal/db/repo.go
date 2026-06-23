@@ -13,6 +13,17 @@ type Repo struct {
 	pool *pgxpool.Pool
 }
 
+type MetricsSnapshot struct {
+	Tenant             string
+	ItemsByState       map[string]int64
+	SeerrRequests      int64
+	SeerrRearmed       int64
+	EventsTotal        int64
+	FailedItems        int64
+	RearmRequested     int64
+	ExpiredPruneQueued int64
+}
+
 func New(ctx context.Context, url string) (*Repo, error) {
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
@@ -25,68 +36,11 @@ func New(ctx context.Context, url string) (*Repo, error) {
 	return &Repo{pool: pool}, nil
 }
 
-func (r *Repo) Close() {
-	r.pool.Close()
-}
+func (r *Repo) Close() { r.pool.Close() }
 
 func (r *Repo) InitSchema(ctx context.Context) error {
 	_, err := r.pool.Exec(ctx, schemaSQL)
 	return err
-}
-
-func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([]model.MediaCacheState, error) {
-	rows, err := r.pool.Query(ctx, `
-        SELECT id::text, tenant, media_type, arr_id, symlink_path, state,
-               rearm_requested, cached_until, torbox_torrent_id,
-               infohash, magnet, download_client, download_category, arr_title, source_title,
-               tmdb_id, tvdb_id,
-               retry_count, last_checked, last_rehydrated, last_pruned, last_error
-        FROM media_cache_state
-        WHERE rearm_requested = true
-          AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')
-          AND retry_count < $1
-        ORDER BY updated_at ASC
-        LIMIT $2
-    `, maxRetries, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanItems(rows)
-}
-
-func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCacheState, error) {
-	rows, err := r.pool.Query(ctx, `
-        SELECT id::text, tenant, media_type, arr_id, symlink_path, state,
-               rearm_requested, cached_until, torbox_torrent_id,
-               infohash, magnet, download_client, download_category, arr_title, source_title,
-               tmdb_id, tvdb_id,
-               retry_count, last_checked, last_rehydrated, last_pruned, last_error
-        FROM media_cache_state
-        WHERE state = 'AVAILABLE'
-          AND rearm_requested = false
-          AND cached_until IS NOT NULL
-          AND cached_until < now()
-          AND infohash IS NOT NULL
-          AND infohash <> ''
-        ORDER BY cached_until ASC
-        LIMIT $1
-    `, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanItems(rows)
-}
-
-type itemRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
-type itemRow interface {
-	Scan(dest ...any) error
 }
 
 const itemSelectColumns = `
@@ -94,8 +48,16 @@ const itemSelectColumns = `
     rearm_requested, cached_until, torbox_torrent_id,
     infohash, magnet, download_client, download_category, arr_title, source_title,
     tmdb_id, tvdb_id,
-    retry_count, last_checked, last_rehydrated, last_pruned, last_error
+    retry_count, next_retry_at, last_checked, last_rehydrated, last_pruned, last_error
 `
+
+type itemRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+type itemRow interface{ Scan(dest ...any) error }
 
 func scanItem(row itemRow) (model.MediaCacheState, error) {
 	var m model.MediaCacheState
@@ -118,6 +80,7 @@ func scanItem(row itemRow) (model.MediaCacheState, error) {
 		&m.TMDBID,
 		&m.TVDBID,
 		&m.RetryCount,
+		&m.NextRetryAt,
 		&m.LastChecked,
 		&m.LastRehydrated,
 		&m.LastPruned,
@@ -138,14 +101,91 @@ func scanItems(rows itemRows) ([]model.MediaCacheState, error) {
 	return items, rows.Err()
 }
 
+// RearmWorkItems atomically claims re-arm work with SKIP LOCKED so multiple
+// workers/pods cannot process the same media row concurrently.
+func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([]model.MediaCacheState, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	rows, err := r.pool.Query(ctx, `
+        WITH candidates AS (
+            SELECT id
+            FROM media_cache_state
+            WHERE rearm_requested = true
+              AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')
+              AND retry_count < $1
+              AND (next_retry_at IS NULL OR next_retry_at <= now())
+            ORDER BY updated_at ASC
+            LIMIT $2
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE media_cache_state m
+        SET state = 'REARMING',
+            last_checked = now(),
+            last_error = NULL
+        FROM candidates
+        WHERE m.id = candidates.id
+        RETURNING
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state,
+            m.rearm_requested, m.cached_until, m.torbox_torrent_id,
+            m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title,
+            m.tmdb_id, m.tvdb_id,
+            m.retry_count, m.next_retry_at, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+    `, maxRetries, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
+// PruneWorkItems atomically claims prune work with SKIP LOCKED.
+func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCacheState, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	rows, err := r.pool.Query(ctx, `
+        WITH candidates AS (
+            SELECT id
+            FROM media_cache_state
+            WHERE state = 'AVAILABLE'
+              AND rearm_requested = false
+              AND cached_until IS NOT NULL
+              AND cached_until < now()
+              AND infohash IS NOT NULL
+              AND infohash <> ''
+            ORDER BY cached_until ASC
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE media_cache_state m
+        SET state = 'PRUNING',
+            last_checked = now(),
+            last_error = NULL
+        FROM candidates
+        WHERE m.id = candidates.id
+        RETURNING
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state,
+            m.rearm_requested, m.cached_until, m.torbox_torrent_id,
+            m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title,
+            m.tmdb_id, m.tvdb_id,
+            m.retry_count, m.next_retry_at, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+    `, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
 func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int, title string, symlinkPath string, category string, cachedUntil time.Time, tmdbID int, tvdbID int) (model.MediaCacheState, error) {
 	row := r.pool.QueryRow(ctx, `
         INSERT INTO media_cache_state (
             tenant, media_type, arr_id, symlink_path, state, rearm_requested,
             cached_until, download_client, download_category, arr_title, tmdb_id, tvdb_id,
-            retry_count, last_error, last_checked
+            retry_count, next_retry_at, last_error, last_checked
         )
-        VALUES ($1, 'movie', $2, $3, 'AVAILABLE', false, $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0), NULLIF($8, 0), 0, NULL, now())
+        VALUES ($1, 'movie', $2, $3, 'AVAILABLE', false, $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0), NULLIF($8, 0), 0, NULL, NULL, now())
         ON CONFLICT (tenant, media_type, arr_id)
         DO UPDATE SET
             symlink_path = EXCLUDED.symlink_path,
@@ -183,6 +223,7 @@ type SeerrRequestUpsert struct {
 type SeerrRequestState struct {
 	IsNew            bool
 	RearmRequestedAt *time.Time
+	MatchedArrID     *int
 }
 
 func (r *Repo) UpsertSeerrRequest(ctx context.Context, req SeerrRequestUpsert) (SeerrRequestState, error) {
@@ -205,23 +246,60 @@ func (r *Repo) UpsertSeerrRequest(ctx context.Context, req SeerrRequestUpsert) (
                 $1, $2, $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, ''), NULLIF($7, ''), COALESCE(NULLIF($8, '')::jsonb, '{}'::jsonb)
             )
         `, req.Tenant, req.RequestKey, req.MediaType, req.TMDBID, req.ArrID, req.Title, req.Status, req.RawJSON)
+		if err != nil {
+			return state, err
+		}
 		state.IsNew = true
-		return state, err
+	} else {
+		_, err = r.pool.Exec(ctx, `
+            UPDATE media_cache_seerr_requests
+            SET media_type = $3,
+                tmdb_id = COALESCE(NULLIF($4, 0), tmdb_id),
+                arr_id = COALESCE(NULLIF($5, 0), arr_id),
+                title = COALESCE(NULLIF($6, ''), title),
+                status = COALESCE(NULLIF($7, ''), status),
+                raw = COALESCE(NULLIF($8, '')::jsonb, raw),
+                last_seen_at = now()
+            WHERE tenant = $1 AND request_key = $2
+        `, req.Tenant, req.RequestKey, req.MediaType, req.TMDBID, req.ArrID, req.Title, req.Status, req.RawJSON)
+		if err != nil {
+			return state, err
+		}
+		state.RearmRequestedAt = existingRearmedAt
 	}
 
-	_, err = r.pool.Exec(ctx, `
-        UPDATE media_cache_seerr_requests
-        SET media_type = $3,
-            tmdb_id = COALESCE(NULLIF($4, 0), tmdb_id),
-            arr_id = COALESCE(NULLIF($5, 0), arr_id),
-            title = COALESCE(NULLIF($6, ''), title),
-            status = COALESCE(NULLIF($7, ''), status),
-            raw = COALESCE(NULLIF($8, '')::jsonb, raw),
+	matched, err := r.BackfillSeerrRequestArrID(ctx, req.Tenant, req.RequestKey)
+	if err != nil {
+		return state, err
+	}
+	state.MatchedArrID = matched
+	return state, nil
+}
+
+func (r *Repo) BackfillSeerrRequestArrID(ctx context.Context, tenant string, requestKey string) (*int, error) {
+	row := r.pool.QueryRow(ctx, `
+        UPDATE media_cache_seerr_requests sr
+        SET arr_id = m.arr_id,
             last_seen_at = now()
-        WHERE tenant = $1 AND request_key = $2
-    `, req.Tenant, req.RequestKey, req.MediaType, req.TMDBID, req.ArrID, req.Title, req.Status, req.RawJSON)
-	state.RearmRequestedAt = existingRearmedAt
-	return state, err
+        FROM media_cache_state m
+        WHERE sr.tenant = $1
+          AND sr.request_key = $2
+          AND sr.tenant = m.tenant
+          AND sr.media_type = m.media_type
+          AND sr.tmdb_id IS NOT NULL
+          AND sr.tmdb_id = m.tmdb_id
+          AND sr.arr_id IS NULL
+        RETURNING sr.arr_id
+    `, tenant, requestKey)
+	var arrID int
+	err := row.Scan(&arrID)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &arrID, nil
 }
 
 func (r *Repo) MarkSeerrRequestRearmed(ctx context.Context, tenant string, requestKey string) error {
@@ -237,18 +315,17 @@ func (r *Repo) RequestRearmByTMDB(ctx context.Context, tenant string, mediaType 
 	if tmdbID <= 0 {
 		return model.MediaCacheState{}, false, nil
 	}
-
 	statePredicate := "AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')"
 	if force {
 		statePredicate = ""
 	}
-
 	row := r.pool.QueryRow(ctx, `
         UPDATE media_cache_state
         SET state = 'ARCHIVED',
             rearm_requested = true,
             cached_until = NULL,
             retry_count = 0,
+            next_retry_at = NULL,
             last_error = NULL,
             last_checked = now()
         WHERE tenant = $1
@@ -257,7 +334,6 @@ func (r *Repo) RequestRearmByTMDB(ctx context.Context, tenant string, mediaType 
           `+statePredicate+`
         RETURNING `+itemSelectColumns+`
     `, tenant, mediaType, tmdbID)
-
 	item, err := scanItem(row)
 	if err == pgx.ErrNoRows {
 		return model.MediaCacheState{}, false, nil
@@ -275,6 +351,7 @@ func (r *Repo) RequestRearmByArrIDIfArchived(ctx context.Context, tenant string,
             rearm_requested = true,
             cached_until = NULL,
             retry_count = 0,
+            next_retry_at = NULL,
             last_error = NULL,
             last_checked = now()
         WHERE tenant = $1
@@ -283,7 +360,6 @@ func (r *Repo) RequestRearmByArrIDIfArchived(ctx context.Context, tenant string,
           AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')
         RETURNING `+itemSelectColumns+`
     `, tenant, mediaType, arrID)
-
 	item, err := scanItem(row)
 	if err == pgx.ErrNoRows {
 		return model.MediaCacheState{}, false, nil
@@ -301,6 +377,25 @@ func (r *Repo) RequestRearm(ctx context.Context, tenant string, mediaType model.
             rearm_requested = true,
             cached_until = NULL,
             retry_count = 0,
+            next_retry_at = NULL,
+            last_error = NULL,
+            last_checked = now()
+        WHERE tenant = $1
+          AND media_type = $2
+          AND arr_id = $3
+        RETURNING `+itemSelectColumns+`
+    `, tenant, mediaType, arrID)
+	return scanItem(row)
+}
+
+func (r *Repo) RequestPrune(ctx context.Context, tenant string, mediaType model.MediaType, arrID int) (model.MediaCacheState, error) {
+	row := r.pool.QueryRow(ctx, `
+        UPDATE media_cache_state
+        SET state = 'AVAILABLE',
+            rearm_requested = false,
+            cached_until = now() - interval '1 minute',
+            retry_count = 0,
+            next_retry_at = NULL,
             last_error = NULL,
             last_checked = now()
         WHERE tenant = $1
@@ -327,6 +422,22 @@ func (r *Repo) ListState(ctx context.Context, tenant string, limit int) ([]model
 	}
 	defer rows.Close()
 	return scanItems(rows)
+}
+
+func (r *Repo) GetState(ctx context.Context, tenant string, mediaType model.MediaType, arrID int) (model.MediaCacheState, bool, error) {
+	row := r.pool.QueryRow(ctx, `
+        SELECT `+itemSelectColumns+`
+        FROM media_cache_state
+        WHERE tenant = $1 AND media_type = $2 AND arr_id = $3
+    `, tenant, mediaType, arrID)
+	item, err := scanItem(row)
+	if err == pgx.ErrNoRows {
+		return model.MediaCacheState{}, false, nil
+	}
+	if err != nil {
+		return model.MediaCacheState{}, false, err
+	}
+	return item, true, nil
 }
 
 func (r *Repo) MarkRearming(ctx context.Context, id string) error {
@@ -365,6 +476,7 @@ func (r *Repo) MarkAvailable(ctx context.Context, id string, infoHash string, ca
             last_checked = now(),
             last_rehydrated = now(),
             retry_count = 0,
+            next_retry_at = NULL,
             last_error = NULL
         WHERE id = $1
     `, id, cachedUntil, infoHash)
@@ -402,6 +514,7 @@ func (r *Repo) MarkArchived(ctx context.Context, id string) error {
             last_checked = now(),
             last_pruned = now(),
             retry_count = 0,
+            next_retry_at = NULL,
             last_error = NULL
         WHERE id = $1
     `, id)
@@ -413,6 +526,10 @@ func (r *Repo) MarkFailed(ctx context.Context, id string, msg string, maxRetries
         UPDATE media_cache_state
         SET state = CASE WHEN retry_count + 1 >= $3 THEN 'FAILED' ELSE 'BROKEN' END,
             retry_count = retry_count + 1,
+            next_retry_at = CASE
+                WHEN retry_count + 1 >= $3 THEN NULL
+                ELSE now() + make_interval(secs => LEAST(3600, GREATEST(60, (POWER(2, retry_count)::int * 60))))
+            END,
             last_checked = now(),
             last_error = $2
         WHERE id = $1
@@ -426,4 +543,37 @@ func (r *Repo) Event(ctx context.Context, mediaID string, eventType string, meta
         VALUES ($1, $2, $3::jsonb)
     `, mediaID, eventType, metadata)
 	return err
+}
+
+func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, error) {
+	s := MetricsSnapshot{Tenant: tenant, ItemsByState: map[string]int64{}}
+	rows, err := r.pool.Query(ctx, `
+        SELECT state, count(*)
+        FROM media_cache_state
+        WHERE tenant = $1
+        GROUP BY state
+    `, tenant)
+	if err != nil {
+		return s, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var state string
+		var count int64
+		if err := rows.Scan(&state, &count); err != nil {
+			return s, err
+		}
+		s.ItemsByState[state] = count
+	}
+	if err := rows.Err(); err != nil {
+		return s, err
+	}
+
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_seerr_requests WHERE tenant = $1`, tenant).Scan(&s.SeerrRequests)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_seerr_requests WHERE tenant = $1 AND rearm_requested_at IS NOT NULL`, tenant).Scan(&s.SeerrRearmed)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_events e JOIN media_cache_state m ON m.id = e.media_id WHERE m.tenant = $1`, tenant).Scan(&s.EventsTotal)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state IN ('BROKEN','FAILED')`, tenant).Scan(&s.FailedItems)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND rearm_requested = true`, tenant).Scan(&s.RearmRequested)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state = 'AVAILABLE' AND cached_until IS NOT NULL AND cached_until < now()`, tenant).Scan(&s.ExpiredPruneQueued)
+	return s, nil
 }

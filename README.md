@@ -398,3 +398,53 @@ Suggested JSON payload:
 ```
 
 Variable names can differ between Seerr versions and notification events. If a variable does not render, keep the payload simple and use `tmdbId` plus `mediaType` as the primary keys.
+
+## v0.2.5 hardening release notes
+
+This release hardens the working Radarr/Seerr movie lifecycle before adding Sonarr complexity.
+
+### Added
+
+- PostgreSQL work claiming with `FOR UPDATE SKIP LOCKED` for re-arm and prune workers.
+- Exponential retry backoff via `media_cache_state.next_retry_at`.
+- Provider-authoritative prune safety controls:
+  - `PRUNE_ENABLED`
+  - `REARM_ENABLED`
+  - `MAX_PRUNES_PER_RUN`
+  - `MAX_REARMS_PER_RUN`
+- API token enforcement for `/api/*` by default:
+  - `API_REQUIRE_TOKEN=true`
+  - `API_TOKEN` is required when the API is enabled and token enforcement is on.
+- Prometheus text metrics at `/metrics`.
+- Structured state endpoint:
+  - `GET /api/state/movie/{radarr_id}`
+- Manual admin endpoints:
+  - `POST /api/prune/movie/{radarr_id}`
+  - `POST /api/prune/movie/{radarr_id}?dry_run=true`
+  - `POST /api/rearm/movie/{radarr_id}`
+  - `POST /api/refresh/radarr`
+  - `POST /api/refresh/seerr`
+- Seerr request audit rows now backfill `arr_id` when TMDb matches a tracked Radarr movie.
+
+### Migration
+
+Run:
+
+```bash
+psql "$POSTGRES_URL" -f migrations/007_hardening_api_metrics.sql
+```
+
+or use `DB_AUTO_MIGRATE=true`.
+
+### API examples
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/state
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/state/movie/1
+curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/prune/movie/1?dry_run=true
+curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/prune/movie/1
+curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/rearm/movie/1
+curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/refresh/radarr
+curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/refresh/seerr
+curl http://localhost:8080/metrics
+```

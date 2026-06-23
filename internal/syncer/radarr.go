@@ -52,7 +52,7 @@ func NewRadarr(opt RadarrOptions) *RadarrSyncer {
 
 func (s *RadarrSyncer) Run(ctx context.Context) {
 	slog.Info("radarr seed sync starting", "tenant", s.tenant, "interval", s.interval, "category", s.category)
-	s.syncOnce(ctx)
+	_ = s.SyncOnce(ctx)
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -63,16 +63,16 @@ func (s *RadarrSyncer) Run(ctx context.Context) {
 			slog.Info("radarr seed sync stopped")
 			return
 		case <-ticker.C:
-			s.syncOnce(ctx)
+			_ = s.SyncOnce(ctx)
 		}
 	}
 }
 
-func (s *RadarrSyncer) syncOnce(ctx context.Context) {
+func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 	movies, err := s.radarr.Movies(ctx)
 	if err != nil {
 		slog.Error("radarr seed sync failed to list movies", "error", err)
-		return
+		return err
 	}
 
 	imported := 0
@@ -117,4 +117,5 @@ func (s *RadarrSyncer) syncOnce(ctx context.Context) {
 	}
 
 	slog.Info("radarr seed sync complete", "movies", len(movies), "imported", imported, "seeded", seeded, "metadata_resolved", metadataResolved)
+	return nil
 }

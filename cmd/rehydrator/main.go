@@ -71,6 +71,10 @@ func main() {
 		RadarrCategory:             cfg.DecypharrRadarrCategory,
 		SonarrCategory:             cfg.DecypharrSonarrCategory,
 		DeleteFilesOnPrune:         cfg.DecypharrDeleteFilesOnPrune,
+		PruneEnabled:               cfg.PruneEnabled,
+		RearmEnabled:               cfg.RearmEnabled,
+		MaxPrunesPerRun:            cfg.MaxPrunesPerRun,
+		MaxRearmsPerRun:            cfg.MaxRearmsPerRun,
 		PruneWaitForCSIGone:        cfg.PruneWaitForCSIGone,
 		RearmShortCircuitIfVisible: cfg.RearmShortCircuitIfCSIVisible,
 		Interval:                   cfg.ReconcileInterval,
@@ -91,10 +95,16 @@ func main() {
 		"sonarr_category", cfg.DecypharrSonarrCategory,
 		"delete_path", "torbox_by_infohash",
 		"torbox_prune_enabled", cfg.TorBoxAPIKey != "",
+		"prune_enabled", cfg.PruneEnabled,
+		"rearm_enabled", cfg.RearmEnabled,
+		"max_prunes_per_run", cfg.MaxPrunesPerRun,
+		"max_rearms_per_run", cfg.MaxRearmsPerRun,
 		"prune_wait_for_csi_gone", cfg.PruneWaitForCSIGone,
 		"rearm_short_circuit_if_csi_visible", cfg.RearmShortCircuitIfCSIVisible,
 		"health_addr", cfg.HealthAddr,
 		"api_enabled", cfg.APIEnabled,
+		"api_require_token", cfg.APIRequireToken,
+		"metrics_enabled", cfg.MetricsEnabled,
 		"radarr_sync_enabled", cfg.RadarrSyncEnabled,
 		"radarr_sync_interval", cfg.RadarrSyncInterval.String(),
 		"seerr_url", cfg.SeerrURL,
@@ -104,21 +114,11 @@ func main() {
 		"workers", cfg.ConcurrentWorkers,
 	)
 
-	var healthServer *health.Server
-	if cfg.APIEnabled {
-		healthServer = health.NewAPIServer(health.APIOptions{
-			Addr:   cfg.HealthAddr,
-			Repo:   repo,
-			Tenant: cfg.Tenant,
-			Token:  cfg.APIToken,
-		})
-	} else {
-		healthServer = health.NewServer(cfg.HealthAddr)
-	}
-	go healthServer.Run(ctx)
+	var radarrSyncer *syncer.RadarrSyncer
+	var seerrSyncer *syncer.SeerrSyncer
 
 	if cfg.RadarrSyncEnabled {
-		radarrSyncer := syncer.NewRadarr(syncer.RadarrOptions{
+		radarrSyncer = syncer.NewRadarr(syncer.RadarrOptions{
 			Repo:       repo,
 			Radarr:     radarrClient,
 			Tenant:     cfg.Tenant,
@@ -126,17 +126,48 @@ func main() {
 			Interval:   cfg.RadarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
 		})
-		go radarrSyncer.Run(ctx)
 	}
 
 	if cfg.SeerrSyncEnabled {
-		seerrSyncer := syncer.NewSeerr(syncer.SeerrOptions{
+		seerrSyncer = syncer.NewSeerr(syncer.SeerrOptions{
 			Repo:     repo,
 			Seerr:    seerrClient,
 			Tenant:   cfg.Tenant,
 			Interval: cfg.SeerrSyncInterval,
 			Limit:    cfg.SeerrSyncLimit,
 		})
+	}
+
+	var refreshRadarr func(context.Context) error
+	if radarrSyncer != nil {
+		refreshRadarr = radarrSyncer.SyncOnce
+	}
+	var refreshSeerr func(context.Context) error
+	if seerrSyncer != nil {
+		refreshSeerr = seerrSyncer.SyncOnce
+	}
+
+	var healthServer *health.Server
+	if cfg.APIEnabled {
+		healthServer = health.NewAPIServer(health.APIOptions{
+			Addr:           cfg.HealthAddr,
+			Repo:           repo,
+			Tenant:         cfg.Tenant,
+			Token:          cfg.APIToken,
+			RequireToken:   cfg.APIRequireToken,
+			MetricsEnabled: cfg.MetricsEnabled,
+			RefreshRadarr:  refreshRadarr,
+			RefreshSeerr:   refreshSeerr,
+		})
+	} else {
+		healthServer = health.NewServer(cfg.HealthAddr)
+	}
+	go healthServer.Run(ctx)
+
+	if radarrSyncer != nil {
+		go radarrSyncer.Run(ctx)
+	}
+	if seerrSyncer != nil {
 		go seerrSyncer.Run(ctx)
 	}
 

@@ -48,7 +48,7 @@ Radarr/Sonarr history
 
 - Durable identity is `infohash`.
 - `torbox_torrent_id` is optional and is filled during prune lookup when TorBox returns a matching torrent.
-- Rehydrator creates/refreshes movie rows from Radarr imports when `radarr_sync.enabled=true`. v0.2.7 supports Seerr REQUESTED placeholders, Radarr Connect webhook seeding, and playback-intent matching for archived movies. v0.2.8 filters Plex pre-roll playback events so they do not create unmatched playback noise.
+- Rehydrator creates/refreshes movie rows from Radarr imports when `radarr_sync.enabled=true`. v0.2.7 supports Seerr REQUESTED placeholders, Radarr Connect webhook seeding, and playback-intent matching for archived movies. v0.2.8 filters Plex pre-roll playback events so they do not create unmatched playback noise. v0.2.9 adds slow CSI visibility handling, WAITING_FOR_VISIBILITY state, provider cooldowns, and optional rclone RC refresh.
 - Provider state is authoritative on prune. CSI/rclone can keep stale directory entries or persistent symlink paths visible after TorBox delete.
 - `ARCHIVED + rearm_requested=true` queues Decypharr by default even if CSI still shows the old library path.
 - Health endpoints are included:
@@ -100,11 +100,23 @@ prune_wait_for_csi_gone: false
 # When false, ARCHIVED+rearm_requested queues Decypharr even if CSI still shows the path.
 rearm_short_circuit_if_csi_visible: false
 
-reconcile_interval_seconds: 15
-csi_wait_seconds: 300
+reconcile_interval_seconds: 30
+csi_wait_seconds: 900
+csi:
+  visibility_timeout_seconds: 900
+  visibility_poll_seconds: 10
+  visibility_retry_seconds: 60
+provider_cooldown_seconds: 900
+rclone_rc:
+  enabled: false
+  url: http://localhost:5572
+  username: ""
+  password: ""
+  refresh_after_rearm: false
+  timeout_seconds: 10
 cache_grace_hours: 24
 max_retries: 10
-concurrent_workers: 4
+concurrent_workers: 2
 db_auto_migrate: true
 ```
 
@@ -598,3 +610,72 @@ Plex media.play for title rehydrator-preroll
 → no immediate Radarr refresh
 → no re-arm attempt
 ```
+
+
+## v0.2.9 slow CSI visibility and provider cooldown patch
+
+v0.2.9 makes slow TorBox/WebDAV/CSI-rclone visibility a first-class state instead of a hard re-arm failure.
+
+Problem fixed:
+
+```text
+Decypharr add succeeds
+TorBox shows the item cached
+CSI-rclone mount does not expose the path for several minutes
+old behavior: mark BROKEN/FAILED after csi_wait_seconds
+new behavior: state=WAITING_FOR_VISIBILITY and retry path checks without re-adding
+```
+
+New behavior:
+
+- Re-arm still queues through Decypharr.
+- If Decypharr add succeeds but the file path does not appear before `csi.visibility_timeout_seconds`, Rehydrator marks the row `WAITING_FOR_VISIBILITY`.
+- `WAITING_FOR_VISIBILITY` rows retry visibility-only checks every `csi.visibility_retry_seconds`.
+- No duplicate Decypharr add is sent while waiting for the mount.
+- When the file path appears, the row becomes `AVAILABLE` and `cached_until` is refreshed.
+- Decypharr/TorBox `429`, `Too Many Requests`, or rate-limit errors set a provider cooldown.
+- Provider cooldowns temporarily skip matching re-arm/prune work so Rehydrator does not hammer the provider.
+
+Migration:
+
+```bash
+psql "$POSTGRES_URL" -f migrations/011_visibility_provider_cooldown.sql
+```
+
+Recommended conservative settings after seeing WebDAV 429s:
+
+```yaml
+workers: 2 # if your chart maps this to concurrent_workers, use concurrent_workers below
+concurrent_workers: 2
+max_rearms_per_run: 3
+max_prunes_per_run: 5
+reconcile_interval_seconds: 30
+
+csi:
+  visibility_timeout_seconds: 900
+  visibility_poll_seconds: 10
+  visibility_retry_seconds: 60
+
+provider_cooldown_seconds: 900
+```
+
+Optional rclone RC refresh support:
+
+```yaml
+rclone_rc:
+  enabled: true
+  url: http://csi-rclone-rc:5572
+  username: ""
+  password: ""
+  refresh_after_rearm: true
+  timeout_seconds: 10
+```
+
+Metrics added:
+
+```text
+rehydrator_waiting_visibility_items
+rehydrator_provider_cooldowns_active
+```
+
+Operational note: the WebDAV 429 you saw was emitted by CSI-rclone itself, so Rehydrator cannot directly observe that specific log unless those logs are forwarded into Rehydrator later. v0.2.9 still protects the system by reducing default concurrency, adding provider cooldowns for Rehydrator-owned API calls, and avoiding duplicate re-adds while CSI is simply slow.

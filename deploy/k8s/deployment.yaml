@@ -121,13 +121,35 @@ spec:
             - name: REARM_ENABLED
               value: "true"
             - name: MAX_PRUNES_PER_RUN
-              value: "25"
+              value: "5"
             - name: MAX_REARMS_PER_RUN
-              value: "25"
+              value: "3"
             - name: PRUNE_WAIT_FOR_CSI_GONE
               value: "false"
             - name: REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE
               value: "false"
+            - name: RECONCILE_INTERVAL_SECONDS
+              value: "30"
+            - name: CSI_WAIT_SECONDS
+              value: "900"
+            - name: CSI_VISIBILITY_TIMEOUT_SECONDS
+              value: "900"
+            - name: CSI_VISIBILITY_POLL_SECONDS
+              value: "10"
+            - name: CSI_VISIBILITY_RETRY_SECONDS
+              value: "60"
+            - name: PROVIDER_COOLDOWN_SECONDS
+              value: "900"
+            - name: RCLONE_RC_ENABLED
+              value: "false"
+            - name: RCLONE_RC_URL
+              value: "http://localhost:5572"
+            - name: RCLONE_RC_REFRESH_AFTER_REARM
+              value: "false"
+            - name: RCLONE_RC_TIMEOUT_SECONDS
+              value: "10"
+            - name: CONCURRENT_WORKERS
+              value: "2"
           volumeMounts:
             - name: rehydrator-config
               mountPath: /config

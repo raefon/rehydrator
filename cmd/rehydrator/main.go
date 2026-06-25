@@ -15,6 +15,7 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/health"
+	"github.com/raefon/rehydrator/internal/rclone"
 	"github.com/raefon/rehydrator/internal/seerr"
 	"github.com/raefon/rehydrator/internal/syncer"
 	"github.com/raefon/rehydrator/internal/torbox"
@@ -60,14 +61,20 @@ func main() {
 	decypharrClient := decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword)
 	torboxClient := torbox.NewClient(cfg.TorBoxAPIKey)
 	seerrClient := seerr.NewClient(cfg.SeerrURL, cfg.SeerrAPIKey)
+	var rcloneClient *rclone.Client
+	if cfg.RcloneRCEnabled {
+		rcloneClient = rclone.NewClient(cfg.RcloneRCURL, cfg.RcloneRCUsername, cfg.RcloneRCPassword, cfg.CSIPath, cfg.RcloneRCTimeout)
+	}
 
 	ctrl := controller.New(controller.Options{
+		Tenant:                     cfg.Tenant,
 		Repo:                       repo,
 		Radarr:                     radarrClient,
 		Sonarr:                     sonarrClient,
 		Decypharr:                  decypharrClient,
 		TorBox:                     torboxClient,
 		CSI:                        csi.NewChecker(cfg.CSIPath),
+		Rclone:                     rcloneClient,
 		RadarrCategory:             cfg.DecypharrRadarrCategory,
 		SonarrCategory:             cfg.DecypharrSonarrCategory,
 		DeleteFilesOnPrune:         cfg.DecypharrDeleteFilesOnPrune,
@@ -77,8 +84,13 @@ func main() {
 		MaxRearmsPerRun:            cfg.MaxRearmsPerRun,
 		PruneWaitForCSIGone:        cfg.PruneWaitForCSIGone,
 		RearmShortCircuitIfVisible: cfg.RearmShortCircuitIfCSIVisible,
+		RcloneRefreshAfterRearm:    cfg.RcloneRCRefreshAfterRearm,
 		Interval:                   cfg.ReconcileInterval,
 		CSIWait:                    cfg.CSIWait,
+		CSIVisibilityTimeout:       cfg.CSIVisibilityTimeout,
+		CSIVisibilityPoll:          cfg.CSIVisibilityPoll,
+		CSIVisibilityRetry:         cfg.CSIVisibilityRetry,
+		ProviderCooldown:           cfg.ProviderCooldown,
 		CacheGrace:                 cfg.CacheGrace,
 		MaxRetries:                 cfg.MaxRetries,
 		ConcurrentWorkers:          cfg.ConcurrentWorkers,
@@ -101,6 +113,12 @@ func main() {
 		"max_rearms_per_run", cfg.MaxRearmsPerRun,
 		"prune_wait_for_csi_gone", cfg.PruneWaitForCSIGone,
 		"rearm_short_circuit_if_csi_visible", cfg.RearmShortCircuitIfCSIVisible,
+		"csi_visibility_timeout", cfg.CSIVisibilityTimeout.String(),
+		"csi_visibility_poll", cfg.CSIVisibilityPoll.String(),
+		"csi_visibility_retry", cfg.CSIVisibilityRetry.String(),
+		"provider_cooldown", cfg.ProviderCooldown.String(),
+		"rclone_rc_enabled", cfg.RcloneRCEnabled,
+		"rclone_rc_refresh_after_rearm", cfg.RcloneRCRefreshAfterRearm,
 		"health_addr", cfg.HealthAddr,
 		"api_enabled", cfg.APIEnabled,
 		"api_require_token", cfg.APIRequireToken,

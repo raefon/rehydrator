@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS media_cache_state (
             'ARCHIVED',
             'BROKEN',
             'REARMING',
+            'WAITING_FOR_VISIBILITY',
             'PRUNING',
             'FAILED'
         )
@@ -188,3 +189,20 @@ ON media_cache_playback_ignored (tenant, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_media_cache_playback_ignored_reason
 ON media_cache_playback_ignored (tenant, reason, created_at DESC);
+
+-- v0.2.9: slow CSI visibility and provider cooldowns.
+CREATE TABLE IF NOT EXISTS media_cache_provider_cooldowns (
+    tenant TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    cooldown_until TIMESTAMPTZ NOT NULL,
+    reason TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_cache_state_waiting_visibility
+ON media_cache_state (tenant, state, next_retry_at)
+WHERE state = 'WAITING_FOR_VISIBILITY';
+
+CREATE INDEX IF NOT EXISTS idx_media_cache_provider_cooldowns_active
+ON media_cache_provider_cooldowns (tenant, cooldown_until);

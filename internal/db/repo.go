@@ -14,19 +14,21 @@ type Repo struct {
 }
 
 type MetricsSnapshot struct {
-	Tenant                 string
-	ItemsByState           map[string]int64
-	SeerrRequests          int64
-	SeerrRearmed           int64
-	EventsTotal            int64
-	FailedItems            int64
-	RearmRequested         int64
-	ExpiredPruneQueued     int64
-	PlaybackIntentRows     int64
-	PlaybackIntentTotal    int64
-	UnmatchedPlaybackTotal int64
-	UnmatchedPlaybackOpen  int64
-	PlaybackIgnoredTotal   int64
+	Tenant                  string
+	ItemsByState            map[string]int64
+	SeerrRequests           int64
+	SeerrRearmed            int64
+	EventsTotal             int64
+	FailedItems             int64
+	RearmRequested          int64
+	ExpiredPruneQueued      int64
+	PlaybackIntentRows      int64
+	PlaybackIntentTotal     int64
+	UnmatchedPlaybackTotal  int64
+	UnmatchedPlaybackOpen   int64
+	PlaybackIgnoredTotal    int64
+	WaitingVisibilityItems  int64
+	ProviderCooldownsActive int64
 }
 
 func New(ctx context.Context, url string) (*Repo, error) {
@@ -169,6 +171,41 @@ func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCach
         SET state = 'PRUNING',
             last_checked = now(),
             last_error = NULL
+        FROM candidates
+        WHERE m.id = candidates.id
+        RETURNING
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state,
+            m.rearm_requested, m.cached_until, m.torbox_torrent_id,
+            m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title,
+            m.tmdb_id, m.tvdb_id,
+            m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+    `, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
+// VisibilityWorkItems atomically claims rows that already re-added through Decypharr
+// but are waiting for the CSI/rclone mount to expose the file path.
+func (r *Repo) VisibilityWorkItems(ctx context.Context, limit int) ([]model.MediaCacheState, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	rows, err := r.pool.Query(ctx, `
+        WITH candidates AS (
+            SELECT id
+            FROM media_cache_state
+            WHERE state = 'WAITING_FOR_VISIBILITY'
+              AND rearm_requested = true
+              AND (next_retry_at IS NULL OR next_retry_at <= now())
+            ORDER BY updated_at ASC
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE media_cache_state m
+        SET last_checked = now()
         FROM candidates
         WHERE m.id = candidates.id
         RETURNING
@@ -708,6 +745,19 @@ func (r *Repo) MarkRearming(ctx context.Context, id string) error {
 	return err
 }
 
+func (r *Repo) MarkWaitingVisibility(ctx context.Context, id string, msg string, nextRetryAt time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+        UPDATE media_cache_state
+        SET state = 'WAITING_FOR_VISIBILITY',
+            rearm_requested = true,
+            next_retry_at = $3,
+            last_checked = now(),
+            last_error = NULLIF($2, '')
+        WHERE id = $1
+    `, id, msg, nextRetryAt)
+	return err
+}
+
 func (r *Repo) SaveTorrentMetadata(ctx context.Context, id string, torrent model.TorrentMetadata, category string) error {
 	_, err := r.pool.Exec(ctx, `
         UPDATE media_cache_state
@@ -794,6 +844,45 @@ func (r *Repo) MarkFailed(ctx context.Context, id string, msg string, maxRetries
 	return err
 }
 
+func (r *Repo) SetProviderCooldown(ctx context.Context, tenant string, provider string, duration time.Duration, reason string) error {
+	if duration <= 0 || provider == "" {
+		return nil
+	}
+	seconds := int(duration.Seconds())
+	if seconds <= 0 {
+		seconds = 60
+	}
+	_, err := r.pool.Exec(ctx, `
+        INSERT INTO media_cache_provider_cooldowns (tenant, provider, cooldown_until, reason, updated_at)
+        VALUES ($1, $2, now() + make_interval(secs => $3), NULLIF($4, ''), now())
+        ON CONFLICT (tenant, provider)
+        DO UPDATE SET cooldown_until = GREATEST(media_cache_provider_cooldowns.cooldown_until, EXCLUDED.cooldown_until),
+                      reason = EXCLUDED.reason,
+                      updated_at = now()
+    `, tenant, provider, seconds, reason)
+	return err
+}
+
+func (r *Repo) ProviderCooldownActive(ctx context.Context, tenant string, provider string) (bool, time.Time, string, error) {
+	var until time.Time
+	var reason *string
+	err := r.pool.QueryRow(ctx, `
+        SELECT cooldown_until, reason
+        FROM media_cache_provider_cooldowns
+        WHERE tenant = $1 AND provider = $2 AND cooldown_until > now()
+    `, tenant, provider).Scan(&until, &reason)
+	if err == pgx.ErrNoRows {
+		return false, time.Time{}, "", nil
+	}
+	if err != nil {
+		return false, time.Time{}, "", err
+	}
+	if reason == nil {
+		return true, until, "", nil
+	}
+	return true, until, *reason, nil
+}
+
 func (r *Repo) Event(ctx context.Context, mediaID string, eventType string, metadata string) error {
 	_, err := r.pool.Exec(ctx, `
         INSERT INTO media_cache_events (media_id, event_type, metadata)
@@ -837,5 +926,7 @@ func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, err
 	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(sum(seen_count), 0) FROM media_cache_playback_intents WHERE tenant = $1`, tenant).Scan(&s.UnmatchedPlaybackTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_playback_intents WHERE tenant = $1 AND matched_media_id IS NULL`, tenant).Scan(&s.UnmatchedPlaybackOpen)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_playback_ignored WHERE tenant = $1`, tenant).Scan(&s.PlaybackIgnoredTotal)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state = 'WAITING_FOR_VISIBILITY'`, tenant).Scan(&s.WaitingVisibilityItems)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_provider_cooldowns WHERE tenant = $1 AND cooldown_until > now()`, tenant).Scan(&s.ProviderCooldownsActive)
 	return s, nil
 }

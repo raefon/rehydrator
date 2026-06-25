@@ -12,15 +12,16 @@ const (
 type State string
 
 const (
-	StateRequested State = "REQUESTED"
-	StateAvailable State = "AVAILABLE"
-	StateHot       State = "HOT"
-	StateCooling   State = "COOLING"
-	StateArchived  State = "ARCHIVED"
-	StateBroken    State = "BROKEN"
-	StateRearming  State = "REARMING"
-	StatePruning   State = "PRUNING"
-	StateFailed    State = "FAILED"
+	StateRequested         State = "REQUESTED"
+	StateAvailable         State = "AVAILABLE"
+	StateHot               State = "HOT"
+	StateCooling           State = "COOLING"
+	StateArchived          State = "ARCHIVED"
+	StateBroken            State = "BROKEN"
+	StateRearming          State = "REARMING"
+	StateWaitingVisibility State = "WAITING_FOR_VISIBILITY"
+	StatePruning           State = "PRUNING"
+	StateFailed            State = "FAILED"
 )
 
 type MediaCacheState struct {

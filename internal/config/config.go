@@ -80,11 +80,24 @@ prune_wait_for_csi_gone: false
 # When false, ARCHIVED+rearm_requested always queues Decypharr even if CSI still shows the library path.
 rearm_short_circuit_if_csi_visible: false
 
-reconcile_interval_seconds: 15
-csi_wait_seconds: 300
+reconcile_interval_seconds: 30
+# Compatibility setting used as the default visibility timeout when csi.visibility_timeout_seconds is unset.
+csi_wait_seconds: 900
+csi:
+  visibility_timeout_seconds: 900
+  visibility_poll_seconds: 10
+  visibility_retry_seconds: 60
+provider_cooldown_seconds: 900
+rclone_rc:
+  enabled: false
+  url: http://localhost:5572
+  username: ""
+  password: ""
+  refresh_after_rearm: false
+  timeout_seconds: 10
 cache_grace_hours: 24
 max_retries: 10
-concurrent_workers: 4
+concurrent_workers: 2
 db_auto_migrate: false
 `
 
@@ -143,13 +156,30 @@ type Config struct {
 	PruneWaitForCSIGone           bool
 	RearmShortCircuitIfCSIVisible bool
 
-	ReconcileIntervalSeconds int
-	CSIWaitSeconds           int
-	CacheGraceHours          int
+	ReconcileIntervalSeconds    int
+	CSIWaitSeconds              int
+	CSIVisibilityTimeoutSeconds int
+	CSIVisibilityPollSeconds    int
+	CSIVisibilityRetrySeconds   int
+	ProviderCooldownSeconds     int
 
-	ReconcileInterval time.Duration
-	CSIWait           time.Duration
-	CacheGrace        time.Duration
+	RcloneRCEnabled           bool
+	RcloneRCURL               string
+	RcloneRCUsername          string
+	RcloneRCPassword          string
+	RcloneRCRefreshAfterRearm bool
+	RcloneRCTimeoutSeconds    int
+
+	CacheGraceHours int
+
+	ReconcileInterval    time.Duration
+	CSIWait              time.Duration
+	CSIVisibilityTimeout time.Duration
+	CSIVisibilityPoll    time.Duration
+	CSIVisibilityRetry   time.Duration
+	ProviderCooldown     time.Duration
+	RcloneRCTimeout      time.Duration
+	CacheGrace           time.Duration
 
 	MaxRetries        int
 	ConcurrentWorkers int
@@ -229,12 +259,26 @@ type fileConfig struct {
 	PruneWaitForCSIGone           bool  `yaml:"prune_wait_for_csi_gone"`
 	RearmShortCircuitIfCSIVisible bool  `yaml:"rearm_short_circuit_if_csi_visible"`
 
-	ReconcileIntervalSeconds int  `yaml:"reconcile_interval_seconds"`
-	CSIWaitSeconds           int  `yaml:"csi_wait_seconds"`
-	CacheGraceHours          int  `yaml:"cache_grace_hours"`
-	MaxRetries               int  `yaml:"max_retries"`
-	ConcurrentWorkers        int  `yaml:"concurrent_workers"`
-	DBAutoMigrate            bool `yaml:"db_auto_migrate"`
+	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds"`
+	CSIWaitSeconds           int `yaml:"csi_wait_seconds"`
+	CSI                      struct {
+		VisibilityTimeoutSeconds int `yaml:"visibility_timeout_seconds"`
+		VisibilityPollSeconds    int `yaml:"visibility_poll_seconds"`
+		VisibilityRetrySeconds   int `yaml:"visibility_retry_seconds"`
+	} `yaml:"csi"`
+	ProviderCooldownSeconds int `yaml:"provider_cooldown_seconds"`
+	RcloneRC                struct {
+		Enabled           *bool  `yaml:"enabled"`
+		URL               string `yaml:"url"`
+		Username          string `yaml:"username"`
+		Password          string `yaml:"password"`
+		RefreshAfterRearm *bool  `yaml:"refresh_after_rearm"`
+		TimeoutSeconds    int    `yaml:"timeout_seconds"`
+	} `yaml:"rclone_rc"`
+	CacheGraceHours   int  `yaml:"cache_grace_hours"`
+	MaxRetries        int  `yaml:"max_retries"`
+	ConcurrentWorkers int  `yaml:"concurrent_workers"`
+	DBAutoMigrate     bool `yaml:"db_auto_migrate"`
 }
 
 func Load(configPath string) (Config, error) {
@@ -294,15 +338,21 @@ func defaults() Config {
 		SeerrSyncLimit:                100,
 		PruneEnabled:                  true,
 		RearmEnabled:                  true,
-		MaxPrunesPerRun:               25,
-		MaxRearmsPerRun:               25,
+		MaxPrunesPerRun:               5,
+		MaxRearmsPerRun:               3,
 		PruneWaitForCSIGone:           false,
 		RearmShortCircuitIfCSIVisible: false,
-		ReconcileIntervalSeconds:      15,
-		CSIWaitSeconds:                300,
+		ReconcileIntervalSeconds:      30,
+		CSIWaitSeconds:                900,
+		CSIVisibilityTimeoutSeconds:   900,
+		CSIVisibilityPollSeconds:      10,
+		CSIVisibilityRetrySeconds:     60,
+		ProviderCooldownSeconds:       900,
+		RcloneRCURL:                   "http://localhost:5572",
+		RcloneRCTimeoutSeconds:        10,
 		CacheGraceHours:               24,
 		MaxRetries:                    10,
-		ConcurrentWorkers:             4,
+		ConcurrentWorkers:             2,
 		DBAutoMigrate:                 false,
 	}
 }
@@ -463,6 +513,36 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.CSIWaitSeconds > 0 {
 		cfg.CSIWaitSeconds = fc.CSIWaitSeconds
 	}
+	if fc.CSI.VisibilityTimeoutSeconds > 0 {
+		cfg.CSIVisibilityTimeoutSeconds = fc.CSI.VisibilityTimeoutSeconds
+	}
+	if fc.CSI.VisibilityPollSeconds > 0 {
+		cfg.CSIVisibilityPollSeconds = fc.CSI.VisibilityPollSeconds
+	}
+	if fc.CSI.VisibilityRetrySeconds > 0 {
+		cfg.CSIVisibilityRetrySeconds = fc.CSI.VisibilityRetrySeconds
+	}
+	if fc.ProviderCooldownSeconds > 0 {
+		cfg.ProviderCooldownSeconds = fc.ProviderCooldownSeconds
+	}
+	if fc.RcloneRC.Enabled != nil {
+		cfg.RcloneRCEnabled = *fc.RcloneRC.Enabled
+	}
+	if fc.RcloneRC.URL != "" {
+		cfg.RcloneRCURL = fc.RcloneRC.URL
+	}
+	if fc.RcloneRC.Username != "" {
+		cfg.RcloneRCUsername = fc.RcloneRC.Username
+	}
+	if fc.RcloneRC.Password != "" {
+		cfg.RcloneRCPassword = fc.RcloneRC.Password
+	}
+	if fc.RcloneRC.RefreshAfterRearm != nil {
+		cfg.RcloneRCRefreshAfterRearm = *fc.RcloneRC.RefreshAfterRearm
+	}
+	if fc.RcloneRC.TimeoutSeconds > 0 {
+		cfg.RcloneRCTimeoutSeconds = fc.RcloneRC.TimeoutSeconds
+	}
 	if fc.CacheGraceHours > 0 {
 		cfg.CacheGraceHours = fc.CacheGraceHours
 	}
@@ -523,6 +603,16 @@ func applyEnvOverrides(cfg *Config) {
 
 	cfg.ReconcileIntervalSeconds = getenvInt("RECONCILE_INTERVAL_SECONDS", cfg.ReconcileIntervalSeconds)
 	cfg.CSIWaitSeconds = getenvInt("CSI_WAIT_SECONDS", cfg.CSIWaitSeconds)
+	cfg.CSIVisibilityTimeoutSeconds = getenvInt("CSI_VISIBILITY_TIMEOUT_SECONDS", cfg.CSIVisibilityTimeoutSeconds)
+	cfg.CSIVisibilityPollSeconds = getenvInt("CSI_VISIBILITY_POLL_SECONDS", cfg.CSIVisibilityPollSeconds)
+	cfg.CSIVisibilityRetrySeconds = getenvInt("CSI_VISIBILITY_RETRY_SECONDS", cfg.CSIVisibilityRetrySeconds)
+	cfg.ProviderCooldownSeconds = getenvInt("PROVIDER_COOLDOWN_SECONDS", cfg.ProviderCooldownSeconds)
+	cfg.RcloneRCEnabled = getenvBool("RCLONE_RC_ENABLED", cfg.RcloneRCEnabled)
+	cfg.RcloneRCURL = getenv("RCLONE_RC_URL", cfg.RcloneRCURL)
+	cfg.RcloneRCUsername = getenv("RCLONE_RC_USERNAME", cfg.RcloneRCUsername)
+	cfg.RcloneRCPassword = getenv("RCLONE_RC_PASSWORD", cfg.RcloneRCPassword)
+	cfg.RcloneRCRefreshAfterRearm = getenvBool("RCLONE_RC_REFRESH_AFTER_REARM", cfg.RcloneRCRefreshAfterRearm)
+	cfg.RcloneRCTimeoutSeconds = getenvInt("RCLONE_RC_TIMEOUT_SECONDS", cfg.RcloneRCTimeoutSeconds)
 	cfg.CacheGraceHours = getenvInt("CACHE_GRACE_HOURS", cfg.CacheGraceHours)
 	cfg.MaxRetries = getenvInt("MAX_RETRIES", cfg.MaxRetries)
 	cfg.ConcurrentWorkers = getenvInt("CONCURRENT_WORKERS", cfg.ConcurrentWorkers)
@@ -532,6 +622,26 @@ func applyEnvOverrides(cfg *Config) {
 func hydrateDurations(cfg *Config) {
 	cfg.ReconcileInterval = time.Duration(cfg.ReconcileIntervalSeconds) * time.Second
 	cfg.CSIWait = time.Duration(cfg.CSIWaitSeconds) * time.Second
+	if cfg.CSIVisibilityTimeoutSeconds <= 0 {
+		cfg.CSIVisibilityTimeoutSeconds = cfg.CSIWaitSeconds
+	}
+	if cfg.CSIVisibilityPollSeconds <= 0 {
+		cfg.CSIVisibilityPollSeconds = 10
+	}
+	if cfg.CSIVisibilityRetrySeconds <= 0 {
+		cfg.CSIVisibilityRetrySeconds = 60
+	}
+	if cfg.ProviderCooldownSeconds <= 0 {
+		cfg.ProviderCooldownSeconds = 900
+	}
+	if cfg.RcloneRCTimeoutSeconds <= 0 {
+		cfg.RcloneRCTimeoutSeconds = 10
+	}
+	cfg.CSIVisibilityTimeout = time.Duration(cfg.CSIVisibilityTimeoutSeconds) * time.Second
+	cfg.CSIVisibilityPoll = time.Duration(cfg.CSIVisibilityPollSeconds) * time.Second
+	cfg.CSIVisibilityRetry = time.Duration(cfg.CSIVisibilityRetrySeconds) * time.Second
+	cfg.ProviderCooldown = time.Duration(cfg.ProviderCooldownSeconds) * time.Second
+	cfg.RcloneRCTimeout = time.Duration(cfg.RcloneRCTimeoutSeconds) * time.Second
 	cfg.CacheGrace = time.Duration(cfg.CacheGraceHours) * time.Hour
 	cfg.RadarrSyncInterval = time.Duration(cfg.RadarrSyncIntervalSeconds) * time.Second
 	cfg.SeerrSyncInterval = time.Duration(cfg.SeerrSyncIntervalSeconds) * time.Second
@@ -568,6 +678,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.APIEnabled && cfg.APIRequireToken && cfg.APIToken == "" {
 		return errors.New("API_TOKEN is required when API_REQUIRE_TOKEN=true")
+	}
+	if cfg.RcloneRCEnabled && cfg.RcloneRCURL == "" {
+		return errors.New("RCLONE_RC_URL or rclone_rc.url is required when RCLONE_RC_ENABLED=true")
 	}
 	return nil
 }

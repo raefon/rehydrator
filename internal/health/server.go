@@ -163,6 +163,8 @@ func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "rehydrator_unmatched_playback_intents_total{tenant=%q} %d\n", h.tenant, snap.UnmatchedPlaybackTotal)
 	_, _ = fmt.Fprintf(w, "rehydrator_unmatched_playback_intents_open{tenant=%q} %d\n", h.tenant, snap.UnmatchedPlaybackOpen)
 	_, _ = fmt.Fprintf(w, "rehydrator_playback_ignored_total{tenant=%q} %d\n", h.tenant, snap.PlaybackIgnoredTotal)
+	_, _ = fmt.Fprintf(w, "rehydrator_waiting_visibility_items{tenant=%q} %d\n", h.tenant, snap.WaitingVisibilityItems)
+	_, _ = fmt.Fprintf(w, "rehydrator_provider_cooldowns_active{tenant=%q} %d\n", h.tenant, snap.ProviderCooldownsActive)
 	_, _ = fmt.Fprintf(w, "rehydrator_events_total{tenant=%q} %d\n", h.tenant, snap.EventsTotal)
 	states := make([]string, 0, len(snap.ItemsByState))
 	for state := range snap.ItemsByState {

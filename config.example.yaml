@@ -56,17 +56,30 @@ radarr_sync:
 
 prune_enabled: true
 rearm_enabled: true
-max_prunes_per_run: 25
-max_rearms_per_run: 25
+max_prunes_per_run: 5
+max_rearms_per_run: 3
 
 # Provider delete is authoritative; CSI/rclone can show stale library paths after prune.
 prune_wait_for_csi_gone: false
 # When false, ARCHIVED+rearm_requested queues Decypharr even if CSI still shows the path.
 rearm_short_circuit_if_csi_visible: false
 
-reconcile_interval_seconds: 15
-csi_wait_seconds: 300
+reconcile_interval_seconds: 30
+# Compatibility alias. New CSI visibility knobs below control re-arm path-visible waits.
+csi_wait_seconds: 900
+csi:
+  visibility_timeout_seconds: 900
+  visibility_poll_seconds: 10
+  visibility_retry_seconds: 60
+provider_cooldown_seconds: 900
+rclone_rc:
+  enabled: false
+  url: http://localhost:5572
+  username: ""
+  password: ""
+  refresh_after_rearm: false
+  timeout_seconds: 10
 cache_grace_hours: 24
 max_retries: 10
-concurrent_workers: 4
+concurrent_workers: 2
 db_auto_migrate: false

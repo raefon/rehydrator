@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/raefon/rehydrator/internal/arr"
 	"github.com/raefon/rehydrator/internal/config"
@@ -15,6 +16,8 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/health"
+	"github.com/raefon/rehydrator/internal/model"
+	"github.com/raefon/rehydrator/internal/plex"
 	"github.com/raefon/rehydrator/internal/rclone"
 	"github.com/raefon/rehydrator/internal/seerr"
 	"github.com/raefon/rehydrator/internal/syncer"
@@ -65,6 +68,10 @@ func main() {
 	if cfg.RcloneRCEnabled {
 		rcloneClient = rclone.NewClient(cfg.RcloneRCURL, cfg.RcloneRCUsername, cfg.RcloneRCPassword, cfg.CSIPath, cfg.RcloneRCTimeout)
 	}
+	var plexClient *plex.Client
+	if cfg.PlexEnabled {
+		plexClient = plex.NewClient(cfg.PlexURL, cfg.PlexToken, cfg.PlexMovieSectionID, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
+	}
 
 	ctrl := controller.New(controller.Options{
 		Tenant:                     cfg.Tenant,
@@ -75,6 +82,7 @@ func main() {
 		TorBox:                     torboxClient,
 		CSI:                        csi.NewChecker(cfg.CSIPath),
 		Rclone:                     rcloneClient,
+		Plex:                       plexClient,
 		RadarrCategory:             cfg.DecypharrRadarrCategory,
 		SonarrCategory:             cfg.DecypharrSonarrCategory,
 		DeleteFilesOnPrune:         cfg.DecypharrDeleteFilesOnPrune,
@@ -85,6 +93,13 @@ func main() {
 		PruneWaitForCSIGone:        cfg.PruneWaitForCSIGone,
 		RearmShortCircuitIfVisible: cfg.RearmShortCircuitIfCSIVisible,
 		RcloneRefreshAfterRearm:    cfg.RcloneRCRefreshAfterRearm,
+		PlexEnabled:                cfg.PlexEnabled,
+		PlexRefreshAfterRearm:      cfg.PlexRefreshAfterRearm,
+		PlexRefreshAfterVisibility: cfg.PlexRefreshAfterVisibility,
+		PlexRefreshAfterPrune:      cfg.PlexRefreshAfterPrune,
+		PlexRefreshDelay:           time.Duration(cfg.PlexRefreshDelaySeconds) * time.Second,
+		PlexRefreshTimeout:         time.Duration(cfg.PlexRefreshTimeoutSeconds) * time.Second,
+		PlexMaxRefreshesPerRun:     cfg.PlexMaxRefreshesPerRun,
 		Interval:                   cfg.ReconcileInterval,
 		CSIWait:                    cfg.CSIWait,
 		CSIVisibilityTimeout:       cfg.CSIVisibilityTimeout,
@@ -119,6 +134,13 @@ func main() {
 		"provider_cooldown", cfg.ProviderCooldown.String(),
 		"rclone_rc_enabled", cfg.RcloneRCEnabled,
 		"rclone_rc_refresh_after_rearm", cfg.RcloneRCRefreshAfterRearm,
+		"plex_enabled", cfg.PlexEnabled,
+		"plex_url", cfg.PlexURL,
+		"plex_movie_section_id", cfg.PlexMovieSectionID,
+		"plex_refresh_after_rearm", cfg.PlexRefreshAfterRearm,
+		"plex_refresh_after_visibility", cfg.PlexRefreshAfterVisibility,
+		"plex_refresh_after_prune", cfg.PlexRefreshAfterPrune,
+		"plex_refresh_delay", cfg.PlexRefreshDelaySeconds,
 		"health_addr", cfg.HealthAddr,
 		"api_enabled", cfg.APIEnabled,
 		"api_require_token", cfg.APIRequireToken,
@@ -170,6 +192,44 @@ func main() {
 		refreshSeerr = seerrSyncer.SyncOnce
 	}
 
+	var plexRefreshMovie func(context.Context, int) error
+	var plexRefreshMovies func(context.Context) error
+	if plexClient != nil && plexClient.Configured() {
+		plexRefreshMovie = func(ctx context.Context, arrID int) error {
+			item, found, err := repo.GetState(ctx, cfg.Tenant, model.MediaMovie, arrID)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return os.ErrNotExist
+			}
+			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
+			defer cancel()
+			err = plexClient.RefreshMoviePath(refreshCtx, item.SymlinkPath)
+			status := "success"
+			message := ""
+			if err != nil {
+				status = "failed"
+				message = err.Error()
+			}
+			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_movie_refresh", "movie_path", item.SymlinkPath, status, message)
+			return err
+		}
+		plexRefreshMovies = func(ctx context.Context) error {
+			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
+			defer cancel()
+			err := plexClient.RefreshMovies(refreshCtx)
+			status := "success"
+			message := ""
+			if err != nil {
+				status = "failed"
+				message = err.Error()
+			}
+			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, "", 0, "manual_movies_refresh", "movie_section", "", status, message)
+			return err
+		}
+	}
+
 	var healthServer *health.Server
 	if cfg.APIEnabled {
 		healthServer = health.NewAPIServer(health.APIOptions{
@@ -186,6 +246,8 @@ func main() {
 			PlaybackIgnoredTitleContains: cfg.PlaybackIgnoredTitleContains,
 			RefreshRadarr:                refreshRadarr,
 			RefreshSeerr:                 refreshSeerr,
+			PlexRefreshMovie:             plexRefreshMovie,
+			PlexRefreshMovies:            plexRefreshMovies,
 		})
 	} else {
 		healthServer = health.NewServer(cfg.HealthAddr)

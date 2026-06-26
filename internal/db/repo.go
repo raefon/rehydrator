@@ -29,6 +29,8 @@ type MetricsSnapshot struct {
 	PlaybackIgnoredTotal    int64
 	WaitingVisibilityItems  int64
 	ProviderCooldownsActive int64
+	PlexRefreshTotal        int64
+	PlexRefreshFailures     int64
 }
 
 func New(ctx context.Context, url string) (*Repo, error) {
@@ -891,6 +893,17 @@ func (r *Repo) Event(ctx context.Context, mediaID string, eventType string, meta
 	return err
 }
 
+func (r *Repo) RecordPlexRefresh(ctx context.Context, tenant string, mediaID string, arrID int, action string, scope string, path string, status string, message string) error {
+	_, err := r.pool.Exec(ctx, `
+        INSERT INTO media_cache_plex_refreshes (
+            tenant, media_id, arr_id, action, scope, path, status, message, created_at
+        ) VALUES (
+            $1, NULLIF($2, '')::uuid, NULLIF($3, 0), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), now()
+        )
+    `, tenant, mediaID, arrID, action, scope, path, status, message)
+	return err
+}
+
 func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, error) {
 	s := MetricsSnapshot{Tenant: tenant, ItemsByState: map[string]int64{}}
 	rows, err := r.pool.Query(ctx, `
@@ -928,5 +941,7 @@ func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, err
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_playback_ignored WHERE tenant = $1`, tenant).Scan(&s.PlaybackIgnoredTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state = 'WAITING_FOR_VISIBILITY'`, tenant).Scan(&s.WaitingVisibilityItems)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_provider_cooldowns WHERE tenant = $1 AND cooldown_until > now()`, tenant).Scan(&s.ProviderCooldownsActive)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_plex_refreshes WHERE tenant = $1`, tenant).Scan(&s.PlexRefreshTotal)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_plex_refreshes WHERE tenant = $1 AND status <> 'success'`, tenant).Scan(&s.PlexRefreshFailures)
 	return s, nil
 }

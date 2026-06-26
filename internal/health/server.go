@@ -35,6 +35,8 @@ type APIOptions struct {
 	PlaybackIgnoredTitleContains []string
 	RefreshRadarr                func(context.Context) error
 	RefreshSeerr                 func(context.Context) error
+	PlexRefreshMovie             func(context.Context, int) error
+	PlexRefreshMovies            func(context.Context) error
 }
 
 func NewServer(addr string) *Server {
@@ -79,6 +81,8 @@ func newServer(opt APIOptions) *Server {
 			playbackIgnoredTitleContains: normalizeIgnoredList(opt.PlaybackIgnoredTitleContains),
 			refreshRadarr:                opt.RefreshRadarr,
 			refreshSeerr:                 opt.RefreshSeerr,
+			plexRefreshMovie:             opt.PlexRefreshMovie,
+			plexRefreshMovies:            opt.PlexRefreshMovies,
 		}
 		mux.HandleFunc("/metrics", api.handleMetrics)
 		mux.HandleFunc("/api/state/movie/", api.handleStateMovie)
@@ -87,6 +91,8 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/rearm/movie/", api.handleRearmMovie)
 		mux.HandleFunc("/api/refresh/radarr", api.handleRefreshRadarr)
 		mux.HandleFunc("/api/refresh/seerr", api.handleRefreshSeerr)
+		mux.HandleFunc("/api/plex/refresh/movie/", api.handlePlexRefreshMovie)
+		mux.HandleFunc("/api/plex/refresh/movies", api.handlePlexRefreshMovies)
 		mux.HandleFunc("/api/radarr/webhook", api.handleRadarrWebhook)
 		mux.HandleFunc("/api/seerr/webhook", api.handleSeerrWebhook)
 		mux.HandleFunc("/api/seerr/rearm", api.handleSeerrRearm)
@@ -134,6 +140,8 @@ type apiHandler struct {
 	playbackIgnoredTitleContains []string
 	refreshRadarr                func(context.Context) error
 	refreshSeerr                 func(context.Context) error
+	plexRefreshMovie             func(context.Context, int) error
+	plexRefreshMovies            func(context.Context) error
 }
 
 func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +173,8 @@ func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "rehydrator_playback_ignored_total{tenant=%q} %d\n", h.tenant, snap.PlaybackIgnoredTotal)
 	_, _ = fmt.Fprintf(w, "rehydrator_waiting_visibility_items{tenant=%q} %d\n", h.tenant, snap.WaitingVisibilityItems)
 	_, _ = fmt.Fprintf(w, "rehydrator_provider_cooldowns_active{tenant=%q} %d\n", h.tenant, snap.ProviderCooldownsActive)
+	_, _ = fmt.Fprintf(w, "rehydrator_plex_refresh_total{tenant=%q} %d\n", h.tenant, snap.PlexRefreshTotal)
+	_, _ = fmt.Fprintf(w, "rehydrator_plex_refresh_failures_total{tenant=%q} %d\n", h.tenant, snap.PlexRefreshFailures)
 	_, _ = fmt.Fprintf(w, "rehydrator_events_total{tenant=%q} %d\n", h.tenant, snap.EventsTotal)
 	states := make([]string, 0, len(snap.ItemsByState))
 	for state := range snap.ItemsByState {
@@ -264,6 +274,50 @@ func (h *apiHandler) handleRefreshRadarr(w http.ResponseWriter, r *http.Request)
 
 func (h *apiHandler) handleRefreshSeerr(w http.ResponseWriter, r *http.Request) {
 	h.handleRefresh(w, r, "seerr", h.refreshSeerr)
+}
+
+func (h *apiHandler) handlePlexRefreshMovie(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	if h.plexRefreshMovie == nil {
+		http.Error(w, "plex refresh is not configured", http.StatusNotFound)
+		return
+	}
+	arrID, ok := idFromPath(w, r.URL.Path, "/api/plex/refresh/movie/")
+	if !ok {
+		return
+	}
+	if err := h.plexRefreshMovie(r.Context(), arrID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "plex_movie", "arr_id": arrID})
+}
+
+func (h *apiHandler) handlePlexRefreshMovies(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	if h.plexRefreshMovies == nil {
+		http.Error(w, "plex refresh is not configured", http.StatusNotFound)
+		return
+	}
+	if err := h.plexRefreshMovies(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "plex_movies"})
 }
 
 func (h *apiHandler) handleRefresh(w http.ResponseWriter, r *http.Request, name string, fn func(context.Context) error) {

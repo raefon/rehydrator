@@ -1,3 +1,28 @@
+# Rehydrator v0.3.0 Plex Hygiene
+
+This package adds Plex library hygiene on top of the v0.2.9 visibility/backoff release.
+
+Highlights:
+
+- Plex client for library section/path refreshes.
+- Automatic delayed Plex refresh after successful rehydration.
+- Automatic delayed Plex refresh after `WAITING_FOR_VISIBILITY` becomes `AVAILABLE`.
+- Refresh-after-prune is supported but disabled by default.
+- Manual endpoints:
+  - `POST /api/plex/refresh/movie/{arr_id}`
+  - `POST /api/plex/refresh/movies`
+- Refresh audit table and metrics.
+
+Run migration:
+
+```bash
+psql "$POSTGRES_URL" -f migrations/012_plex_library_hygiene.sql
+```
+
+See `docs/plex-library-hygiene.md`.
+
+---
+
 # Rehydrator — Decypharr re-arm + TorBox authoritative prune lifecycle controller
 
 Rehydrator manages cached media lifecycle state for a tenant namespace.

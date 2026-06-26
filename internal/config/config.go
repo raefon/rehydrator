@@ -66,6 +66,18 @@ playback:
     - preroll
     - pre-roll
 
+plex:
+  enabled: false
+  url: http://plex:32400
+  token: ""
+  movie_section_id: 0
+  refresh_after_rearm: true
+  refresh_after_visibility: true
+  refresh_after_prune: false
+  refresh_delay_seconds: 45
+  refresh_timeout_seconds: 20
+  max_refreshes_per_run: 5
+
 radarr_sync:
   enabled: true
   interval_seconds: 60
@@ -144,6 +156,17 @@ type Config struct {
 	PlaybackCooldown             time.Duration
 	PlaybackIgnoredTitles        []string
 	PlaybackIgnoredTitleContains []string
+
+	PlexEnabled                bool
+	PlexURL                    string
+	PlexToken                  string
+	PlexMovieSectionID         int
+	PlexRefreshAfterRearm      bool
+	PlexRefreshAfterVisibility bool
+	PlexRefreshAfterPrune      bool
+	PlexRefreshDelaySeconds    int
+	PlexRefreshTimeoutSeconds  int
+	PlexMaxRefreshesPerRun     int
 
 	RadarrSyncEnabled         bool
 	RadarrSyncIntervalSeconds int
@@ -247,6 +270,19 @@ type fileConfig struct {
 		IgnoredTitleContains []string `yaml:"ignored_title_contains"`
 	} `yaml:"playback"`
 
+	Plex struct {
+		Enabled                *bool  `yaml:"enabled"`
+		URL                    string `yaml:"url"`
+		Token                  string `yaml:"token"`
+		MovieSectionID         int    `yaml:"movie_section_id"`
+		RefreshAfterRearm      *bool  `yaml:"refresh_after_rearm"`
+		RefreshAfterVisibility *bool  `yaml:"refresh_after_visibility"`
+		RefreshAfterPrune      *bool  `yaml:"refresh_after_prune"`
+		RefreshDelaySeconds    int    `yaml:"refresh_delay_seconds"`
+		RefreshTimeoutSeconds  int    `yaml:"refresh_timeout_seconds"`
+		MaxRefreshesPerRun     int    `yaml:"max_refreshes_per_run"`
+	} `yaml:"plex"`
+
 	RadarrSync struct {
 		Enabled         *bool `yaml:"enabled"`
 		IntervalSeconds int   `yaml:"interval_seconds"`
@@ -330,6 +366,13 @@ func defaults() Config {
 		PlaybackCooldownSeconds:       60,
 		PlaybackIgnoredTitles:         []string{"rehydrator-preroll"},
 		PlaybackIgnoredTitleContains:  []string{"preroll", "pre-roll"},
+		PlexURL:                       "http://plex:32400",
+		PlexRefreshAfterRearm:         true,
+		PlexRefreshAfterVisibility:    true,
+		PlexRefreshAfterPrune:         false,
+		PlexRefreshDelaySeconds:       45,
+		PlexRefreshTimeoutSeconds:     20,
+		PlexMaxRefreshesPerRun:        5,
 		RadarrSyncEnabled:             true,
 		RadarrSyncIntervalSeconds:     60,
 		SeerrURL:                      "http://seerr:5055",
@@ -487,6 +530,36 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if len(fc.Playback.IgnoredTitleContains) > 0 {
 		cfg.PlaybackIgnoredTitleContains = normalizeStringList(fc.Playback.IgnoredTitleContains)
 	}
+	if fc.Plex.Enabled != nil {
+		cfg.PlexEnabled = *fc.Plex.Enabled
+	}
+	if fc.Plex.URL != "" {
+		cfg.PlexURL = fc.Plex.URL
+	}
+	if fc.Plex.Token != "" {
+		cfg.PlexToken = fc.Plex.Token
+	}
+	if fc.Plex.MovieSectionID > 0 {
+		cfg.PlexMovieSectionID = fc.Plex.MovieSectionID
+	}
+	if fc.Plex.RefreshAfterRearm != nil {
+		cfg.PlexRefreshAfterRearm = *fc.Plex.RefreshAfterRearm
+	}
+	if fc.Plex.RefreshAfterVisibility != nil {
+		cfg.PlexRefreshAfterVisibility = *fc.Plex.RefreshAfterVisibility
+	}
+	if fc.Plex.RefreshAfterPrune != nil {
+		cfg.PlexRefreshAfterPrune = *fc.Plex.RefreshAfterPrune
+	}
+	if fc.Plex.RefreshDelaySeconds > 0 {
+		cfg.PlexRefreshDelaySeconds = fc.Plex.RefreshDelaySeconds
+	}
+	if fc.Plex.RefreshTimeoutSeconds > 0 {
+		cfg.PlexRefreshTimeoutSeconds = fc.Plex.RefreshTimeoutSeconds
+	}
+	if fc.Plex.MaxRefreshesPerRun > 0 {
+		cfg.PlexMaxRefreshesPerRun = fc.Plex.MaxRefreshesPerRun
+	}
 	if fc.RadarrSync.Enabled != nil {
 		cfg.RadarrSyncEnabled = *fc.RadarrSync.Enabled
 	}
@@ -592,6 +665,16 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.PlaybackCooldownSeconds = getenvInt("PLAYBACK_COOLDOWN_SECONDS", cfg.PlaybackCooldownSeconds)
 	cfg.PlaybackIgnoredTitles = getenvCSV("PLAYBACK_IGNORED_TITLES", cfg.PlaybackIgnoredTitles)
 	cfg.PlaybackIgnoredTitleContains = getenvCSV("PLAYBACK_IGNORED_TITLE_CONTAINS", cfg.PlaybackIgnoredTitleContains)
+	cfg.PlexEnabled = getenvBool("PLEX_ENABLED", cfg.PlexEnabled)
+	cfg.PlexURL = getenv("PLEX_URL", cfg.PlexURL)
+	cfg.PlexToken = getenv("PLEX_TOKEN", cfg.PlexToken)
+	cfg.PlexMovieSectionID = getenvInt("PLEX_MOVIE_SECTION_ID", cfg.PlexMovieSectionID)
+	cfg.PlexRefreshAfterRearm = getenvBool("PLEX_REFRESH_AFTER_REARM", cfg.PlexRefreshAfterRearm)
+	cfg.PlexRefreshAfterVisibility = getenvBool("PLEX_REFRESH_AFTER_VISIBILITY", cfg.PlexRefreshAfterVisibility)
+	cfg.PlexRefreshAfterPrune = getenvBool("PLEX_REFRESH_AFTER_PRUNE", cfg.PlexRefreshAfterPrune)
+	cfg.PlexRefreshDelaySeconds = getenvInt("PLEX_REFRESH_DELAY_SECONDS", cfg.PlexRefreshDelaySeconds)
+	cfg.PlexRefreshTimeoutSeconds = getenvInt("PLEX_REFRESH_TIMEOUT_SECONDS", cfg.PlexRefreshTimeoutSeconds)
+	cfg.PlexMaxRefreshesPerRun = getenvInt("PLEX_MAX_REFRESHES_PER_RUN", cfg.PlexMaxRefreshesPerRun)
 	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
 	cfg.PruneEnabled = getenvBool("PRUNE_ENABLED", cfg.PruneEnabled)
@@ -681,6 +764,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.RcloneRCEnabled && cfg.RcloneRCURL == "" {
 		return errors.New("RCLONE_RC_URL or rclone_rc.url is required when RCLONE_RC_ENABLED=true")
+	}
+	if cfg.PlexEnabled && (cfg.PlexURL == "" || cfg.PlexToken == "") {
+		return errors.New("PLEX_URL/PLEX_TOKEN or plex.url/plex.token are required when Plex hygiene is enabled")
 	}
 	return nil
 }

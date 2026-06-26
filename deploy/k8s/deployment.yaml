@@ -86,6 +86,12 @@ spec:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: api-token
+            - name: PLEX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: plex-token
+                  optional: true
             - name: HEALTH_ADDR
               value: ":8080"
             - name: API_ENABLED
@@ -104,6 +110,22 @@ spec:
               value: "rehydrator-preroll"
             - name: PLAYBACK_IGNORED_TITLE_CONTAINS
               value: "preroll,pre-roll"
+            - name: PLEX_ENABLED
+              value: "false"
+            - name: PLEX_URL
+              value: "http://tenet-plex:32400"
+            - name: PLEX_MOVIE_SECTION_ID
+              value: "0"
+            - name: PLEX_REFRESH_AFTER_REARM
+              value: "true"
+            - name: PLEX_REFRESH_AFTER_VISIBILITY
+              value: "true"
+            - name: PLEX_REFRESH_AFTER_PRUNE
+              value: "false"
+            - name: PLEX_REFRESH_DELAY_SECONDS
+              value: "45"
+            - name: PLEX_REFRESH_TIMEOUT_SECONDS
+              value: "20"
             - name: RADARR_SYNC_ENABLED
               value: "true"
             - name: RADARR_SYNC_INTERVAL_SECONDS

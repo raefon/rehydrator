@@ -14,6 +14,7 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/model"
+	"github.com/raefon/rehydrator/internal/plex"
 	"github.com/raefon/rehydrator/internal/rclone"
 	"github.com/raefon/rehydrator/internal/torbox"
 )
@@ -27,6 +28,7 @@ type Options struct {
 	TorBox    *torbox.Client
 	CSI       *csi.Checker
 	Rclone    *rclone.Client
+	Plex      *plex.Client
 
 	RadarrCategory             string
 	SonarrCategory             string
@@ -38,6 +40,13 @@ type Options struct {
 	PruneWaitForCSIGone        bool
 	RearmShortCircuitIfVisible bool
 	RcloneRefreshAfterRearm    bool
+	PlexEnabled                bool
+	PlexRefreshAfterRearm      bool
+	PlexRefreshAfterVisibility bool
+	PlexRefreshAfterPrune      bool
+	PlexRefreshDelay           time.Duration
+	PlexRefreshTimeout         time.Duration
+	PlexMaxRefreshesPerRun     int
 	Interval                   time.Duration
 	CSIWait                    time.Duration
 	CSIVisibilityTimeout       time.Duration
@@ -50,7 +59,8 @@ type Options struct {
 }
 
 type Controller struct {
-	opt Options
+	opt            Options
+	plexRefreshSem chan struct{}
 }
 
 func New(opt Options) *Controller {
@@ -81,6 +91,15 @@ func New(opt Options) *Controller {
 	if opt.ProviderCooldown <= 0 {
 		opt.ProviderCooldown = 15 * time.Minute
 	}
+	if opt.PlexRefreshDelay <= 0 {
+		opt.PlexRefreshDelay = 45 * time.Second
+	}
+	if opt.PlexRefreshTimeout <= 0 {
+		opt.PlexRefreshTimeout = 20 * time.Second
+	}
+	if opt.PlexMaxRefreshesPerRun <= 0 {
+		opt.PlexMaxRefreshesPerRun = 5
+	}
 	if opt.CacheGrace <= 0 {
 		opt.CacheGrace = 24 * time.Hour
 	}
@@ -93,7 +112,7 @@ func New(opt Options) *Controller {
 	if opt.SonarrCategory == "" {
 		opt.SonarrCategory = "sonarr"
 	}
-	return &Controller{opt: opt}
+	return &Controller{opt: opt, plexRefreshSem: make(chan struct{}, opt.PlexMaxRefreshesPerRun)}
 }
 
 func (c *Controller) Run(ctx context.Context) error {
@@ -256,6 +275,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		log.Error("failed to mark available", "error", err)
 		return
 	}
+	c.schedulePlexRefresh(ctx, item, "rehydration_complete", c.opt.PlexRefreshAfterRearm)
 
 	finalJSON, _ := json.Marshal(map[string]string{
 		"cached_until": cachedUntil.Format(time.RFC3339),
@@ -349,6 +369,7 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 		log.Error("failed to mark archived", "error", err)
 		return
 	}
+	c.schedulePlexRefresh(ctx, item, "prune_archived", c.opt.PlexRefreshAfterPrune)
 
 	_ = c.opt.Repo.Event(ctx, item.ID, "archived", "{}")
 	log.Info("prune complete; TorBox torrent deleted and item archived", "torbox_torrent_id", torrent.ID)
@@ -402,6 +423,7 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 		log.Error("failed to mark available after CSI visibility", "error", err)
 		return
 	}
+	c.schedulePlexRefresh(ctx, item, "visibility_available", c.opt.PlexRefreshAfterVisibility)
 	payload, _ := json.Marshal(map[string]string{"cached_until": cachedUntil.Format(time.RFC3339), "infohash": valueOrEmpty(item.InfoHash)})
 	_ = c.opt.Repo.Event(ctx, item.ID, "available_after_visibility_wait", string(payload))
 	log.Info("CSI path appeared; item marked available", "cached_until", cachedUntil)
@@ -417,6 +439,49 @@ func (c *Controller) markWaitingVisibility(ctx context.Context, item model.Media
 	payload, _ := json.Marshal(map[string]string{"error": msg, "infohash": infoHash, "next_retry_at": next.Format(time.RFC3339)})
 	_ = c.opt.Repo.Event(ctx, item.ID, "waiting_for_visibility", string(payload))
 	log.Warn("Decypharr add succeeded but CSI path is not visible yet; waiting instead of failing", "next_retry_at", next, "infohash", infoHash)
+}
+
+func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCacheState, action string, enabled bool) {
+	if !enabled || !c.opt.PlexEnabled || c.opt.Plex == nil || !c.opt.Plex.Configured() {
+		return
+	}
+	if item.MediaType != model.MediaMovie || strings.TrimSpace(item.SymlinkPath) == "" {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(c.opt.PlexRefreshDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		select {
+		case c.plexRefreshSem <- struct{}{}:
+			defer func() { <-c.plexRefreshSem }()
+		default:
+			slog.Warn("Plex refresh skipped; refresh limit is full", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+			if c.opt.Repo != nil {
+				_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, "movie_path", item.SymlinkPath, "skipped", "plex refresh limit full")
+			}
+			return
+		}
+		refreshCtx, cancel := context.WithTimeout(context.Background(), c.opt.PlexRefreshTimeout)
+		defer cancel()
+		err := c.opt.Plex.RefreshMoviePath(refreshCtx, item.SymlinkPath)
+		status := "success"
+		message := ""
+		if err != nil {
+			status = "failed"
+			message = err.Error()
+			slog.Warn("Plex refresh failed", "tenant", item.Tenant, "arr_id", item.ArrID, "path", item.SymlinkPath, "action", action, "error", err)
+		} else {
+			slog.Info("Plex refresh requested", "tenant", item.Tenant, "arr_id", item.ArrID, "path", item.SymlinkPath, "action", action, "delay", c.opt.PlexRefreshDelay)
+		}
+		if c.opt.Repo != nil {
+			_ = c.opt.Repo.RecordPlexRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, "movie_path", item.SymlinkPath, status, message)
+		}
+	}()
 }
 
 func (c *Controller) refreshRclone(ctx context.Context, path string) {

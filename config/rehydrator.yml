@@ -1,0 +1,105 @@
+postgres_url: "postgres://tenet_nofear101:MxHFTyYt1ZGa177NcFBniCaiRgs=@tenet-nofear101-rw.databases.svc.cluster.local:5432/tenet_nofear101?sslmode=disable"
+tenant: tenet-nofear101
+
+health_addr: ":8080"
+db_auto_migrate: true
+
+csi_path: /storage/media
+
+# Main reconcile loop
+reconcile_interval_seconds: 30
+cache_grace_hours: 24
+max_retries: 10
+concurrent_workers: 2
+
+# Re-arm / prune safety limits
+prune_enabled: true
+rearm_enabled: true
+max_prunes_per_run: 5
+max_rearms_per_run: 3
+
+# Provider delete is authoritative. CSI/rclone may show stale paths after prune.
+prune_wait_for_csi_gone: false
+
+# ARCHIVED + rearm_requested should queue Decypharr even if CSI still shows the path.
+rearm_short_circuit_if_csi_visible: false
+
+# Legacy/default CSI wait. Keep aligned with csi.visibility_timeout_seconds.
+csi_wait_seconds: 900
+
+radarr:
+  url: http://tenet-radarr.tenet-nofear101.svc.cluster.local:7878
+  api_key: "36c2ff9ef668411195f34927179a4488"
+
+radarr_sync:
+  enabled: true
+  interval_seconds: 60
+
+sonarr:
+  url: http://sonarr:8989
+  api_key: ""
+
+torbox:
+  api_key: "b37b5b46-ea7c-46d1-aa3a-313de0d3eca7"
+
+decypharr:
+  url: http://tenet-decypharr.tenet-nofear101.svc.cluster.local:8282
+  username: ""
+  password: ""
+  radarr_category: radarr
+  sonarr_category: sonarr
+  delete_files_on_prune: true
+
+seerr:
+  url: http://tenet-seerr.tenet-nofear101.svc.cluster.local:5055
+  api_key: "MTc4MjAyMTA5NjIzNTY1NDRmNTYyLTMyZTctNGQ4Mi05ZjI2LTViMzE5ZjdjNmQwYQ=="
+  sync:
+    enabled: true
+    interval_seconds: 300
+    limit: 100
+
+api:
+  enabled: true
+  token: "rhdr_5k8bX9wpGfFUnz2jeXVTpVEV7t6LTQGR2mvTPr3vTQw"
+  require_token: true
+
+metrics:
+  enabled: true
+
+playback:
+  enabled: true
+  rearm_on_play: true
+  cooldown_seconds: 60
+  ignored_titles:
+    - rehydrator-preroll
+  ignored_title_contains:
+    - preroll
+    - pre-roll
+
+csi:
+  visibility_timeout_seconds: 900
+  visibility_poll_seconds: 10
+  visibility_retry_seconds: 60
+
+provider_cooldown_seconds: 900
+
+rclone_rc:
+  enabled: false
+  url: http://localhost:5572
+  username: ""
+  password: ""
+  refresh_after_rearm: false
+  timeout_seconds: 10
+
+plex:
+  enabled: true
+  url: http://tenet-plex.tenet-nofear101.svc.cluster.local:32400
+  token: "<PLEX_TOKEN>"
+  # Set this to your Plex movie library section ID. Leave 0 to auto-discover first movie library.
+  movie_section_id: 0
+  refresh_after_rearm: true
+  refresh_after_visibility: true
+  refresh_after_prune: false
+  refresh_delay_seconds: 45
+  refresh_timeout_seconds: 20
+  max_refreshes_per_run: 5

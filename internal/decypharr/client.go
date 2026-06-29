@@ -47,6 +47,29 @@ func NewClient(base, username, password string) *Client {
 	}
 }
 
+func (c *Client) Configured() bool {
+	return c != nil && c.base != ""
+}
+
+func (c *Client) Ping(ctx context.Context) error {
+	if !c.Configured() {
+		return fmt.Errorf("decypharr client is not configured")
+	}
+	if err := c.authenticate(ctx); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v2/app/version", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return httpx.CheckStatus(resp)
+}
+
 func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, category string) (model.DownloadClientAddResult, error) {
 	if c.base == "" {
 		return model.DownloadClientAddResult{}, fmt.Errorf("missing Decypharr URL")

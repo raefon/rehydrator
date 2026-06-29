@@ -30,6 +30,27 @@ func NewClient(name, base, key string) *Client {
 	}
 }
 
+func (c *Client) Configured() bool {
+	return c != nil && c.base != "" && c.key != ""
+}
+
+func (c *Client) Ping(ctx context.Context) error {
+	if !c.Configured() {
+		return fmt.Errorf("%s client is not configured", c.name)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v3/system/status", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", c.key)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return httpx.CheckStatus(resp)
+}
+
 type HistoryResponse struct {
 	Page         int             `json:"page"`
 	PageSize     int             `json:"pageSize"`

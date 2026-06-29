@@ -63,3 +63,38 @@ Keep these off:
 - Partial scan on changes
 
 Keep Cinema Trailers enabled only if you use the Rehydrator pre-roll.
+
+## Targeted refreshes
+
+Rehydrator should prefer targeted Plex scans. A movie refresh uses the parent folder of the movie file path and calls Plex's section refresh endpoint with a `path` query parameter. This avoids scanning the entire movie library just to clear the unavailable/trash icon for one restored title.
+
+Example target path:
+
+```text
+/storage/media/movies/Chainsaw Man - The Movie - Reze Arc (2025)
+```
+
+Whole-section refreshes are still available through the manual API endpoint, but they should be treated as repair tools rather than the normal workflow.
+
+Recommended behavior:
+
+```text
+After prune: no Plex refresh
+After rearm/visibility: targeted movie-folder refresh
+Manual repair: targeted movie refresh first, whole-section refresh only if needed
+```
+
+## Self-healing refresh worker
+
+v0.3.2 also includes the self-healing behavior originally planned for v0.3.3. It periodically looks for recently rehydrated or recently played `AVAILABLE` movies that do not yet have a successful Plex refresh audit after that event.
+
+```yaml
+self_heal:
+  enabled: true
+  interval_seconds: 300
+  plex_refresh_available: true
+  plex_recent_hours: 24
+  max_plex_refreshes_per_run: 5
+```
+
+This is intentionally conservative. It only queues targeted movie-folder refreshes, and it does not refresh after prune.

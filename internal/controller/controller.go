@@ -30,37 +30,44 @@ type Options struct {
 	Rclone    *rclone.Client
 	Plex      *plex.Client
 
-	RadarrCategory             string
-	SonarrCategory             string
-	DeleteFilesOnPrune         bool
-	PruneEnabled               bool
-	RearmEnabled               bool
-	MaxPrunesPerRun            int
-	MaxRearmsPerRun            int
-	PruneWaitForCSIGone        bool
-	RearmShortCircuitIfVisible bool
-	RcloneRefreshAfterRearm    bool
-	PlexEnabled                bool
-	PlexRefreshAfterRearm      bool
-	PlexRefreshAfterVisibility bool
-	PlexRefreshAfterPrune      bool
-	PlexRefreshDelay           time.Duration
-	PlexRefreshTimeout         time.Duration
-	PlexMaxRefreshesPerRun     int
-	Interval                   time.Duration
-	CSIWait                    time.Duration
-	CSIVisibilityTimeout       time.Duration
-	CSIVisibilityPoll          time.Duration
-	CSIVisibilityRetry         time.Duration
-	ProviderCooldown           time.Duration
-	CacheGrace                 time.Duration
-	MaxRetries                 int
-	ConcurrentWorkers          int
+	RadarrCategory                 string
+	SonarrCategory                 string
+	DeleteFilesOnPrune             bool
+	PruneEnabled                   bool
+	RearmEnabled                   bool
+	MaxPrunesPerRun                int
+	MaxRearmsPerRun                int
+	PruneWaitForCSIGone            bool
+	RearmShortCircuitIfVisible     bool
+	RcloneRefreshAfterRearm        bool
+	PlexEnabled                    bool
+	PlexRefreshAfterRearm          bool
+	PlexRefreshAfterVisibility     bool
+	PlexRefreshAfterPrune          bool
+	PlexRefreshDelay               time.Duration
+	PlexRefreshTimeout             time.Duration
+	PlexMaxRefreshesPerRun         int
+	SelfHealEnabled                bool
+	SelfHealInterval               time.Duration
+	SelfHealPlexRefreshAvailable   bool
+	SelfHealPlexRecentHours        int
+	SelfHealMaxPlexRefreshesPerRun int
+	Interval                       time.Duration
+	CSIWait                        time.Duration
+	CSIVisibilityTimeout           time.Duration
+	CSIVisibilityPoll              time.Duration
+	CSIVisibilityRetry             time.Duration
+	ProviderCooldown               time.Duration
+	CacheGrace                     time.Duration
+	MaxRetries                     int
+	ConcurrentWorkers              int
 }
 
 type Controller struct {
 	opt            Options
 	plexRefreshSem chan struct{}
+	selfHealMu     sync.Mutex
+	lastSelfHeal   time.Time
 }
 
 func New(opt Options) *Controller {
@@ -99,6 +106,15 @@ func New(opt Options) *Controller {
 	}
 	if opt.PlexMaxRefreshesPerRun <= 0 {
 		opt.PlexMaxRefreshesPerRun = 5
+	}
+	if opt.SelfHealInterval <= 0 {
+		opt.SelfHealInterval = 5 * time.Minute
+	}
+	if opt.SelfHealPlexRecentHours <= 0 {
+		opt.SelfHealPlexRecentHours = 24
+	}
+	if opt.SelfHealMaxPlexRefreshesPerRun <= 0 {
+		opt.SelfHealMaxPlexRefreshesPerRun = 5
 	}
 	if opt.CacheGrace <= 0 {
 		opt.CacheGrace = 24 * time.Hour
@@ -139,6 +155,9 @@ func (c *Controller) reconcile(ctx context.Context) {
 	if c.opt.PruneEnabled {
 		c.reconcilePrunes(ctx)
 	}
+	if c.opt.SelfHealEnabled {
+		c.reconcileSelfHeal(ctx)
+	}
 }
 
 func (c *Controller) reconcileRearms(ctx context.Context) {
@@ -172,6 +191,37 @@ func (c *Controller) reconcilePrunes(ctx context.Context) {
 		return
 	}
 	c.runItems(ctx, items, c.handlePrune)
+}
+
+func (c *Controller) reconcileSelfHeal(ctx context.Context) {
+	c.selfHealMu.Lock()
+	if !c.lastSelfHeal.IsZero() && time.Since(c.lastSelfHeal) < c.opt.SelfHealInterval {
+		c.selfHealMu.Unlock()
+		return
+	}
+	c.lastSelfHeal = time.Now()
+	c.selfHealMu.Unlock()
+
+	if !c.opt.SelfHealPlexRefreshAvailable {
+		return
+	}
+	if !c.opt.PlexEnabled || c.opt.Plex == nil || !c.opt.Plex.Configured() || c.opt.Repo == nil {
+		return
+	}
+
+	recentSeconds := c.opt.SelfHealPlexRecentHours * 3600
+	items, err := c.opt.Repo.PlexSelfHealWorkItems(ctx, c.opt.Tenant, c.opt.SelfHealMaxPlexRefreshesPerRun, recentSeconds)
+	if err != nil {
+		slog.Warn("self-heal Plex refresh lookup failed", "error", err)
+		return
+	}
+	if len(items) == 0 {
+		return
+	}
+	slog.Info("self-heal queued Plex refresh candidates", "count", len(items), "recent_hours", c.opt.SelfHealPlexRecentHours)
+	for _, item := range items {
+		c.schedulePlexRefresh(ctx, item, "self_heal_available", true)
+	}
 }
 
 func (c *Controller) runItems(ctx context.Context, items []model.MediaCacheState, fn func(context.Context, model.MediaCacheState)) {
@@ -442,12 +492,28 @@ func (c *Controller) markWaitingVisibility(ctx context.Context, item model.Media
 }
 
 func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCacheState, action string, enabled bool) {
-	if !enabled || !c.opt.PlexEnabled || c.opt.Plex == nil || !c.opt.Plex.Configured() {
+	if !enabled {
+		slog.Debug("Plex refresh skipped; action disabled", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
-	if item.MediaType != model.MediaMovie || strings.TrimSpace(item.SymlinkPath) == "" {
+	if !c.opt.PlexEnabled {
+		slog.Info("Plex refresh skipped; plex.enabled=false", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
+	if c.opt.Plex == nil || !c.opt.Plex.Configured() {
+		slog.Warn("Plex refresh skipped; Plex client is not configured", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+		return
+	}
+	if item.MediaType != model.MediaMovie {
+		slog.Debug("Plex refresh skipped; non-movie item", "tenant", item.Tenant, "arr_id", item.ArrID, "media_type", item.MediaType, "action", action)
+		return
+	}
+	if strings.TrimSpace(item.SymlinkPath) == "" {
+		slog.Warn("Plex refresh skipped; missing symlink path", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+		return
+	}
+	targetPath := c.opt.Plex.TargetScanPath(item.SymlinkPath)
+	slog.Info("Plex refresh queued", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "delay", c.opt.PlexRefreshDelay)
 	go func() {
 		timer := time.NewTimer(c.opt.PlexRefreshDelay)
 		defer timer.Stop()
@@ -460,26 +526,27 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 		case c.plexRefreshSem <- struct{}{}:
 			defer func() { <-c.plexRefreshSem }()
 		default:
-			slog.Warn("Plex refresh skipped; refresh limit is full", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+			slog.Warn("Plex refresh skipped; refresh limit is full", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
 			if c.opt.Repo != nil {
-				_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, "movie_path", item.SymlinkPath, "skipped", "plex refresh limit full")
+				_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, "movie_folder", targetPath, "skipped", "plex refresh limit full")
 			}
 			return
 		}
 		refreshCtx, cancel := context.WithTimeout(context.Background(), c.opt.PlexRefreshTimeout)
 		defer cancel()
-		err := c.opt.Plex.RefreshMoviePath(refreshCtx, item.SymlinkPath)
+		slog.Info("Plex refresh starting", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
+		err := c.opt.Plex.RefreshPath(refreshCtx, targetPath)
 		status := "success"
 		message := ""
 		if err != nil {
 			status = "failed"
 			message = err.Error()
-			slog.Warn("Plex refresh failed", "tenant", item.Tenant, "arr_id", item.ArrID, "path", item.SymlinkPath, "action", action, "error", err)
+			slog.Warn("Plex refresh failed", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action, "error", err)
 		} else {
-			slog.Info("Plex refresh requested", "tenant", item.Tenant, "arr_id", item.ArrID, "path", item.SymlinkPath, "action", action, "delay", c.opt.PlexRefreshDelay)
+			slog.Info("Plex refresh complete", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action)
 		}
 		if c.opt.Repo != nil {
-			_ = c.opt.Repo.RecordPlexRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, "movie_path", item.SymlinkPath, status, message)
+			_ = c.opt.Repo.RecordPlexRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, "movie_folder", targetPath, status, message)
 		}
 	}()
 }

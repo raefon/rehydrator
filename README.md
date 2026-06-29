@@ -10,8 +10,9 @@ It keeps Plex/Radarr library entries intact while allowing old TorBox cache entr
 - Prunes old TorBox cache entries after a configurable grace period.
 - Re-arms archived media through Decypharr when Plex playback is attempted.
 - Handles slow CSI-rclone visibility with `WAITING_FOR_VISIBILITY` instead of duplicate re-adds.
-- Optionally refreshes Plex after a movie becomes available again to clear stale unavailable/trash indicators.
-- Exposes health, API, and Prometheus-style metrics endpoints.
+- Refreshes only the restored movie folder in Plex after a movie becomes available again to clear stale unavailable/trash indicators.
+- Exposes health, API, admin, dependency-check, and Prometheus-style metrics endpoints.
+- Includes a self-heal worker for recently restored movies that missed a Plex refresh.
 
 ## Current scope
 
@@ -126,6 +127,10 @@ POST /api/refresh/radarr
 POST /api/refresh/seerr
 POST /api/plex/refresh/movie/{radarr_id}
 POST /api/plex/refresh/movies
+GET  /api/state/summary
+GET  /api/health/dependencies
+GET  /api/admin/cooldowns
+POST /api/admin/retry-failed
 ```
 
 See [`docs/api.md`](docs/api.md).
@@ -154,3 +159,5 @@ csi.visibility_timeout_seconds: 900
 ```
 
 That is intentional for TorBox/WebDAV/CSI-rclone stacks.
+
+Plex refreshes are targeted by default: Rehydrator scans the restored movie folder path first, not the whole movie library. Whole-section scans are available only as a manual repair endpoint.

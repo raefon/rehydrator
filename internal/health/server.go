@@ -37,6 +37,7 @@ type APIOptions struct {
 	RefreshSeerr                 func(context.Context) error
 	PlexRefreshMovie             func(context.Context, int) error
 	PlexRefreshMovies            func(context.Context) error
+	DependencyChecks             map[string]func(context.Context) error
 }
 
 func NewServer(addr string) *Server {
@@ -83,12 +84,17 @@ func newServer(opt APIOptions) *Server {
 			refreshSeerr:                 opt.RefreshSeerr,
 			plexRefreshMovie:             opt.PlexRefreshMovie,
 			plexRefreshMovies:            opt.PlexRefreshMovies,
+			dependencyChecks:             opt.DependencyChecks,
 		}
 		mux.HandleFunc("/metrics", api.handleMetrics)
 		mux.HandleFunc("/api/state/movie/", api.handleStateMovie)
 		mux.HandleFunc("/api/prune/movie/", api.handlePruneMovie)
 		mux.HandleFunc("/api/rearm/movie/tmdb/", api.handleRearmMovieTMDB)
 		mux.HandleFunc("/api/rearm/movie/", api.handleRearmMovie)
+		mux.HandleFunc("/api/state/summary", api.handleStateSummary)
+		mux.HandleFunc("/api/health/dependencies", api.handleDependencyHealth)
+		mux.HandleFunc("/api/admin/cooldowns", api.handleAdminCooldowns)
+		mux.HandleFunc("/api/admin/retry-failed", api.handleAdminRetryFailed)
 		mux.HandleFunc("/api/refresh/radarr", api.handleRefreshRadarr)
 		mux.HandleFunc("/api/refresh/seerr", api.handleRefreshSeerr)
 		mux.HandleFunc("/api/plex/refresh/movie/", api.handlePlexRefreshMovie)
@@ -142,6 +148,7 @@ type apiHandler struct {
 	refreshSeerr                 func(context.Context) error
 	plexRefreshMovie             func(context.Context, int) error
 	plexRefreshMovies            func(context.Context) error
+	dependencyChecks             map[string]func(context.Context) error
 }
 
 func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +273,106 @@ func (h *apiHandler) handlePruneMovie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "source": "manual_prune", "item": item})
+}
+
+func (h *apiHandler) handleStateSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	summary, err := h.repo.StateSummary(r.Context(), h.tenant)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": h.tenant, "items_by_state": summary})
+}
+
+func (h *apiHandler) handleDependencyHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	checks := map[string]func(context.Context) error{}
+	for name, fn := range h.dependencyChecks {
+		if fn != nil {
+			checks[name] = fn
+		}
+	}
+	if _, ok := checks["postgres"]; !ok && h.repo != nil {
+		checks["postgres"] = h.repo.Ping
+	}
+	results := map[string]any{}
+	overallOK := true
+	names := make([]string, 0, len(checks))
+	for name := range checks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		err := checks[name](ctx)
+		cancel()
+		if err != nil {
+			overallOK = false
+			results[name] = map[string]any{"ok": false, "error": err.Error()}
+			continue
+		}
+		results[name] = map[string]any{"ok": true}
+	}
+	status := http.StatusOK
+	if !overallOK {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, map[string]any{"ok": overallOK, "tenant": h.tenant, "dependencies": results})
+}
+
+func (h *apiHandler) handleAdminCooldowns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	cooldowns, err := h.repo.ActiveProviderCooldowns(r.Context(), h.tenant)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": h.tenant, "cooldowns": cooldowns})
+}
+
+func (h *apiHandler) handleAdminRetryFailed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	limit := 10
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	updated, err := h.repo.RetryFailed(r.Context(), h.tenant, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "tenant": h.tenant, "updated": updated, "limit": limit})
 }
 
 func (h *apiHandler) handleRefreshRadarr(w http.ResponseWriter, r *http.Request) {

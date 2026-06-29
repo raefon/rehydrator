@@ -42,7 +42,16 @@ func (c *Client) Configured() bool {
 	return c != nil && c.baseURL != "" && c.token != ""
 }
 
+// RefreshMoviePath asks Plex to scan only the movie folder that contains mediaPath.
+// Plex supports a library section refresh with a path query parameter; using the
+// parent folder avoids scanning the whole library while still clearing stale
+// unavailable/trash indicators after Rehydrator restores an item.
 func (c *Client) RefreshMoviePath(ctx context.Context, mediaPath string) error {
+	target := c.TargetScanPath(mediaPath)
+	return c.RefreshPath(ctx, target)
+}
+
+func (c *Client) RefreshPath(ctx context.Context, plexPath string) error {
 	if !c.Configured() {
 		return fmt.Errorf("plex client is not configured")
 	}
@@ -56,11 +65,25 @@ func (c *Client) RefreshMoviePath(ctx context.Context, mediaPath string) error {
 	}
 	values := url.Values{}
 	values.Set("X-Plex-Token", c.token)
-	if strings.TrimSpace(mediaPath) != "" {
-		values.Set("path", filepath.ToSlash(mediaPath))
+	if strings.TrimSpace(plexPath) != "" {
+		values.Set("path", filepath.ToSlash(plexPath))
 	}
 	endpoint := fmt.Sprintf("%s/library/sections/%d/refresh?%s", c.baseURL, sectionID, values.Encode())
 	return c.doRefresh(ctx, endpoint)
+}
+
+func (c *Client) TargetScanPath(mediaPath string) string {
+	mediaPath = strings.TrimSpace(mediaPath)
+	if mediaPath == "" {
+		return ""
+	}
+	clean := filepath.Clean(mediaPath)
+	// If this looks like a file path, scan the containing movie folder.
+	// If it already looks like a folder path, scan it as-is.
+	if ext := filepath.Ext(clean); ext != "" {
+		return filepath.ToSlash(filepath.Dir(clean))
+	}
+	return filepath.ToSlash(clean)
 }
 
 func (c *Client) RefreshMovies(ctx context.Context) error {
@@ -96,6 +119,11 @@ func (c *Client) doRefresh(ctx context.Context, endpoint string) error {
 		return fmt.Errorf("plex refresh failed: %s %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func (c *Client) Ping(ctx context.Context) error {
+	_, err := c.FindFirstMovieSection(ctx)
+	return err
 }
 
 func (c *Client) FindFirstMovieSection(ctx context.Context) (int, error) {

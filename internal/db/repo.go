@@ -33,6 +33,14 @@ type MetricsSnapshot struct {
 	PlexRefreshFailures     int64
 }
 
+type ProviderCooldown struct {
+	Tenant        string
+	Provider      string
+	CooldownUntil time.Time
+	Reason        string
+	UpdatedAt     time.Time
+}
+
 func New(ctx context.Context, url string) (*Repo, error) {
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
@@ -46,6 +54,8 @@ func New(ctx context.Context, url string) (*Repo, error) {
 }
 
 func (r *Repo) Close() { r.pool.Close() }
+
+func (r *Repo) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 
 func (r *Repo) InitSchema(ctx context.Context) error {
 	_, err := r.pool.Exec(ctx, schemaSQL)
@@ -902,6 +912,126 @@ func (r *Repo) RecordPlexRefresh(ctx context.Context, tenant string, mediaID str
         )
     `, tenant, mediaID, arrID, action, scope, path, status, message)
 	return err
+}
+
+func (r *Repo) StateSummary(ctx context.Context, tenant string) (map[string]int64, error) {
+	out := map[string]int64{}
+	rows, err := r.pool.Query(ctx, `
+        SELECT state, count(*)
+        FROM media_cache_state
+        WHERE tenant = $1
+        GROUP BY state
+        ORDER BY state
+    `, tenant)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var state string
+		var count int64
+		if err := rows.Scan(&state, &count); err != nil {
+			return out, err
+		}
+		out[state] = count
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) ActiveProviderCooldowns(ctx context.Context, tenant string) ([]ProviderCooldown, error) {
+	rows, err := r.pool.Query(ctx, `
+        SELECT tenant, provider, cooldown_until, COALESCE(reason, ''), updated_at
+        FROM media_cache_provider_cooldowns
+        WHERE tenant = $1 AND cooldown_until > now()
+        ORDER BY cooldown_until DESC
+    `, tenant)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProviderCooldown{}
+	for rows.Next() {
+		var c ProviderCooldown
+		if err := rows.Scan(&c.Tenant, &c.Provider, &c.CooldownUntil, &c.Reason, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) RetryFailed(ctx context.Context, tenant string, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	cmd, err := r.pool.Exec(ctx, `
+        WITH candidates AS (
+            SELECT id
+            FROM media_cache_state
+            WHERE tenant = $1
+              AND state IN ('BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY')
+            ORDER BY updated_at ASC
+            LIMIT $2
+        )
+        UPDATE media_cache_state m
+        SET rearm_requested = CASE WHEN m.state IN ('BROKEN', 'FAILED') THEN true ELSE m.rearm_requested END,
+            retry_count = 0,
+            next_retry_at = NULL,
+            last_error = NULL,
+            updated_at = now()
+        FROM candidates
+        WHERE m.id = candidates.id
+    `, tenant, limit)
+	if err != nil {
+		return 0, err
+	}
+	return cmd.RowsAffected(), nil
+}
+
+func (r *Repo) PlexSelfHealWorkItems(ctx context.Context, tenant string, limit int, recentSeconds int) ([]model.MediaCacheState, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	if recentSeconds <= 0 {
+		recentSeconds = 86400
+	}
+	rows, err := r.pool.Query(ctx, `
+        SELECT `+itemSelectColumns+`
+        FROM media_cache_state m
+        WHERE m.tenant = $1
+          AND m.media_type = 'movie'
+          AND m.state = 'AVAILABLE'
+          AND m.symlink_path <> ''
+          AND (
+              m.last_rehydrated IS NOT NULL
+              OR m.last_play_intent_at IS NOT NULL
+          )
+          AND GREATEST(
+              COALESCE(m.last_rehydrated, 'epoch'::timestamptz),
+              COALESCE(m.last_play_intent_at, 'epoch'::timestamptz)
+          ) > now() - ($3::int * interval '1 second')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM media_cache_plex_refreshes pr
+              WHERE pr.tenant = m.tenant
+                AND pr.media_id = m.id
+                AND pr.status = 'success'
+                AND pr.created_at >= GREATEST(
+                    COALESCE(m.last_rehydrated, 'epoch'::timestamptz),
+                    COALESCE(m.last_play_intent_at, 'epoch'::timestamptz)
+                )
+          )
+        ORDER BY GREATEST(
+            COALESCE(m.last_rehydrated, 'epoch'::timestamptz),
+            COALESCE(m.last_play_intent_at, 'epoch'::timestamptz)
+        ) DESC
+        LIMIT $2
+    `, tenant, limit, recentSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
 }
 
 func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, error) {

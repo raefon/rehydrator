@@ -74,41 +74,46 @@ func main() {
 	}
 
 	ctrl := controller.New(controller.Options{
-		Tenant:                     cfg.Tenant,
-		Repo:                       repo,
-		Radarr:                     radarrClient,
-		Sonarr:                     sonarrClient,
-		Decypharr:                  decypharrClient,
-		TorBox:                     torboxClient,
-		CSI:                        csi.NewChecker(cfg.CSIPath),
-		Rclone:                     rcloneClient,
-		Plex:                       plexClient,
-		RadarrCategory:             cfg.DecypharrRadarrCategory,
-		SonarrCategory:             cfg.DecypharrSonarrCategory,
-		DeleteFilesOnPrune:         cfg.DecypharrDeleteFilesOnPrune,
-		PruneEnabled:               cfg.PruneEnabled,
-		RearmEnabled:               cfg.RearmEnabled,
-		MaxPrunesPerRun:            cfg.MaxPrunesPerRun,
-		MaxRearmsPerRun:            cfg.MaxRearmsPerRun,
-		PruneWaitForCSIGone:        cfg.PruneWaitForCSIGone,
-		RearmShortCircuitIfVisible: cfg.RearmShortCircuitIfCSIVisible,
-		RcloneRefreshAfterRearm:    cfg.RcloneRCRefreshAfterRearm,
-		PlexEnabled:                cfg.PlexEnabled,
-		PlexRefreshAfterRearm:      cfg.PlexRefreshAfterRearm,
-		PlexRefreshAfterVisibility: cfg.PlexRefreshAfterVisibility,
-		PlexRefreshAfterPrune:      cfg.PlexRefreshAfterPrune,
-		PlexRefreshDelay:           time.Duration(cfg.PlexRefreshDelaySeconds) * time.Second,
-		PlexRefreshTimeout:         time.Duration(cfg.PlexRefreshTimeoutSeconds) * time.Second,
-		PlexMaxRefreshesPerRun:     cfg.PlexMaxRefreshesPerRun,
-		Interval:                   cfg.ReconcileInterval,
-		CSIWait:                    cfg.CSIWait,
-		CSIVisibilityTimeout:       cfg.CSIVisibilityTimeout,
-		CSIVisibilityPoll:          cfg.CSIVisibilityPoll,
-		CSIVisibilityRetry:         cfg.CSIVisibilityRetry,
-		ProviderCooldown:           cfg.ProviderCooldown,
-		CacheGrace:                 cfg.CacheGrace,
-		MaxRetries:                 cfg.MaxRetries,
-		ConcurrentWorkers:          cfg.ConcurrentWorkers,
+		Tenant:                         cfg.Tenant,
+		Repo:                           repo,
+		Radarr:                         radarrClient,
+		Sonarr:                         sonarrClient,
+		Decypharr:                      decypharrClient,
+		TorBox:                         torboxClient,
+		CSI:                            csi.NewChecker(cfg.CSIPath),
+		Rclone:                         rcloneClient,
+		Plex:                           plexClient,
+		RadarrCategory:                 cfg.DecypharrRadarrCategory,
+		SonarrCategory:                 cfg.DecypharrSonarrCategory,
+		DeleteFilesOnPrune:             cfg.DecypharrDeleteFilesOnPrune,
+		PruneEnabled:                   cfg.PruneEnabled,
+		RearmEnabled:                   cfg.RearmEnabled,
+		MaxPrunesPerRun:                cfg.MaxPrunesPerRun,
+		MaxRearmsPerRun:                cfg.MaxRearmsPerRun,
+		PruneWaitForCSIGone:            cfg.PruneWaitForCSIGone,
+		RearmShortCircuitIfVisible:     cfg.RearmShortCircuitIfCSIVisible,
+		RcloneRefreshAfterRearm:        cfg.RcloneRCRefreshAfterRearm,
+		PlexEnabled:                    cfg.PlexEnabled,
+		PlexRefreshAfterRearm:          cfg.PlexRefreshAfterRearm,
+		PlexRefreshAfterVisibility:     cfg.PlexRefreshAfterVisibility,
+		PlexRefreshAfterPrune:          cfg.PlexRefreshAfterPrune,
+		PlexRefreshDelay:               time.Duration(cfg.PlexRefreshDelaySeconds) * time.Second,
+		PlexRefreshTimeout:             time.Duration(cfg.PlexRefreshTimeoutSeconds) * time.Second,
+		PlexMaxRefreshesPerRun:         cfg.PlexMaxRefreshesPerRun,
+		SelfHealEnabled:                cfg.SelfHealEnabled,
+		SelfHealInterval:               cfg.SelfHealInterval,
+		SelfHealPlexRefreshAvailable:   cfg.SelfHealPlexRefreshAvailable,
+		SelfHealPlexRecentHours:        cfg.SelfHealPlexRecentHours,
+		SelfHealMaxPlexRefreshesPerRun: cfg.SelfHealMaxPlexRefreshesPerRun,
+		Interval:                       cfg.ReconcileInterval,
+		CSIWait:                        cfg.CSIWait,
+		CSIVisibilityTimeout:           cfg.CSIVisibilityTimeout,
+		CSIVisibilityPoll:              cfg.CSIVisibilityPoll,
+		CSIVisibilityRetry:             cfg.CSIVisibilityRetry,
+		ProviderCooldown:               cfg.ProviderCooldown,
+		CacheGrace:                     cfg.CacheGrace,
+		MaxRetries:                     cfg.MaxRetries,
+		ConcurrentWorkers:              cfg.ConcurrentWorkers,
 	})
 
 	slog.Info("rehydrator starting",
@@ -141,6 +146,12 @@ func main() {
 		"plex_refresh_after_visibility", cfg.PlexRefreshAfterVisibility,
 		"plex_refresh_after_prune", cfg.PlexRefreshAfterPrune,
 		"plex_refresh_delay", cfg.PlexRefreshDelaySeconds,
+		"plex_max_refreshes_per_run", cfg.PlexMaxRefreshesPerRun,
+		"self_heal_enabled", cfg.SelfHealEnabled,
+		"self_heal_interval", cfg.SelfHealInterval.String(),
+		"self_heal_plex_refresh_available", cfg.SelfHealPlexRefreshAvailable,
+		"self_heal_plex_recent_hours", cfg.SelfHealPlexRecentHours,
+		"self_heal_max_plex_refreshes_per_run", cfg.SelfHealMaxPlexRefreshesPerRun,
 		"health_addr", cfg.HealthAddr,
 		"api_enabled", cfg.APIEnabled,
 		"api_require_token", cfg.APIRequireToken,
@@ -203,21 +214,27 @@ func main() {
 			if !found {
 				return os.ErrNotExist
 			}
+			targetPath := plexClient.TargetScanPath(item.SymlinkPath)
 			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
 			defer cancel()
-			err = plexClient.RefreshMoviePath(refreshCtx, item.SymlinkPath)
+			slog.Info("manual Plex refresh starting", "arr_id", item.ArrID, "target_path", targetPath)
+			err = plexClient.RefreshPath(refreshCtx, targetPath)
 			status := "success"
 			message := ""
 			if err != nil {
 				status = "failed"
 				message = err.Error()
+				slog.Warn("manual Plex refresh failed", "arr_id", item.ArrID, "target_path", targetPath, "error", err)
+			} else {
+				slog.Info("manual Plex refresh complete", "arr_id", item.ArrID, "target_path", targetPath)
 			}
-			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_movie_refresh", "movie_path", item.SymlinkPath, status, message)
+			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_movie_refresh", "movie_folder", targetPath, status, message)
 			return err
 		}
 		plexRefreshMovies = func(ctx context.Context) error {
 			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
 			defer cancel()
+			slog.Warn("manual whole Plex movie section refresh requested")
 			err := plexClient.RefreshMovies(refreshCtx)
 			status := "success"
 			message := ""
@@ -228,6 +245,22 @@ func main() {
 			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, "", 0, "manual_movies_refresh", "movie_section", "", status, message)
 			return err
 		}
+	}
+
+	dependencyChecks := map[string]func(context.Context) error{
+		"postgres": repo.Ping,
+	}
+	if radarrClient != nil && radarrClient.Configured() {
+		dependencyChecks["radarr"] = radarrClient.Ping
+	}
+	if decypharrClient != nil && decypharrClient.Configured() {
+		dependencyChecks["decypharr"] = decypharrClient.Ping
+	}
+	if seerrClient != nil && seerrClient.Configured() {
+		dependencyChecks["seerr"] = func(ctx context.Context) error { _, err := seerrClient.Requests(ctx, 1); return err }
+	}
+	if plexClient != nil && plexClient.Configured() {
+		dependencyChecks["plex"] = plexClient.Ping
 	}
 
 	var healthServer *health.Server
@@ -248,6 +281,7 @@ func main() {
 			RefreshSeerr:                 refreshSeerr,
 			PlexRefreshMovie:             plexRefreshMovie,
 			PlexRefreshMovies:            plexRefreshMovies,
+			DependencyChecks:             dependencyChecks,
 		})
 	} else {
 		healthServer = health.NewServer(cfg.HealthAddr)

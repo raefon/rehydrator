@@ -78,6 +78,13 @@ plex:
   refresh_timeout_seconds: 20
   max_refreshes_per_run: 5
 
+self_heal:
+  enabled: true
+  interval_seconds: 300
+  plex_refresh_available: true
+  plex_recent_hours: 24
+  max_plex_refreshes_per_run: 5
+
 radarr_sync:
   enabled: true
   interval_seconds: 60
@@ -167,6 +174,13 @@ type Config struct {
 	PlexRefreshDelaySeconds    int
 	PlexRefreshTimeoutSeconds  int
 	PlexMaxRefreshesPerRun     int
+
+	SelfHealEnabled                bool
+	SelfHealIntervalSeconds        int
+	SelfHealPlexRefreshAvailable   bool
+	SelfHealPlexRecentHours        int
+	SelfHealMaxPlexRefreshesPerRun int
+	SelfHealInterval               time.Duration
 
 	RadarrSyncEnabled         bool
 	RadarrSyncIntervalSeconds int
@@ -283,6 +297,14 @@ type fileConfig struct {
 		MaxRefreshesPerRun     int    `yaml:"max_refreshes_per_run"`
 	} `yaml:"plex"`
 
+	SelfHeal struct {
+		Enabled                *bool `yaml:"enabled"`
+		IntervalSeconds        int   `yaml:"interval_seconds"`
+		PlexRefreshAvailable   *bool `yaml:"plex_refresh_available"`
+		PlexRecentHours        int   `yaml:"plex_recent_hours"`
+		MaxPlexRefreshesPerRun int   `yaml:"max_plex_refreshes_per_run"`
+	} `yaml:"self_heal"`
+
 	RadarrSync struct {
 		Enabled         *bool `yaml:"enabled"`
 		IntervalSeconds int   `yaml:"interval_seconds"`
@@ -350,53 +372,58 @@ func Load(configPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
-		RadarrURL:                     "http://radarr:7878",
-		SonarrURL:                     "http://sonarr:8989",
-		DecypharrURL:                  "http://decypharr:8282",
-		DecypharrRadarrCategory:       "radarr",
-		DecypharrSonarrCategory:       "sonarr",
-		DecypharrDeleteFilesOnPrune:   true,
-		CSIPath:                       "/storage/media",
-		HealthAddr:                    ":8080",
-		APIEnabled:                    true,
-		APIRequireToken:               true,
-		MetricsEnabled:                true,
-		PlaybackEnabled:               true,
-		PlaybackRearmOnPlay:           true,
-		PlaybackCooldownSeconds:       60,
-		PlaybackIgnoredTitles:         []string{"rehydrator-preroll"},
-		PlaybackIgnoredTitleContains:  []string{"preroll", "pre-roll"},
-		PlexURL:                       "http://plex:32400",
-		PlexRefreshAfterRearm:         true,
-		PlexRefreshAfterVisibility:    true,
-		PlexRefreshAfterPrune:         false,
-		PlexRefreshDelaySeconds:       45,
-		PlexRefreshTimeoutSeconds:     20,
-		PlexMaxRefreshesPerRun:        5,
-		RadarrSyncEnabled:             true,
-		RadarrSyncIntervalSeconds:     60,
-		SeerrURL:                      "http://seerr:5055",
-		SeerrSyncEnabled:              false,
-		SeerrSyncIntervalSeconds:      120,
-		SeerrSyncLimit:                100,
-		PruneEnabled:                  true,
-		RearmEnabled:                  true,
-		MaxPrunesPerRun:               5,
-		MaxRearmsPerRun:               3,
-		PruneWaitForCSIGone:           false,
-		RearmShortCircuitIfCSIVisible: false,
-		ReconcileIntervalSeconds:      30,
-		CSIWaitSeconds:                900,
-		CSIVisibilityTimeoutSeconds:   900,
-		CSIVisibilityPollSeconds:      10,
-		CSIVisibilityRetrySeconds:     60,
-		ProviderCooldownSeconds:       900,
-		RcloneRCURL:                   "http://localhost:5572",
-		RcloneRCTimeoutSeconds:        10,
-		CacheGraceHours:               24,
-		MaxRetries:                    10,
-		ConcurrentWorkers:             2,
-		DBAutoMigrate:                 false,
+		RadarrURL:                      "http://radarr:7878",
+		SonarrURL:                      "http://sonarr:8989",
+		DecypharrURL:                   "http://decypharr:8282",
+		DecypharrRadarrCategory:        "radarr",
+		DecypharrSonarrCategory:        "sonarr",
+		DecypharrDeleteFilesOnPrune:    true,
+		CSIPath:                        "/storage/media",
+		HealthAddr:                     ":8080",
+		APIEnabled:                     true,
+		APIRequireToken:                true,
+		MetricsEnabled:                 true,
+		PlaybackEnabled:                true,
+		PlaybackRearmOnPlay:            true,
+		PlaybackCooldownSeconds:        60,
+		PlaybackIgnoredTitles:          []string{"rehydrator-preroll"},
+		PlaybackIgnoredTitleContains:   []string{"preroll", "pre-roll"},
+		PlexURL:                        "http://plex:32400",
+		PlexRefreshAfterRearm:          true,
+		PlexRefreshAfterVisibility:     true,
+		PlexRefreshAfterPrune:          false,
+		PlexRefreshDelaySeconds:        45,
+		PlexRefreshTimeoutSeconds:      20,
+		PlexMaxRefreshesPerRun:         5,
+		SelfHealEnabled:                true,
+		SelfHealIntervalSeconds:        300,
+		SelfHealPlexRefreshAvailable:   true,
+		SelfHealPlexRecentHours:        24,
+		SelfHealMaxPlexRefreshesPerRun: 5,
+		RadarrSyncEnabled:              true,
+		RadarrSyncIntervalSeconds:      60,
+		SeerrURL:                       "http://seerr:5055",
+		SeerrSyncEnabled:               false,
+		SeerrSyncIntervalSeconds:       120,
+		SeerrSyncLimit:                 100,
+		PruneEnabled:                   true,
+		RearmEnabled:                   true,
+		MaxPrunesPerRun:                5,
+		MaxRearmsPerRun:                3,
+		PruneWaitForCSIGone:            false,
+		RearmShortCircuitIfCSIVisible:  false,
+		ReconcileIntervalSeconds:       30,
+		CSIWaitSeconds:                 900,
+		CSIVisibilityTimeoutSeconds:    900,
+		CSIVisibilityPollSeconds:       10,
+		CSIVisibilityRetrySeconds:      60,
+		ProviderCooldownSeconds:        900,
+		RcloneRCURL:                    "http://localhost:5572",
+		RcloneRCTimeoutSeconds:         10,
+		CacheGraceHours:                24,
+		MaxRetries:                     10,
+		ConcurrentWorkers:              2,
+		DBAutoMigrate:                  false,
 	}
 }
 
@@ -560,6 +587,21 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.Plex.MaxRefreshesPerRun > 0 {
 		cfg.PlexMaxRefreshesPerRun = fc.Plex.MaxRefreshesPerRun
 	}
+	if fc.SelfHeal.Enabled != nil {
+		cfg.SelfHealEnabled = *fc.SelfHeal.Enabled
+	}
+	if fc.SelfHeal.IntervalSeconds > 0 {
+		cfg.SelfHealIntervalSeconds = fc.SelfHeal.IntervalSeconds
+	}
+	if fc.SelfHeal.PlexRefreshAvailable != nil {
+		cfg.SelfHealPlexRefreshAvailable = *fc.SelfHeal.PlexRefreshAvailable
+	}
+	if fc.SelfHeal.PlexRecentHours > 0 {
+		cfg.SelfHealPlexRecentHours = fc.SelfHeal.PlexRecentHours
+	}
+	if fc.SelfHeal.MaxPlexRefreshesPerRun > 0 {
+		cfg.SelfHealMaxPlexRefreshesPerRun = fc.SelfHeal.MaxPlexRefreshesPerRun
+	}
 	if fc.RadarrSync.Enabled != nil {
 		cfg.RadarrSyncEnabled = *fc.RadarrSync.Enabled
 	}
@@ -675,6 +717,11 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.PlexRefreshDelaySeconds = getenvInt("PLEX_REFRESH_DELAY_SECONDS", cfg.PlexRefreshDelaySeconds)
 	cfg.PlexRefreshTimeoutSeconds = getenvInt("PLEX_REFRESH_TIMEOUT_SECONDS", cfg.PlexRefreshTimeoutSeconds)
 	cfg.PlexMaxRefreshesPerRun = getenvInt("PLEX_MAX_REFRESHES_PER_RUN", cfg.PlexMaxRefreshesPerRun)
+	cfg.SelfHealEnabled = getenvBool("SELF_HEAL_ENABLED", cfg.SelfHealEnabled)
+	cfg.SelfHealIntervalSeconds = getenvInt("SELF_HEAL_INTERVAL_SECONDS", cfg.SelfHealIntervalSeconds)
+	cfg.SelfHealPlexRefreshAvailable = getenvBool("SELF_HEAL_PLEX_REFRESH_AVAILABLE", cfg.SelfHealPlexRefreshAvailable)
+	cfg.SelfHealPlexRecentHours = getenvInt("SELF_HEAL_PLEX_RECENT_HOURS", cfg.SelfHealPlexRecentHours)
+	cfg.SelfHealMaxPlexRefreshesPerRun = getenvInt("SELF_HEAL_MAX_PLEX_REFRESHES_PER_RUN", cfg.SelfHealMaxPlexRefreshesPerRun)
 	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
 	cfg.PruneEnabled = getenvBool("PRUNE_ENABLED", cfg.PruneEnabled)
@@ -728,7 +775,17 @@ func hydrateDurations(cfg *Config) {
 	cfg.CacheGrace = time.Duration(cfg.CacheGraceHours) * time.Hour
 	cfg.RadarrSyncInterval = time.Duration(cfg.RadarrSyncIntervalSeconds) * time.Second
 	cfg.SeerrSyncInterval = time.Duration(cfg.SeerrSyncIntervalSeconds) * time.Second
+	if cfg.SelfHealIntervalSeconds <= 0 {
+		cfg.SelfHealIntervalSeconds = 300
+	}
+	if cfg.SelfHealPlexRecentHours <= 0 {
+		cfg.SelfHealPlexRecentHours = 24
+	}
+	if cfg.SelfHealMaxPlexRefreshesPerRun <= 0 {
+		cfg.SelfHealMaxPlexRefreshesPerRun = 5
+	}
 	cfg.PlaybackCooldown = time.Duration(cfg.PlaybackCooldownSeconds) * time.Second
+	cfg.SelfHealInterval = time.Duration(cfg.SelfHealIntervalSeconds) * time.Second
 }
 
 func validate(cfg Config) error {

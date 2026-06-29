@@ -35,3 +35,13 @@ psql "$POSTGRES_URL" -f migrations/012_plex_library_hygiene.sql
 | `010_playback_ignore_preroll.sql` | Pre-roll ignore audit |
 | `011_visibility_provider_cooldown.sql` | WAITING_FOR_VISIBILITY and cooldowns |
 | `012_plex_library_hygiene.sql` | Plex refresh audit |
+
+## 013_ops_self_heal.sql
+
+Adds indexes for the v0.3.2 operational endpoints and the self-healing Plex refresh worker that was originally planned for v0.3.3.
+
+Run after upgrading to the combined v0.3.2 package:
+
+```bash
+psql "$POSTGRES_URL" -f migrations/013_ops_self_heal.sql
+```

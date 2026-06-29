@@ -106,3 +106,10 @@ plex:
   refresh_delay_seconds: 45
   refresh_timeout_seconds: 20
   max_refreshes_per_run: 5
+
+self_heal:
+  enabled: true
+  interval_seconds: 300
+  plex_refresh_available: true
+  plex_recent_hours: 24
+  max_plex_refreshes_per_run: 5

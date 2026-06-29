@@ -69,3 +69,32 @@ POST /api/plex/refresh/movies
 ```
 
 Use these to clear stale Plex unavailable indicators after Rehydrator restores files.
+
+## Operational / admin endpoints
+
+```text
+GET  /api/state/summary
+GET  /api/health/dependencies
+GET  /api/admin/cooldowns
+POST /api/admin/retry-failed?limit=10
+```
+
+### GET /api/state/summary
+
+Returns counts by lifecycle state for the current tenant. This is the fastest way to see whether items are piling up in `WAITING_FOR_VISIBILITY`, `FAILED`, or `ARCHIVED`.
+
+### GET /api/health/dependencies
+
+Checks configured runtime dependencies such as Postgres, Radarr, Decypharr, Seerr, and Plex. It returns HTTP 200 when all checked dependencies pass and HTTP 503 when one or more fail.
+
+### GET /api/admin/cooldowns
+
+Shows active provider cooldowns. This is useful after TorBox/Decypharr rate limits or 429 responses.
+
+### POST /api/admin/retry-failed?limit=10
+
+Clears retry counters and retry delay for `BROKEN`, `FAILED`, and `WAITING_FOR_VISIBILITY` rows. For failed/broken rows it also requests re-arm again. Use this after fixing provider credentials, rate limits, or CSI/rclone visibility issues.
+
+## Plex refresh behavior
+
+`POST /api/plex/refresh/movie/{radarr_id}` now refreshes the movie folder path only, not the whole Plex library section. Whole-section refresh remains available through `POST /api/plex/refresh/movies`, but it should be used sparingly.

@@ -153,3 +153,18 @@ seerr.api_key
 api.token
 plex.token
 ```
+
+## Self-heal worker
+
+```yaml
+self_heal:
+  enabled: true
+  interval_seconds: 300
+  plex_refresh_available: true
+  plex_recent_hours: 24
+  max_plex_refreshes_per_run: 5
+```
+
+The self-heal worker covers the v0.3.3 behavior inside the v0.3.2 package. It periodically queues targeted Plex refreshes for recently rehydrated or recently played `AVAILABLE` movies that have not had a successful Plex refresh since that event.
+
+It does not scan the whole library, and it does not refresh after prune.

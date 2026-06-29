@@ -281,7 +281,11 @@ func main() {
 			RefreshSeerr:                 refreshSeerr,
 			PlexRefreshMovie:             plexRefreshMovie,
 			PlexRefreshMovies:            plexRefreshMovies,
-			DependencyChecks:             dependencyChecks,
+			SelfHealRun: func(runCtx context.Context) error {
+				ctrl.RunSelfHealOnce(runCtx)
+				return nil
+			},
+			DependencyChecks: dependencyChecks,
 		})
 	} else {
 		healthServer = health.NewServer(cfg.HealthAddr)

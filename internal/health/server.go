@@ -37,6 +37,7 @@ type APIOptions struct {
 	RefreshSeerr                 func(context.Context) error
 	PlexRefreshMovie             func(context.Context, int) error
 	PlexRefreshMovies            func(context.Context) error
+	SelfHealRun                  func(context.Context) error
 	DependencyChecks             map[string]func(context.Context) error
 }
 
@@ -84,6 +85,7 @@ func newServer(opt APIOptions) *Server {
 			refreshSeerr:                 opt.RefreshSeerr,
 			plexRefreshMovie:             opt.PlexRefreshMovie,
 			plexRefreshMovies:            opt.PlexRefreshMovies,
+			selfHealRun:                  opt.SelfHealRun,
 			dependencyChecks:             opt.DependencyChecks,
 		}
 		mux.HandleFunc("/metrics", api.handleMetrics)
@@ -94,6 +96,8 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/state/summary", api.handleStateSummary)
 		mux.HandleFunc("/api/health/dependencies", api.handleDependencyHealth)
 		mux.HandleFunc("/api/admin/cooldowns", api.handleAdminCooldowns)
+		mux.HandleFunc("/api/admin/invalid-rows", api.handleAdminInvalidRows)
+		mux.HandleFunc("/api/admin/self-heal/run", api.handleAdminSelfHealRun)
 		mux.HandleFunc("/api/admin/retry-failed", api.handleAdminRetryFailed)
 		mux.HandleFunc("/api/refresh/radarr", api.handleRefreshRadarr)
 		mux.HandleFunc("/api/refresh/seerr", api.handleRefreshSeerr)
@@ -148,6 +152,7 @@ type apiHandler struct {
 	refreshSeerr                 func(context.Context) error
 	plexRefreshMovie             func(context.Context, int) error
 	plexRefreshMovies            func(context.Context) error
+	selfHealRun                  func(context.Context) error
 	dependencyChecks             map[string]func(context.Context) error
 }
 
@@ -350,6 +355,49 @@ func (h *apiHandler) handleAdminCooldowns(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": h.tenant, "cooldowns": cooldowns})
+}
+
+func (h *apiHandler) handleAdminInvalidRows(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	rows, err := h.repo.InvalidMediaRows(r.Context(), h.tenant, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": h.tenant, "count": len(rows), "invalid_rows": rows})
+}
+
+func (h *apiHandler) handleAdminSelfHealRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	if h.selfHealRun == nil {
+		http.Error(w, "self-heal runner is not configured", http.StatusNotFound)
+		return
+	}
+	if err := h.selfHealRun(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "tenant": h.tenant, "action": "self_heal_run"})
 }
 
 func (h *apiHandler) handleAdminRetryFailed(w http.ResponseWriter, r *http.Request) {

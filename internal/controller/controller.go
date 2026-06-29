@@ -132,6 +132,9 @@ func New(opt Options) *Controller {
 }
 
 func (c *Controller) Run(ctx context.Context) error {
+	if c.opt.SelfHealEnabled {
+		slog.Info("self-heal worker starting", "interval", c.opt.SelfHealInterval, "plex_refresh_available", c.opt.SelfHealPlexRefreshAvailable, "recent_hours", c.opt.SelfHealPlexRecentHours, "max_plex_refreshes_per_run", c.opt.SelfHealMaxPlexRefreshesPerRun)
+	}
 	ticker := time.NewTicker(c.opt.Interval)
 	defer ticker.Stop()
 
@@ -201,24 +204,34 @@ func (c *Controller) reconcileSelfHeal(ctx context.Context) {
 	}
 	c.lastSelfHeal = time.Now()
 	c.selfHealMu.Unlock()
+	c.runSelfHealPass(ctx, "scheduled")
+}
 
+func (c *Controller) RunSelfHealOnce(ctx context.Context) {
+	c.runSelfHealPass(ctx, "manual")
+}
+
+func (c *Controller) runSelfHealPass(ctx context.Context, source string) {
 	if !c.opt.SelfHealPlexRefreshAvailable {
+		slog.Info("self-heal skipped", "source", source, "reason", "plex_refresh_available_disabled")
 		return
 	}
 	if !c.opt.PlexEnabled || c.opt.Plex == nil || !c.opt.Plex.Configured() || c.opt.Repo == nil {
+		slog.Info("self-heal skipped", "source", source, "reason", "plex_not_configured_or_repo_missing")
 		return
 	}
 
 	recentSeconds := c.opt.SelfHealPlexRecentHours * 3600
 	items, err := c.opt.Repo.PlexSelfHealWorkItems(ctx, c.opt.Tenant, c.opt.SelfHealMaxPlexRefreshesPerRun, recentSeconds)
 	if err != nil {
-		slog.Warn("self-heal Plex refresh lookup failed", "error", err)
+		slog.Warn("self-heal Plex refresh lookup failed", "source", source, "error", err)
 		return
 	}
 	if len(items) == 0 {
+		slog.Info("self-heal pass complete", "source", source, "scanned_recent_hours", c.opt.SelfHealPlexRecentHours, "plex_refresh_candidates", 0)
 		return
 	}
-	slog.Info("self-heal queued Plex refresh candidates", "count", len(items), "recent_hours", c.opt.SelfHealPlexRecentHours)
+	slog.Info("self-heal queued Plex refresh candidates", "source", source, "count", len(items), "recent_hours", c.opt.SelfHealPlexRecentHours)
 	for _, item := range items {
 		c.schedulePlexRefresh(ctx, item, "self_heal_available", true)
 	}
@@ -255,6 +268,14 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		"state", item.State,
 	)
 
+	if ok, reason := itemRearmable(item); !ok {
+		log.Info("rearm skipped; metadata incomplete", "reason", reason)
+		_ = c.opt.Repo.MarkRequestedMetadataPending(ctx, item.ID, reason)
+		payload, _ := json.Marshal(map[string]string{"reason": reason})
+		_ = c.opt.Repo.Event(ctx, item.ID, "rearm_skipped_incomplete_metadata", string(payload))
+		return
+	}
+
 	pathVisible := c.opt.CSI.Exists(item.SymlinkPath)
 	if pathVisible && c.opt.RearmShortCircuitIfVisible {
 		log.Info("file already visible through CSI; marking available", "rearm_short_circuit_if_visible", true)
@@ -281,6 +302,14 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 
 	torrent, err := arrClient.LatestGrabbedTorrent(ctx, item.ArrID, item.MediaType)
 	if err != nil {
+		if isMissingHistoryError(err) {
+			reason := "missing Radarr grabbed/import history; keeping item REQUESTED until metadata is available"
+			log.Info("rearm skipped; missing Arr history metadata", "reason", reason, "error", err)
+			_ = c.opt.Repo.MarkRequestedMetadataPending(ctx, item.ID, reason)
+			payload, _ := json.Marshal(map[string]string{"reason": reason, "error": err.Error()})
+			_ = c.opt.Repo.Event(ctx, item.ID, "rearm_skipped_missing_arr_history", string(payload))
+			return
+		}
 		c.fail(ctx, item, err)
 		return
 	}
@@ -313,6 +342,13 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		"client":   "decypharr",
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_readd_requested", string(addJSON))
+	if ok, reason := itemHasUsablePath(item); !ok {
+		log.Info("visibility check skipped; metadata incomplete", "reason", reason)
+		_ = c.opt.Repo.MarkRequestedMetadataPending(ctx, item.ID, reason)
+		payload, _ := json.Marshal(map[string]string{"reason": reason})
+		_ = c.opt.Repo.Event(ctx, item.ID, "visibility_skipped_incomplete_metadata", string(payload))
+		return
+	}
 	c.refreshRclone(ctx, item.SymlinkPath)
 
 	if ok := c.waitForCSI(ctx, item.SymlinkPath); !ok {
@@ -454,6 +490,13 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 		"arr_id", item.ArrID,
 		"path", item.SymlinkPath,
 	)
+	if ok, reason := itemHasUsablePath(item); !ok {
+		log.Info("visibility check skipped; metadata incomplete", "reason", reason)
+		_ = c.opt.Repo.MarkRequestedMetadataPending(ctx, item.ID, reason)
+		payload, _ := json.Marshal(map[string]string{"reason": reason})
+		_ = c.opt.Repo.Event(ctx, item.ID, "visibility_skipped_incomplete_metadata", string(payload))
+		return
+	}
 	c.refreshRclone(ctx, item.SymlinkPath)
 	if !c.opt.CSI.Exists(item.SymlinkPath) {
 		msg := "waiting for CSI/rclone mount visibility after successful Decypharr add"
@@ -552,6 +595,9 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 }
 
 func (c *Controller) refreshRclone(ctx context.Context, path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
 	if !c.opt.RcloneRefreshAfterRearm || c.opt.Rclone == nil || !c.opt.Rclone.Configured() {
 		return
 	}
@@ -599,6 +645,9 @@ func isRateLimited(err error) bool {
 }
 
 func (c *Controller) waitForCSI(ctx context.Context, path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
 	deadline := time.Now().Add(c.opt.CSIVisibilityTimeout)
 	for time.Now().Before(deadline) {
 		if c.opt.CSI.Exists(path) {
@@ -615,6 +664,9 @@ func (c *Controller) waitForCSI(ctx context.Context, path string) bool {
 }
 
 func (c *Controller) waitForCSIGone(ctx context.Context, path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return true
+	}
 	deadline := time.Now().Add(c.opt.CSIWait)
 	for time.Now().Before(deadline) {
 		if !c.opt.CSI.Exists(path) {
@@ -640,6 +692,31 @@ func (c *Controller) fail(ctx context.Context, item model.MediaCacheState, err e
 	_ = c.opt.Repo.MarkFailed(ctx, item.ID, err.Error(), c.opt.MaxRetries)
 	payload, _ := json.Marshal(map[string]string{"error": err.Error()})
 	_ = c.opt.Repo.Event(ctx, item.ID, "failed", string(payload))
+}
+
+func itemHasUsablePath(item model.MediaCacheState) (bool, string) {
+	if item.ArrID <= 0 {
+		return false, "placeholder or invalid arr_id"
+	}
+	if strings.TrimSpace(item.SymlinkPath) == "" {
+		return false, "missing symlink_path"
+	}
+	return true, ""
+}
+
+func itemRearmable(item model.MediaCacheState) (bool, string) {
+	if item.State == model.StateRequested {
+		return false, "REQUESTED rows are pending import and are not rearmable"
+	}
+	return itemHasUsablePath(item)
+}
+
+func isMissingHistoryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no matching movie history records") || strings.Contains(msg, "no matching series history records") || strings.Contains(msg, "no matching") && strings.Contains(msg, "history")
 }
 
 func valueOrEmpty(s *string) string {

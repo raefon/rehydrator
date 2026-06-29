@@ -15,6 +15,9 @@ func NewChecker(base string) *Checker {
 }
 
 func (c *Checker) Exists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
 	candidates := []string{path}
 
 	if c.base != "" {

@@ -98,3 +98,23 @@ Clears retry counters and retry delay for `BROKEN`, `FAILED`, and `WAITING_FOR_V
 ## Plex refresh behavior
 
 `POST /api/plex/refresh/movie/{radarr_id}` now refreshes the movie folder path only, not the whole Plex library section. Whole-section refresh remains available through `POST /api/plex/refresh/movies`, but it should be used sparingly.
+
+## Metadata guardrail admin endpoints
+
+### GET `/api/admin/invalid-rows`
+
+Returns rows that look unsafe for prune/re-arm work, such as placeholder IDs, rearmable states with no `symlink_path`, or available/archive rows with missing `infohash`.
+
+```bash
+curl -s -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:8080/api/admin/invalid-rows?limit=100 | jq
+```
+
+### POST `/api/admin/self-heal/run`
+
+Runs one self-heal pass immediately instead of waiting for the scheduled interval.
+
+```bash
+curl -i -X POST -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:8080/api/admin/self-heal/run
+```

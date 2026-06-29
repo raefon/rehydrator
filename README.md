@@ -161,3 +161,12 @@ csi.visibility_timeout_seconds: 900
 That is intentional for TorBox/WebDAV/CSI-rclone stacks.
 
 Plex refreshes are targeted by default: Rehydrator scans the restored movie folder path first, not the whole movie library. Whole-section scans are available only as a manual repair endpoint.
+
+## v0.3.3 metadata guardrails
+
+This package prevents incomplete `REQUESTED`/placeholder rows from entering the re-arm loop. Rows without a real imported `symlink_path` stay pending until Radarr import/sync supplies the path and torrent metadata.
+
+New admin helpers:
+
+- `GET /api/admin/invalid-rows`
+- `POST /api/admin/self-heal/run`

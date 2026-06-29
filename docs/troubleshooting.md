@@ -101,3 +101,25 @@ WHERE tenant = 'tenet-nofear101'
 ORDER BY updated_at DESC
 LIMIT 20;
 ```
+
+## Metadata guardrails
+
+`REQUESTED` rows are pending import metadata. They should not be re-armed until Radarr imports a real file and Rehydrator has a non-empty `symlink_path`.
+
+Useful checks:
+
+```sql
+SELECT arr_id, arr_title, tmdb_id, state, symlink_path, infohash, last_error, updated_at
+FROM media_cache_state
+WHERE tenant = 'tenet-nofear101'
+  AND media_type = 'movie'
+  AND state = 'REQUESTED'
+ORDER BY updated_at DESC;
+```
+
+```bash
+curl -s -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:8080/api/admin/invalid-rows | jq
+```
+
+The retry endpoint intentionally skips rows with empty `symlink_path` so incomplete request placeholders are not promoted into `REARMING`.

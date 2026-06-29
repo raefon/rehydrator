@@ -133,7 +133,9 @@ func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([
             SELECT id
             FROM media_cache_state
             WHERE rearm_requested = true
-              AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')
+              AND state IN ('ARCHIVED', 'BROKEN', 'FAILED')
+              AND arr_id > 0
+              AND COALESCE(symlink_path, '') <> ''
               AND retry_count < $1
               AND (next_retry_at IS NULL OR next_retry_at <= now())
             ORDER BY updated_at ASC
@@ -211,6 +213,8 @@ func (r *Repo) VisibilityWorkItems(ctx context.Context, limit int) ([]model.Medi
             FROM media_cache_state
             WHERE state = 'WAITING_FOR_VISIBILITY'
               AND rearm_requested = true
+              AND arr_id > 0
+              AND COALESCE(symlink_path, '') <> ''
               AND (next_retry_at IS NULL OR next_retry_at <= now())
             ORDER BY updated_at ASC
             LIMIT $1
@@ -523,6 +527,8 @@ func (r *Repo) RequestRearmByTMDB(ctx context.Context, tenant string, mediaType 
           AND media_type = $2
           AND tmdb_id = $3
           AND arr_id > 0
+          AND COALESCE(symlink_path, '') <> ''
+          AND state <> 'REQUESTED'
           `+statePredicate+`
         RETURNING `+itemSelectColumns+`
     `, tenant, mediaType, tmdbID)
@@ -549,7 +555,9 @@ func (r *Repo) RequestRearmByArrIDIfArchived(ctx context.Context, tenant string,
         WHERE tenant = $1
           AND media_type = $2
           AND arr_id = $3
-          AND state IN ('REQUESTED', 'ARCHIVED', 'BROKEN', 'FAILED')
+          AND arr_id > 0
+          AND COALESCE(symlink_path, '') <> ''
+          AND state IN ('ARCHIVED', 'BROKEN', 'FAILED')
         RETURNING `+itemSelectColumns+`
     `, tenant, mediaType, arrID)
 	item, err := scanItem(row)
@@ -575,6 +583,9 @@ func (r *Repo) RequestRearm(ctx context.Context, tenant string, mediaType model.
         WHERE tenant = $1
           AND media_type = $2
           AND arr_id = $3
+          AND arr_id > 0
+          AND COALESCE(symlink_path, '') <> ''
+          AND state <> 'REQUESTED'
         RETURNING `+itemSelectColumns+`
     `, tenant, mediaType, arrID)
 	return scanItem(row)
@@ -856,6 +867,80 @@ func (r *Repo) MarkFailed(ctx context.Context, id string, msg string, maxRetries
 	return err
 }
 
+func (r *Repo) MarkRequestedMetadataPending(ctx context.Context, id string, reason string) error {
+	_, err := r.pool.Exec(ctx, `
+        UPDATE media_cache_state
+        SET state = 'REQUESTED',
+            rearm_requested = false,
+            retry_count = 0,
+            next_retry_at = NULL,
+            last_checked = now(),
+            last_error = NULL
+        WHERE id = $1
+    `, id)
+	return err
+}
+
+type InvalidMediaRow struct {
+	ID          string    `json:"id"`
+	ArrID       int       `json:"arr_id"`
+	ArrTitle    string    `json:"arr_title"`
+	TMDBID      int       `json:"tmdb_id"`
+	State       string    `json:"state"`
+	SymlinkPath string    `json:"symlink_path"`
+	InfoHash    string    `json:"infohash"`
+	Reason      string    `json:"reason"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (r *Repo) InvalidMediaRows(ctx context.Context, tenant string, limit int) ([]InvalidMediaRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+        SELECT
+            id::text,
+            arr_id,
+            COALESCE(arr_title, ''),
+            COALESCE(tmdb_id, 0),
+            state,
+            COALESCE(symlink_path, ''),
+            COALESCE(infohash, ''),
+            CASE
+                WHEN arr_id <= 0 THEN 'placeholder_arr_id'
+                WHEN state IN ('ARCHIVED', 'BROKEN', 'FAILED', 'REARMING', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(symlink_path), '') = '' THEN 'missing_symlink_path_for_rearmable_state'
+                WHEN state IN ('AVAILABLE', 'ARCHIVED', 'BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(infohash), '') = '' THEN 'missing_infohash'
+                WHEN state = 'REQUESTED' AND COALESCE(BTRIM(symlink_path), '') <> '' THEN 'requested_row_has_path'
+                ELSE 'unknown'
+            END AS reason,
+            updated_at
+        FROM media_cache_state
+        WHERE tenant = $1
+          AND media_type = 'movie'
+          AND (
+              arr_id <= 0
+              OR (state IN ('ARCHIVED', 'BROKEN', 'FAILED', 'REARMING', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(symlink_path), '') = '')
+              OR (state IN ('AVAILABLE', 'ARCHIVED', 'BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(infohash), '') = '')
+              OR (state = 'REQUESTED' AND COALESCE(BTRIM(symlink_path), '') <> '')
+          )
+        ORDER BY updated_at DESC
+        LIMIT $2
+    `, tenant, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []InvalidMediaRow{}
+	for rows.Next() {
+		var row InvalidMediaRow
+		if err := rows.Scan(&row.ID, &row.ArrID, &row.ArrTitle, &row.TMDBID, &row.State, &row.SymlinkPath, &row.InfoHash, &row.Reason, &row.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) SetProviderCooldown(ctx context.Context, tenant string, provider string, duration time.Duration, reason string) error {
 	if duration <= 0 || provider == "" {
 		return nil
@@ -970,6 +1055,8 @@ func (r *Repo) RetryFailed(ctx context.Context, tenant string, limit int) (int64
             FROM media_cache_state
             WHERE tenant = $1
               AND state IN ('BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY')
+              AND arr_id > 0
+              AND COALESCE(symlink_path, '') <> ''
             ORDER BY updated_at ASC
             LIMIT $2
         )
@@ -1001,7 +1088,7 @@ func (r *Repo) PlexSelfHealWorkItems(ctx context.Context, tenant string, limit i
         WHERE m.tenant = $1
           AND m.media_type = 'movie'
           AND m.state = 'AVAILABLE'
-          AND m.symlink_path <> ''
+          AND COALESCE(BTRIM(m.symlink_path), '') <> ''
           AND (
               m.last_rehydrated IS NOT NULL
               OR m.last_play_intent_at IS NOT NULL

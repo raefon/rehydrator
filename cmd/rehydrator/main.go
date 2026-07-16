@@ -147,6 +147,7 @@ func main() {
 		"plex_refresh_after_prune", cfg.PlexRefreshAfterPrune,
 		"plex_refresh_delay", cfg.PlexRefreshDelaySeconds,
 		"plex_max_refreshes_per_run", cfg.PlexMaxRefreshesPerRun,
+		"plex_refresh_dedupe", cfg.PlexRefreshDedupe,
 		"self_heal_enabled", cfg.SelfHealEnabled,
 		"self_heal_interval", cfg.SelfHealInterval.String(),
 		"self_heal_plex_refresh_available", cfg.SelfHealPlexRefreshAvailable,

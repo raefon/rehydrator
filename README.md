@@ -160,7 +160,15 @@ csi.visibility_timeout_seconds: 900
 
 That is intentional for TorBox/WebDAV/CSI-rclone stacks.
 
-Plex refreshes are targeted by default: Rehydrator scans the restored movie folder path first, not the whole movie library. Whole-section scans are available only as a manual repair endpoint.
+Plex refreshes are targeted by default: Rehydrator scans the restored movie folder path first, not the whole movie library. Whole-section scans are available only as a manual repair endpoint. v0.3.4 adds a dedupe/cooldown window so `rehydration_complete` and `self_heal_available` do not scan the same movie folder twice at the same time.
+
+## v0.3.4 Plex refresh dedupe
+
+This package adds duplicate suppression for automated Plex refreshes. If the same tenant/media/folder path is already queued or was successfully refreshed within `plex.refresh_dedupe_minutes`, later automated refresh attempts are recorded as `skipped` with a `deduped` message.
+
+New helper:
+
+- `GET /api/plex/refreshes/recent?limit=20`
 
 ## v0.3.3 metadata guardrails
 

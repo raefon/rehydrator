@@ -77,6 +77,9 @@ plex:
   refresh_delay_seconds: 45
   refresh_timeout_seconds: 20
   max_refreshes_per_run: 5
+  # Dedupe/cooldown for duplicate automated Plex folder refreshes.
+  # Prevents rehydration_complete and self_heal_available from refreshing the same folder at the same time.
+  refresh_dedupe_minutes: 10
 
 self_heal:
   enabled: true
@@ -174,6 +177,8 @@ type Config struct {
 	PlexRefreshDelaySeconds    int
 	PlexRefreshTimeoutSeconds  int
 	PlexMaxRefreshesPerRun     int
+	PlexRefreshDedupeMinutes   int
+	PlexRefreshDedupe          time.Duration
 
 	SelfHealEnabled                bool
 	SelfHealIntervalSeconds        int
@@ -295,6 +300,7 @@ type fileConfig struct {
 		RefreshDelaySeconds    int    `yaml:"refresh_delay_seconds"`
 		RefreshTimeoutSeconds  int    `yaml:"refresh_timeout_seconds"`
 		MaxRefreshesPerRun     int    `yaml:"max_refreshes_per_run"`
+		RefreshDedupeMinutes   int    `yaml:"refresh_dedupe_minutes"`
 	} `yaml:"plex"`
 
 	SelfHeal struct {
@@ -395,6 +401,7 @@ func defaults() Config {
 		PlexRefreshDelaySeconds:        45,
 		PlexRefreshTimeoutSeconds:      20,
 		PlexMaxRefreshesPerRun:         5,
+		PlexRefreshDedupeMinutes:       10,
 		SelfHealEnabled:                true,
 		SelfHealIntervalSeconds:        300,
 		SelfHealPlexRefreshAvailable:   true,
@@ -587,6 +594,9 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.Plex.MaxRefreshesPerRun > 0 {
 		cfg.PlexMaxRefreshesPerRun = fc.Plex.MaxRefreshesPerRun
 	}
+	if fc.Plex.RefreshDedupeMinutes > 0 {
+		cfg.PlexRefreshDedupeMinutes = fc.Plex.RefreshDedupeMinutes
+	}
 	if fc.SelfHeal.Enabled != nil {
 		cfg.SelfHealEnabled = *fc.SelfHeal.Enabled
 	}
@@ -717,6 +727,7 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.PlexRefreshDelaySeconds = getenvInt("PLEX_REFRESH_DELAY_SECONDS", cfg.PlexRefreshDelaySeconds)
 	cfg.PlexRefreshTimeoutSeconds = getenvInt("PLEX_REFRESH_TIMEOUT_SECONDS", cfg.PlexRefreshTimeoutSeconds)
 	cfg.PlexMaxRefreshesPerRun = getenvInt("PLEX_MAX_REFRESHES_PER_RUN", cfg.PlexMaxRefreshesPerRun)
+	cfg.PlexRefreshDedupeMinutes = getenvInt("PLEX_REFRESH_DEDUPE_MINUTES", cfg.PlexRefreshDedupeMinutes)
 	cfg.SelfHealEnabled = getenvBool("SELF_HEAL_ENABLED", cfg.SelfHealEnabled)
 	cfg.SelfHealIntervalSeconds = getenvInt("SELF_HEAL_INTERVAL_SECONDS", cfg.SelfHealIntervalSeconds)
 	cfg.SelfHealPlexRefreshAvailable = getenvBool("SELF_HEAL_PLEX_REFRESH_AVAILABLE", cfg.SelfHealPlexRefreshAvailable)
@@ -784,6 +795,10 @@ func hydrateDurations(cfg *Config) {
 	if cfg.SelfHealMaxPlexRefreshesPerRun <= 0 {
 		cfg.SelfHealMaxPlexRefreshesPerRun = 5
 	}
+	if cfg.PlexRefreshDedupeMinutes <= 0 {
+		cfg.PlexRefreshDedupeMinutes = 10
+	}
+	cfg.PlexRefreshDedupe = time.Duration(cfg.PlexRefreshDedupeMinutes) * time.Minute
 	cfg.PlaybackCooldown = time.Duration(cfg.PlaybackCooldownSeconds) * time.Second
 	cfg.SelfHealInterval = time.Duration(cfg.SelfHealIntervalSeconds) * time.Second
 }

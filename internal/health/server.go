@@ -101,6 +101,7 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/admin/retry-failed", api.handleAdminRetryFailed)
 		mux.HandleFunc("/api/refresh/radarr", api.handleRefreshRadarr)
 		mux.HandleFunc("/api/refresh/seerr", api.handleRefreshSeerr)
+		mux.HandleFunc("/api/plex/refreshes/recent", api.handlePlexRefreshesRecent)
 		mux.HandleFunc("/api/plex/refresh/movie/", api.handlePlexRefreshMovie)
 		mux.HandleFunc("/api/plex/refresh/movies", api.handlePlexRefreshMovies)
 		mux.HandleFunc("/api/radarr/webhook", api.handleRadarrWebhook)
@@ -429,6 +430,29 @@ func (h *apiHandler) handleRefreshRadarr(w http.ResponseWriter, r *http.Request)
 
 func (h *apiHandler) handleRefreshSeerr(w http.ResponseWriter, r *http.Request) {
 	h.handleRefresh(w, r, "seerr", h.refreshSeerr)
+}
+
+func (h *apiHandler) handlePlexRefreshesRecent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	items, err := h.repo.RecentPlexRefreshes(r.Context(), h.tenant, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": h.tenant, "count": len(items), "refreshes": items})
 }
 
 func (h *apiHandler) handlePlexRefreshMovie(w http.ResponseWriter, r *http.Request) {

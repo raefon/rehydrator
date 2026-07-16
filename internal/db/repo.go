@@ -41,6 +41,19 @@ type ProviderCooldown struct {
 	UpdatedAt     time.Time
 }
 
+type PlexRefresh struct {
+	ID        int64     `json:"id"`
+	Tenant    string    `json:"tenant"`
+	MediaID   string    `json:"media_id"`
+	ArrID     int       `json:"arr_id"`
+	Action    string    `json:"action"`
+	Scope     string    `json:"scope"`
+	Path      string    `json:"path"`
+	Status    string    `json:"status"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 func New(ctx context.Context, url string) (*Repo, error) {
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
@@ -997,6 +1010,54 @@ func (r *Repo) RecordPlexRefresh(ctx context.Context, tenant string, mediaID str
         )
     `, tenant, mediaID, arrID, action, scope, path, status, message)
 	return err
+}
+
+func (r *Repo) RecentSuccessfulPlexRefresh(ctx context.Context, tenant string, mediaID string, path string, withinSeconds int) (bool, error) {
+	if withinSeconds <= 0 {
+		withinSeconds = 600
+	}
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+        SELECT EXISTS (
+            SELECT 1
+            FROM media_cache_plex_refreshes
+            WHERE tenant = $1
+              AND media_id = NULLIF($2, '')::uuid
+              AND path = NULLIF($3, '')
+              AND status = 'success'
+              AND created_at > now() - ($4::int * interval '1 second')
+        )
+    `, tenant, mediaID, path, withinSeconds).Scan(&exists)
+	return exists, err
+}
+
+func (r *Repo) RecentPlexRefreshes(ctx context.Context, tenant string, limit int) ([]PlexRefresh, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+        SELECT id, tenant, COALESCE(media_id::text, ''), COALESCE(arr_id, 0), COALESCE(action, ''), COALESCE(scope, ''), COALESCE(path, ''), status, COALESCE(message, ''), created_at
+        FROM media_cache_plex_refreshes
+        WHERE tenant = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+    `, tenant, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PlexRefresh{}
+	for rows.Next() {
+		var pr PlexRefresh
+		if err := rows.Scan(&pr.ID, &pr.Tenant, &pr.MediaID, &pr.ArrID, &pr.Action, &pr.Scope, &pr.Path, &pr.Status, &pr.Message, &pr.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, pr)
+	}
+	return out, rows.Err()
 }
 
 func (r *Repo) StateSummary(ctx context.Context, tenant string) (map[string]int64, error) {

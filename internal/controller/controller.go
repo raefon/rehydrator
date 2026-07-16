@@ -47,6 +47,7 @@ type Options struct {
 	PlexRefreshDelay               time.Duration
 	PlexRefreshTimeout             time.Duration
 	PlexMaxRefreshesPerRun         int
+	PlexRefreshDedupe              time.Duration
 	SelfHealEnabled                bool
 	SelfHealInterval               time.Duration
 	SelfHealPlexRefreshAvailable   bool
@@ -64,10 +65,12 @@ type Options struct {
 }
 
 type Controller struct {
-	opt            Options
-	plexRefreshSem chan struct{}
-	selfHealMu     sync.Mutex
-	lastSelfHeal   time.Time
+	opt                 Options
+	plexRefreshSem      chan struct{}
+	plexRefreshDedupeMu sync.Mutex
+	plexRefreshDedupe   map[string]time.Time
+	selfHealMu          sync.Mutex
+	lastSelfHeal        time.Time
 }
 
 func New(opt Options) *Controller {
@@ -107,6 +110,9 @@ func New(opt Options) *Controller {
 	if opt.PlexMaxRefreshesPerRun <= 0 {
 		opt.PlexMaxRefreshesPerRun = 5
 	}
+	if opt.PlexRefreshDedupe <= 0 {
+		opt.PlexRefreshDedupe = 10 * time.Minute
+	}
 	if opt.SelfHealInterval <= 0 {
 		opt.SelfHealInterval = 5 * time.Minute
 	}
@@ -128,7 +134,11 @@ func New(opt Options) *Controller {
 	if opt.SonarrCategory == "" {
 		opt.SonarrCategory = "sonarr"
 	}
-	return &Controller{opt: opt, plexRefreshSem: make(chan struct{}, opt.PlexMaxRefreshesPerRun)}
+	return &Controller{
+		opt:               opt,
+		plexRefreshSem:    make(chan struct{}, opt.PlexMaxRefreshesPerRun),
+		plexRefreshDedupe: map[string]time.Time{},
+	}
 }
 
 func (c *Controller) Run(ctx context.Context) error {
@@ -556,7 +566,15 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 		return
 	}
 	targetPath := c.opt.Plex.TargetScanPath(item.SymlinkPath)
-	slog.Info("Plex refresh queued", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "delay", c.opt.PlexRefreshDelay)
+	reserved, reason := c.reservePlexRefresh(ctx, item, action, targetPath)
+	if !reserved {
+		slog.Info("Plex refresh skipped by dedupe", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "reason", reason, "dedupe", c.opt.PlexRefreshDedupe)
+		if c.opt.Repo != nil {
+			_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, "movie_folder", targetPath, "skipped", "deduped: "+reason)
+		}
+		return
+	}
+	slog.Info("Plex refresh queued", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "delay", c.opt.PlexRefreshDelay, "dedupe", c.opt.PlexRefreshDedupe)
 	go func() {
 		timer := time.NewTimer(c.opt.PlexRefreshDelay)
 		defer timer.Stop()
@@ -592,6 +610,43 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 			_ = c.opt.Repo.RecordPlexRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, "movie_folder", targetPath, status, message)
 		}
 	}()
+}
+
+func (c *Controller) reservePlexRefresh(ctx context.Context, item model.MediaCacheState, action string, targetPath string) (bool, string) {
+	if c.opt.PlexRefreshDedupe <= 0 {
+		return true, ""
+	}
+	now := time.Now()
+	key := strings.Join([]string{item.Tenant, item.ID, targetPath}, "|")
+
+	c.plexRefreshDedupeMu.Lock()
+	for k, until := range c.plexRefreshDedupe {
+		if now.After(until) {
+			delete(c.plexRefreshDedupe, k)
+		}
+	}
+	if until, ok := c.plexRefreshDedupe[key]; ok && now.Before(until) {
+		c.plexRefreshDedupeMu.Unlock()
+		return false, "refresh already queued or recently attempted until " + until.Format(time.RFC3339)
+	}
+	c.plexRefreshDedupe[key] = now.Add(c.opt.PlexRefreshDedupe)
+	c.plexRefreshDedupeMu.Unlock()
+
+	if c.opt.Repo != nil {
+		recent, err := c.opt.Repo.RecentSuccessfulPlexRefresh(ctx, item.Tenant, item.ID, targetPath, int(c.opt.PlexRefreshDedupe.Seconds()))
+		if err != nil {
+			slog.Warn("Plex refresh dedupe DB check failed; continuing", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "error", err)
+			return true, ""
+		}
+		if recent {
+			c.plexRefreshDedupeMu.Lock()
+			delete(c.plexRefreshDedupe, key)
+			c.plexRefreshDedupeMu.Unlock()
+			return false, "successful refresh already recorded within dedupe window"
+		}
+	}
+
+	return true, ""
 }
 
 func (c *Controller) refreshRclone(ctx context.Context, path string) {

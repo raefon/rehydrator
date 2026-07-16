@@ -123,6 +123,7 @@ plex:
   refresh_delay_seconds: 45
   refresh_timeout_seconds: 20
   max_refreshes_per_run: 5
+  refresh_dedupe_minutes: 10
 ```
 
 Refresh after re-arm/visibility helps clear Plex unavailable/trash indicators. Keep `refresh_after_prune` disabled by default.
@@ -165,6 +166,6 @@ self_heal:
   max_plex_refreshes_per_run: 5
 ```
 
-The self-heal worker covers the v0.3.3 behavior inside the v0.3.2 package. It periodically queues targeted Plex refreshes for recently rehydrated or recently played `AVAILABLE` movies that have not had a successful Plex refresh since that event.
+The self-heal worker periodically queues targeted Plex refreshes for recently rehydrated or recently played `AVAILABLE` movies that have not had a successful Plex refresh since that event. In v0.3.4, Plex refresh dedupe prevents `rehydration_complete` and `self_heal_available` from refreshing the same movie folder within the configured cooldown window.
 
 It does not scan the whole library, and it does not refresh after prune.

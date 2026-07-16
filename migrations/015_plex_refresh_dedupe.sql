@@ -1,0 +1,4 @@
+-- v0.3.4 Plex refresh dedupe
+-- No schema changes are required.
+-- This release uses the existing media_cache_plex_refreshes audit table to record
+-- deduped/skipped refresh attempts and exposes GET /api/plex/refreshes/recent.

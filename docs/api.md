@@ -64,11 +64,12 @@ POST /api/refresh/seerr
 ## Plex hygiene
 
 ```text
+GET  /api/plex/refreshes/recent?limit=20
 POST /api/plex/refresh/movie/{radarr_id}
 POST /api/plex/refresh/movies
 ```
 
-Use these to clear stale Plex unavailable indicators after Rehydrator restores files.
+Use these to clear stale Plex unavailable indicators after Rehydrator restores files. `GET /api/plex/refreshes/recent` shows the latest refresh audit rows, including dedupe skips.
 
 ## Operational / admin endpoints
 
@@ -118,3 +119,7 @@ Runs one self-heal pass immediately instead of waiting for the scheduled interva
 curl -i -X POST -H "Authorization: Bearer $API_TOKEN" \
   http://localhost:8080/api/admin/self-heal/run
 ```
+
+## Plex refresh dedupe
+
+`plex.refresh_dedupe_minutes` suppresses duplicate automated refreshes for the same media item and folder path. This prevents `rehydration_complete` and `self_heal_available` from firing two Plex scans for the same movie folder in the same minute. Manual movie and whole-section refresh endpoints remain available for repair work.

@@ -17,6 +17,9 @@ psql "$POSTGRES_URL" -f migrations/009_event_driven_seed.sql
 psql "$POSTGRES_URL" -f migrations/010_playback_ignore_preroll.sql
 psql "$POSTGRES_URL" -f migrations/011_visibility_provider_cooldown.sql
 psql "$POSTGRES_URL" -f migrations/012_plex_library_hygiene.sql
+psql "$POSTGRES_URL" -f migrations/013_ops_self_heal.sql
+psql "$POSTGRES_URL" -f migrations/014_metadata_guardrails.sql
+psql "$POSTGRES_URL" -f migrations/015_plex_refresh_dedupe.sql
 ```
 
 ## Migration summary
@@ -35,6 +38,9 @@ psql "$POSTGRES_URL" -f migrations/012_plex_library_hygiene.sql
 | `010_playback_ignore_preroll.sql` | Pre-roll ignore audit |
 | `011_visibility_provider_cooldown.sql` | WAITING_FOR_VISIBILITY and cooldowns |
 | `012_plex_library_hygiene.sql` | Plex refresh audit |
+| `013_ops_self_heal.sql` | Ops endpoints and self-heal indexes |
+| `014_metadata_guardrails.sql` | Guardrails for placeholders and empty-path rows |
+| `015_plex_refresh_dedupe.sql` | No-op notes for v0.3.4 refresh dedupe |
 
 ## 013_ops_self_heal.sql
 
@@ -45,3 +51,11 @@ Run after upgrading to the combined v0.3.2 package:
 ```bash
 psql "$POSTGRES_URL" -f migrations/013_ops_self_heal.sql
 ```
+
+## 014_metadata_guardrails.sql
+
+Adds indexes and cleanup helpers for placeholder/empty-path safety. This prevents `REQUESTED` rows from entering re-arm, retry, or self-heal paths before Radarr import metadata exists.
+
+## 015_plex_refresh_dedupe.sql
+
+No schema change. v0.3.4 uses the existing `media_cache_plex_refreshes` table for dedupe/skipped audit rows and adds `GET /api/plex/refreshes/recent`.

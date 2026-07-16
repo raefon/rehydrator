@@ -178,3 +178,39 @@ New admin helpers:
 
 - `GET /api/admin/invalid-rows`
 - `POST /api/admin/self-heal/run`
+
+## v0.4.0 Sonarr / series MVP
+
+v0.4.0 adds Sonarr episode-file tracking. Series rows use `media_type=series` and `arr_id=<Sonarr episodeFileId>`, with `series_id`, `episode_id`, `season_number`, `episode_number`, `series_title`, and `episode_title` stored as metadata.
+
+Enable it with:
+
+```yaml
+sonarr:
+  url: http://tenet-sonarr.tenet-nofear101.svc.cluster.local:8989
+  api_key: "<SONARR_API_KEY>"
+
+sonarr_sync:
+  enabled: true
+  interval_seconds: 60
+
+decypharr:
+  sonarr_category: sonarr
+
+plex:
+  tv_section_id: 0
+```
+
+New operational endpoints:
+
+```text
+POST /api/refresh/sonarr
+POST /api/rearm/series/<episodeFileId>
+POST /api/prune/series/<episodeFileId>
+GET  /api/state/series/<episodeFileId>
+POST /api/sonarr/webhook
+POST /api/plex/refresh/series/<episodeFileId>
+POST /api/plex/refresh/tv
+```
+
+See `docs/sonarr-series-support.md` for the testing flow and current season-pack limitations.

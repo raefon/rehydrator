@@ -70,7 +70,7 @@ func main() {
 	}
 	var plexClient *plex.Client
 	if cfg.PlexEnabled {
-		plexClient = plex.NewClient(cfg.PlexURL, cfg.PlexToken, cfg.PlexMovieSectionID, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
+		plexClient = plex.NewClient(cfg.PlexURL, cfg.PlexToken, cfg.PlexMovieSectionID, cfg.PlexTVSectionID, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
 	}
 
 	ctrl := controller.New(controller.Options{
@@ -99,6 +99,7 @@ func main() {
 		PlexRefreshAfterPrune:          cfg.PlexRefreshAfterPrune,
 		PlexRefreshDelay:               time.Duration(cfg.PlexRefreshDelaySeconds) * time.Second,
 		PlexRefreshTimeout:             time.Duration(cfg.PlexRefreshTimeoutSeconds) * time.Second,
+		PlexRefreshDedupe:              cfg.PlexRefreshDedupe,
 		PlexMaxRefreshesPerRun:         cfg.PlexMaxRefreshesPerRun,
 		SelfHealEnabled:                cfg.SelfHealEnabled,
 		SelfHealInterval:               cfg.SelfHealInterval,
@@ -142,6 +143,7 @@ func main() {
 		"plex_enabled", cfg.PlexEnabled,
 		"plex_url", cfg.PlexURL,
 		"plex_movie_section_id", cfg.PlexMovieSectionID,
+		"plex_tv_section_id", cfg.PlexTVSectionID,
 		"plex_refresh_after_rearm", cfg.PlexRefreshAfterRearm,
 		"plex_refresh_after_visibility", cfg.PlexRefreshAfterVisibility,
 		"plex_refresh_after_prune", cfg.PlexRefreshAfterPrune,
@@ -164,6 +166,8 @@ func main() {
 		"playback_ignored_title_contains", cfg.PlaybackIgnoredTitleContains,
 		"radarr_sync_enabled", cfg.RadarrSyncEnabled,
 		"radarr_sync_interval", cfg.RadarrSyncInterval.String(),
+		"sonarr_sync_enabled", cfg.SonarrSyncEnabled,
+		"sonarr_sync_interval", cfg.SonarrSyncInterval.String(),
 		"seerr_url", cfg.SeerrURL,
 		"seerr_sync_enabled", cfg.SeerrSyncEnabled,
 		"seerr_sync_interval", cfg.SeerrSyncInterval.String(),
@@ -172,6 +176,7 @@ func main() {
 	)
 
 	var radarrSyncer *syncer.RadarrSyncer
+	var sonarrSyncer *syncer.SonarrSyncer
 	var seerrSyncer *syncer.SeerrSyncer
 
 	if cfg.RadarrSyncEnabled {
@@ -181,6 +186,17 @@ func main() {
 			Tenant:     cfg.Tenant,
 			Category:   cfg.DecypharrRadarrCategory,
 			Interval:   cfg.RadarrSyncInterval,
+			CacheGrace: cfg.CacheGrace,
+		})
+	}
+
+	if cfg.SonarrSyncEnabled {
+		sonarrSyncer = syncer.NewSonarr(syncer.SonarrOptions{
+			Repo:       repo,
+			Sonarr:     sonarrClient,
+			Tenant:     cfg.Tenant,
+			Category:   cfg.DecypharrSonarrCategory,
+			Interval:   cfg.SonarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
 		})
 	}
@@ -199,13 +215,19 @@ func main() {
 	if radarrSyncer != nil {
 		refreshRadarr = radarrSyncer.SyncOnce
 	}
+	var refreshSonarr func(context.Context) error
+	if sonarrSyncer != nil {
+		refreshSonarr = sonarrSyncer.SyncOnce
+	}
 	var refreshSeerr func(context.Context) error
 	if seerrSyncer != nil {
 		refreshSeerr = seerrSyncer.SyncOnce
 	}
 
 	var plexRefreshMovie func(context.Context, int) error
+	var plexRefreshSeries func(context.Context, int) error
 	var plexRefreshMovies func(context.Context) error
+	var plexRefreshTV func(context.Context) error
 	if plexClient != nil && plexClient.Configured() {
 		plexRefreshMovie = func(ctx context.Context, arrID int) error {
 			item, found, err := repo.GetState(ctx, cfg.Tenant, model.MediaMovie, arrID)
@@ -232,6 +254,31 @@ func main() {
 			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_movie_refresh", "movie_folder", targetPath, status, message)
 			return err
 		}
+		plexRefreshSeries = func(ctx context.Context, episodeFileID int) error {
+			item, found, err := repo.GetState(ctx, cfg.Tenant, model.MediaSeries, episodeFileID)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return os.ErrNotExist
+			}
+			targetPath := plexClient.TargetScanPath(item.SymlinkPath, model.MediaSeries)
+			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
+			defer cancel()
+			slog.Info("manual Plex series refresh starting", "episode_file_id", item.ArrID, "target_path", targetPath)
+			err = plexClient.RefreshPathForMedia(refreshCtx, targetPath, model.MediaSeries)
+			status := "success"
+			message := ""
+			if err != nil {
+				status = "failed"
+				message = err.Error()
+				slog.Warn("manual Plex series refresh failed", "episode_file_id", item.ArrID, "target_path", targetPath, "error", err)
+			} else {
+				slog.Info("manual Plex series refresh complete", "episode_file_id", item.ArrID, "target_path", targetPath)
+			}
+			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_series_refresh", "series_folder", targetPath, status, message)
+			return err
+		}
 		plexRefreshMovies = func(ctx context.Context) error {
 			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
 			defer cancel()
@@ -246,6 +293,20 @@ func main() {
 			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, "", 0, "manual_movies_refresh", "movie_section", "", status, message)
 			return err
 		}
+		plexRefreshTV = func(ctx context.Context) error {
+			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
+			defer cancel()
+			slog.Warn("manual whole Plex TV section refresh requested")
+			err := plexClient.RefreshTV(refreshCtx)
+			status := "success"
+			message := ""
+			if err != nil {
+				status = "failed"
+				message = err.Error()
+			}
+			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, "", 0, "manual_tv_refresh", "tv_section", "", status, message)
+			return err
+		}
 	}
 
 	dependencyChecks := map[string]func(context.Context) error{
@@ -253,6 +314,9 @@ func main() {
 	}
 	if radarrClient != nil && radarrClient.Configured() {
 		dependencyChecks["radarr"] = radarrClient.Ping
+	}
+	if sonarrClient != nil && sonarrClient.Configured() {
+		dependencyChecks["sonarr"] = sonarrClient.Ping
 	}
 	if decypharrClient != nil && decypharrClient.Configured() {
 		dependencyChecks["decypharr"] = decypharrClient.Ping
@@ -279,9 +343,12 @@ func main() {
 			PlaybackIgnoredTitles:        cfg.PlaybackIgnoredTitles,
 			PlaybackIgnoredTitleContains: cfg.PlaybackIgnoredTitleContains,
 			RefreshRadarr:                refreshRadarr,
+			RefreshSonarr:                refreshSonarr,
 			RefreshSeerr:                 refreshSeerr,
 			PlexRefreshMovie:             plexRefreshMovie,
+			PlexRefreshSeries:            plexRefreshSeries,
 			PlexRefreshMovies:            plexRefreshMovies,
+			PlexRefreshTV:                plexRefreshTV,
 			SelfHealRun: func(runCtx context.Context) error {
 				ctrl.RunSelfHealOnce(runCtx)
 				return nil
@@ -295,6 +362,9 @@ func main() {
 
 	if radarrSyncer != nil {
 		go radarrSyncer.Run(ctx)
+	}
+	if sonarrSyncer != nil {
+		go sonarrSyncer.Run(ctx)
 	}
 	if seerrSyncer != nil {
 		go seerrSyncer.Run(ctx)

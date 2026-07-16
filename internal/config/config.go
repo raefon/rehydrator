@@ -71,6 +71,7 @@ plex:
   url: http://plex:32400
   token: ""
   movie_section_id: 0
+  tv_section_id: 0
   refresh_after_rearm: true
   refresh_after_visibility: true
   refresh_after_prune: false
@@ -90,6 +91,10 @@ self_heal:
 
 radarr_sync:
   enabled: true
+  interval_seconds: 60
+
+sonarr_sync:
+  enabled: false
   interval_seconds: 60
 
 prune_enabled: true
@@ -171,6 +176,7 @@ type Config struct {
 	PlexURL                    string
 	PlexToken                  string
 	PlexMovieSectionID         int
+	PlexTVSectionID            int
 	PlexRefreshAfterRearm      bool
 	PlexRefreshAfterVisibility bool
 	PlexRefreshAfterPrune      bool
@@ -190,6 +196,10 @@ type Config struct {
 	RadarrSyncEnabled         bool
 	RadarrSyncIntervalSeconds int
 	RadarrSyncInterval        time.Duration
+
+	SonarrSyncEnabled         bool
+	SonarrSyncIntervalSeconds int
+	SonarrSyncInterval        time.Duration
 
 	PruneEnabled                  bool
 	RearmEnabled                  bool
@@ -294,6 +304,7 @@ type fileConfig struct {
 		URL                    string `yaml:"url"`
 		Token                  string `yaml:"token"`
 		MovieSectionID         int    `yaml:"movie_section_id"`
+		TVSectionID            int    `yaml:"tv_section_id"`
 		RefreshAfterRearm      *bool  `yaml:"refresh_after_rearm"`
 		RefreshAfterVisibility *bool  `yaml:"refresh_after_visibility"`
 		RefreshAfterPrune      *bool  `yaml:"refresh_after_prune"`
@@ -315,6 +326,11 @@ type fileConfig struct {
 		Enabled         *bool `yaml:"enabled"`
 		IntervalSeconds int   `yaml:"interval_seconds"`
 	} `yaml:"radarr_sync"`
+
+	SonarrSync struct {
+		Enabled         *bool `yaml:"enabled"`
+		IntervalSeconds int   `yaml:"interval_seconds"`
+	} `yaml:"sonarr_sync"`
 
 	PruneEnabled                  *bool `yaml:"prune_enabled"`
 	RearmEnabled                  *bool `yaml:"rearm_enabled"`
@@ -409,6 +425,8 @@ func defaults() Config {
 		SelfHealMaxPlexRefreshesPerRun: 5,
 		RadarrSyncEnabled:              true,
 		RadarrSyncIntervalSeconds:      60,
+		SonarrSyncEnabled:              false,
+		SonarrSyncIntervalSeconds:      60,
 		SeerrURL:                       "http://seerr:5055",
 		SeerrSyncEnabled:               false,
 		SeerrSyncIntervalSeconds:       120,
@@ -576,6 +594,9 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.Plex.MovieSectionID > 0 {
 		cfg.PlexMovieSectionID = fc.Plex.MovieSectionID
 	}
+	if fc.Plex.TVSectionID > 0 {
+		cfg.PlexTVSectionID = fc.Plex.TVSectionID
+	}
 	if fc.Plex.RefreshAfterRearm != nil {
 		cfg.PlexRefreshAfterRearm = *fc.Plex.RefreshAfterRearm
 	}
@@ -617,6 +638,12 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	}
 	if fc.RadarrSync.IntervalSeconds > 0 {
 		cfg.RadarrSyncIntervalSeconds = fc.RadarrSync.IntervalSeconds
+	}
+	if fc.SonarrSync.Enabled != nil {
+		cfg.SonarrSyncEnabled = *fc.SonarrSync.Enabled
+	}
+	if fc.SonarrSync.IntervalSeconds > 0 {
+		cfg.SonarrSyncIntervalSeconds = fc.SonarrSync.IntervalSeconds
 	}
 	if fc.PruneEnabled != nil {
 		cfg.PruneEnabled = *fc.PruneEnabled
@@ -721,6 +748,7 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.PlexURL = getenv("PLEX_URL", cfg.PlexURL)
 	cfg.PlexToken = getenv("PLEX_TOKEN", cfg.PlexToken)
 	cfg.PlexMovieSectionID = getenvInt("PLEX_MOVIE_SECTION_ID", cfg.PlexMovieSectionID)
+	cfg.PlexTVSectionID = getenvInt("PLEX_TV_SECTION_ID", cfg.PlexTVSectionID)
 	cfg.PlexRefreshAfterRearm = getenvBool("PLEX_REFRESH_AFTER_REARM", cfg.PlexRefreshAfterRearm)
 	cfg.PlexRefreshAfterVisibility = getenvBool("PLEX_REFRESH_AFTER_VISIBILITY", cfg.PlexRefreshAfterVisibility)
 	cfg.PlexRefreshAfterPrune = getenvBool("PLEX_REFRESH_AFTER_PRUNE", cfg.PlexRefreshAfterPrune)
@@ -735,6 +763,8 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.SelfHealMaxPlexRefreshesPerRun = getenvInt("SELF_HEAL_MAX_PLEX_REFRESHES_PER_RUN", cfg.SelfHealMaxPlexRefreshesPerRun)
 	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
+	cfg.SonarrSyncEnabled = getenvBool("SONARR_SYNC_ENABLED", cfg.SonarrSyncEnabled)
+	cfg.SonarrSyncIntervalSeconds = getenvInt("SONARR_SYNC_INTERVAL_SECONDS", cfg.SonarrSyncIntervalSeconds)
 	cfg.PruneEnabled = getenvBool("PRUNE_ENABLED", cfg.PruneEnabled)
 	cfg.RearmEnabled = getenvBool("REARM_ENABLED", cfg.RearmEnabled)
 	cfg.MaxPrunesPerRun = getenvInt("MAX_PRUNES_PER_RUN", cfg.MaxPrunesPerRun)
@@ -785,6 +815,7 @@ func hydrateDurations(cfg *Config) {
 	cfg.RcloneRCTimeout = time.Duration(cfg.RcloneRCTimeoutSeconds) * time.Second
 	cfg.CacheGrace = time.Duration(cfg.CacheGraceHours) * time.Hour
 	cfg.RadarrSyncInterval = time.Duration(cfg.RadarrSyncIntervalSeconds) * time.Second
+	cfg.SonarrSyncInterval = time.Duration(cfg.SonarrSyncIntervalSeconds) * time.Second
 	cfg.SeerrSyncInterval = time.Duration(cfg.SeerrSyncIntervalSeconds) * time.Second
 	if cfg.SelfHealIntervalSeconds <= 0 {
 		cfg.SelfHealIntervalSeconds = 300
@@ -812,6 +843,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.RadarrURL == "" || cfg.RadarrAPIKey == "" {
 		return errors.New("RADARR_URL/RADARR_API_KEY or radarr.url/radarr.api_key are required")
+	}
+	if cfg.SonarrSyncEnabled && (cfg.SonarrURL == "" || cfg.SonarrAPIKey == "") {
+		return errors.New("SONARR_URL/SONARR_API_KEY or sonarr.url/sonarr.api_key are required when Sonarr sync is enabled")
 	}
 	if cfg.SeerrSyncEnabled && (cfg.SeerrURL == "" || cfg.SeerrAPIKey == "") {
 		return errors.New("SEERR_URL/SEERR_API_KEY or seerr.url/seerr.api_key are required when Seerr sync is enabled")

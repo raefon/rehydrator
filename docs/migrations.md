@@ -59,3 +59,14 @@ Adds indexes and cleanup helpers for placeholder/empty-path safety. This prevent
 ## 015_plex_refresh_dedupe.sql
 
 No schema change. v0.3.4 uses the existing `media_cache_plex_refreshes` table for dedupe/skipped audit rows and adds `GET /api/plex/refreshes/recent`.
+
+## 016_sonarr_episode_file_support.sql
+
+Adds Sonarr episode-file columns to `media_cache_state`:
+
+```text
+series_id, episode_id, episode_file_id, season_number, episode_number,
+series_title, episode_title, cache_group_key
+```
+
+Also adds indexes for series episode-file lookup, path playback matching, and future cache grouping.

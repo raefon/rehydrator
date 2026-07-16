@@ -169,3 +169,32 @@ self_heal:
 The self-heal worker periodically queues targeted Plex refreshes for recently rehydrated or recently played `AVAILABLE` movies that have not had a successful Plex refresh since that event. In v0.3.4, Plex refresh dedupe prevents `rehydration_complete` and `self_heal_available` from refreshing the same movie folder within the configured cooldown window.
 
 It does not scan the whole library, and it does not refresh after prune.
+
+## Sonarr / series support
+
+```yaml
+sonarr:
+  url: http://tenet-sonarr.tenet-nofear101.svc.cluster.local:8989
+  api_key: "<SONARR_API_KEY>"
+
+sonarr_sync:
+  enabled: true
+  interval_seconds: 60
+
+decypharr:
+  sonarr_category: sonarr
+
+plex:
+  tv_section_id: 0
+```
+
+Environment equivalents:
+
+```text
+SONARR_URL=http://tenet-sonarr:8989
+SONARR_API_KEY=replace_me
+SONARR_SYNC_ENABLED=true
+SONARR_SYNC_INTERVAL_SECONDS=60
+DECYPHARR_SONARR_CATEGORY=sonarr
+PLEX_TV_SECTION_ID=0
+```

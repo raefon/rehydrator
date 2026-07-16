@@ -46,6 +46,7 @@ data:
       url: http://tenet-plex:32400
       token: ""
       movie_section_id: 0
+      tv_section_id: 0
       refresh_after_rearm: true
       refresh_after_visibility: true
       refresh_after_prune: false

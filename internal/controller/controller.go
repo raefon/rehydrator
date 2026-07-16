@@ -310,7 +310,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		return
 	}
 
-	torrent, err := arrClient.LatestGrabbedTorrent(ctx, item.ArrID, item.MediaType)
+	torrent, err := arrClient.LatestGrabbedTorrentForState(ctx, item)
 	if err != nil {
 		if isMissingHistoryError(err) {
 			reason := "missing Radarr grabbed/import history; keeping item REQUESTED until metadata is available"
@@ -557,20 +557,16 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 		slog.Warn("Plex refresh skipped; Plex client is not configured", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
-	if item.MediaType != model.MediaMovie {
-		slog.Debug("Plex refresh skipped; non-movie item", "tenant", item.Tenant, "arr_id", item.ArrID, "media_type", item.MediaType, "action", action)
-		return
-	}
 	if strings.TrimSpace(item.SymlinkPath) == "" {
 		slog.Warn("Plex refresh skipped; missing symlink path", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
-	targetPath := c.opt.Plex.TargetScanPath(item.SymlinkPath)
+	targetPath := c.opt.Plex.TargetScanPath(item.SymlinkPath, item.MediaType)
 	reserved, reason := c.reservePlexRefresh(ctx, item, action, targetPath)
 	if !reserved {
 		slog.Info("Plex refresh skipped by dedupe", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "reason", reason, "dedupe", c.opt.PlexRefreshDedupe)
 		if c.opt.Repo != nil {
-			_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, "movie_folder", targetPath, "skipped", "deduped: "+reason)
+			_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, plexRefreshScope(item.MediaType), targetPath, "skipped", "deduped: "+reason)
 		}
 		return
 	}
@@ -589,14 +585,14 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 		default:
 			slog.Warn("Plex refresh skipped; refresh limit is full", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
 			if c.opt.Repo != nil {
-				_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, "movie_folder", targetPath, "skipped", "plex refresh limit full")
+				_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, plexRefreshScope(item.MediaType), targetPath, "skipped", "plex refresh limit full")
 			}
 			return
 		}
 		refreshCtx, cancel := context.WithTimeout(context.Background(), c.opt.PlexRefreshTimeout)
 		defer cancel()
 		slog.Info("Plex refresh starting", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
-		err := c.opt.Plex.RefreshPath(refreshCtx, targetPath)
+		err := c.opt.Plex.RefreshPathForMedia(refreshCtx, targetPath, item.MediaType)
 		status := "success"
 		message := ""
 		if err != nil {
@@ -607,7 +603,7 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 			slog.Info("Plex refresh complete", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action)
 		}
 		if c.opt.Repo != nil {
-			_ = c.opt.Repo.RecordPlexRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, "movie_folder", targetPath, status, message)
+			_ = c.opt.Repo.RecordPlexRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, plexRefreshScope(item.MediaType), targetPath, status, message)
 		}
 	}()
 }
@@ -647,6 +643,17 @@ func (c *Controller) reservePlexRefresh(ctx context.Context, item model.MediaCac
 	}
 
 	return true, ""
+}
+
+func plexRefreshScope(mediaType model.MediaType) string {
+	switch mediaType {
+	case model.MediaSeries:
+		return "series_folder"
+	case model.MediaMovie:
+		return "movie_folder"
+	default:
+		return "media_folder"
+	}
 }
 
 func (c *Controller) refreshRclone(ctx context.Context, path string) {
@@ -755,6 +762,14 @@ func itemHasUsablePath(item model.MediaCacheState) (bool, string) {
 	}
 	if strings.TrimSpace(item.SymlinkPath) == "" {
 		return false, "missing symlink_path"
+	}
+	if item.MediaType == model.MediaSeries {
+		if item.SeriesID == nil || *item.SeriesID <= 0 {
+			return false, "series row missing series_id"
+		}
+		if item.EpisodeFileID == nil || *item.EpisodeFileID <= 0 {
+			return false, "series row missing episode_file_id"
+		}
 	}
 	return true, ""
 }

@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -80,6 +82,7 @@ const itemSelectColumns = `
     rearm_requested, cached_until, torbox_torrent_id,
     infohash, magnet, download_client, download_category, arr_title, source_title,
     tmdb_id, tvdb_id,
+    series_id, episode_id, episode_file_id, season_number, episode_number, series_title, episode_title, cache_group_key,
     retry_count, next_retry_at, last_play_intent_at, play_intent_count, last_checked, last_rehydrated, last_pruned, last_error
 `
 
@@ -111,6 +114,14 @@ func scanItem(row itemRow) (model.MediaCacheState, error) {
 		&m.SourceTitle,
 		&m.TMDBID,
 		&m.TVDBID,
+		&m.SeriesID,
+		&m.EpisodeID,
+		&m.EpisodeFileID,
+		&m.SeasonNumber,
+		&m.EpisodeNumber,
+		&m.SeriesTitle,
+		&m.EpisodeTitle,
+		&m.CacheGroupKey,
 		&m.RetryCount,
 		&m.NextRetryAt,
 		&m.LastPlayIntentAt,
@@ -325,6 +336,87 @@ func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int
         RETURNING `+itemSelectColumns+`
     `, tenant, arrID, symlinkPath, cachedUntil, category, title, tmdbID, tvdbID)
 	return scanItem(row)
+}
+
+// UpsertImportedEpisode stores one lifecycle row per imported Sonarr episode file.
+// For series rows, arr_id is intentionally the Sonarr episodeFileId. This keeps
+// rearm/prune independent per imported file and avoids using the series id as a
+// single overloaded lifecycle id.
+func (r *Repo) UpsertImportedEpisode(ctx context.Context, tenant string, seriesID int, episodeID int, episodeFileID int, seriesTitle string, episodeTitle string, seasonNumber int, episodeNumber int, symlinkPath string, category string, cachedUntil time.Time, tvdbID int) (model.MediaCacheState, error) {
+	if episodeFileID <= 0 {
+		return model.MediaCacheState{}, pgx.ErrNoRows
+	}
+	cacheGroupKey := ""
+	if strings.TrimSpace(symlinkPath) != "" {
+		cacheGroupKey = "sonarr:file:" + strings.TrimSpace(symlinkPath)
+	} else if episodeFileID > 0 {
+		cacheGroupKey = "sonarr:episode_file:" + strconv.Itoa(episodeFileID)
+	}
+	row := r.pool.QueryRow(ctx, `
+        INSERT INTO media_cache_state (
+            tenant, media_type, arr_id, symlink_path, state, rearm_requested,
+            cached_until, download_client, download_category, arr_title, tvdb_id,
+            series_id, episode_id, episode_file_id, season_number, episode_number,
+            series_title, episode_title, cache_group_key,
+            retry_count, next_retry_at, last_error, last_checked
+        )
+        VALUES (
+            $1, 'series', $2, $3, 'AVAILABLE', false,
+            $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0),
+            NULLIF($8, 0), NULLIF($9, 0), NULLIF($2, 0), NULLIF($10, 0), NULLIF($11, 0),
+            NULLIF($6, ''), NULLIF($12, ''), NULLIF($13, ''),
+            0, NULL, NULL, now()
+        )
+        ON CONFLICT (tenant, media_type, arr_id)
+        DO UPDATE SET
+            symlink_path = EXCLUDED.symlink_path,
+            download_client = 'decypharr',
+            download_category = COALESCE(EXCLUDED.download_category, media_cache_state.download_category),
+            arr_title = COALESCE(EXCLUDED.arr_title, media_cache_state.arr_title),
+            tvdb_id = COALESCE(EXCLUDED.tvdb_id, media_cache_state.tvdb_id),
+            series_id = COALESCE(EXCLUDED.series_id, media_cache_state.series_id),
+            episode_id = COALESCE(EXCLUDED.episode_id, media_cache_state.episode_id),
+            episode_file_id = COALESCE(EXCLUDED.episode_file_id, media_cache_state.episode_file_id),
+            season_number = COALESCE(EXCLUDED.season_number, media_cache_state.season_number),
+            episode_number = COALESCE(EXCLUDED.episode_number, media_cache_state.episode_number),
+            series_title = COALESCE(EXCLUDED.series_title, media_cache_state.series_title),
+            episode_title = COALESCE(EXCLUDED.episode_title, media_cache_state.episode_title),
+            cache_group_key = COALESCE(EXCLUDED.cache_group_key, media_cache_state.cache_group_key),
+            state = CASE
+                WHEN media_cache_state.state = 'REQUESTED' THEN 'AVAILABLE'
+                ELSE media_cache_state.state
+            END,
+            cached_until = CASE
+                WHEN media_cache_state.state IN ('REQUESTED', 'AVAILABLE', 'HOT', 'COOLING')
+                     AND media_cache_state.cached_until IS NULL THEN EXCLUDED.cached_until
+                ELSE media_cache_state.cached_until
+            END,
+            last_checked = now()
+        RETURNING `+itemSelectColumns+`
+    `, tenant, episodeFileID, symlinkPath, cachedUntil, category, seriesTitle, tvdbID, seriesID, episodeID, seasonNumber, episodeNumber, episodeTitle, cacheGroupKey)
+	return scanItem(row)
+}
+
+func (r *Repo) GetStateByPath(ctx context.Context, tenant string, mediaPath string) (model.MediaCacheState, bool, error) {
+	mediaPath = strings.TrimSpace(mediaPath)
+	if mediaPath == "" {
+		return model.MediaCacheState{}, false, nil
+	}
+	row := r.pool.QueryRow(ctx, `
+        SELECT `+itemSelectColumns+`
+        FROM media_cache_state
+        WHERE tenant = $1 AND symlink_path = $2
+        ORDER BY updated_at DESC
+        LIMIT 1
+    `, tenant, mediaPath)
+	item, err := scanItem(row)
+	if err == pgx.ErrNoRows {
+		return model.MediaCacheState{}, false, nil
+	}
+	if err != nil {
+		return model.MediaCacheState{}, false, err
+	}
+	return item, true, nil
 }
 
 func placeholderArrID(tmdbID int) int {
@@ -929,7 +1021,7 @@ func (r *Repo) InvalidMediaRows(ctx context.Context, tenant string, limit int) (
             updated_at
         FROM media_cache_state
         WHERE tenant = $1
-          AND media_type = 'movie'
+          AND media_type IN ('movie', 'series')
           AND (
               arr_id <= 0
               OR (state IN ('ARCHIVED', 'BROKEN', 'FAILED', 'REARMING', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(symlink_path), '') = '')
@@ -1147,7 +1239,7 @@ func (r *Repo) PlexSelfHealWorkItems(ctx context.Context, tenant string, limit i
         SELECT `+itemSelectColumns+`
         FROM media_cache_state m
         WHERE m.tenant = $1
-          AND m.media_type = 'movie'
+          AND m.media_type IN ('movie', 'series')
           AND m.state = 'AVAILABLE'
           AND COALESCE(BTRIM(m.symlink_path), '') <> ''
           AND (

@@ -40,7 +40,11 @@ radarr_sync:
 
 sonarr:
   url: http://tenet-sonarr.tenet-nofear101.svc.cluster.local:8989
-  api_key: ""
+  api_key: "<SONARR_API_KEY>"
+
+sonarr_sync:
+  enabled: false
+  interval_seconds: 60
 
 torbox:
   api_key: "<TORBOX_API_KEY>"
@@ -100,6 +104,8 @@ plex:
   token: "<PLEX_TOKEN>"
   # Set this to your Plex movie library section ID. Leave 0 to auto-discover first movie library.
   movie_section_id: 0
+  # Set this to your Plex TV/show library section ID for Sonarr/series refreshes. Leave 0 to auto-discover first TV library.
+  tv_section_id: 0
   refresh_after_rearm: true
   refresh_after_visibility: true
   refresh_after_prune: false

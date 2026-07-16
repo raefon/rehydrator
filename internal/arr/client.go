@@ -59,13 +59,92 @@ type HistoryResponse struct {
 }
 
 type HistoryRecord struct {
-	ID          int            `json:"id"`
-	MovieID     int            `json:"movieId"`
-	SeriesID    int            `json:"seriesId"`
-	SourceTitle string         `json:"sourceTitle"`
-	DownloadID  string         `json:"downloadId"`
-	EventType   string         `json:"eventType"`
-	Data        map[string]any `json:"data"`
+	ID            int            `json:"id"`
+	MovieID       int            `json:"movieId"`
+	SeriesID      int            `json:"seriesId"`
+	EpisodeID     int            `json:"episodeId"`
+	EpisodeFileID int            `json:"episodeFileId"`
+	SourceTitle   string         `json:"sourceTitle"`
+	DownloadID    string         `json:"downloadId"`
+	EventType     string         `json:"eventType"`
+	Data          map[string]any `json:"data"`
+}
+
+// LatestGrabbedTorrentForState resolves torrent metadata for the exact tracked row.
+// Movies use Radarr movieId; Sonarr rows use seriesId + episodeFileId metadata,
+// because v0.4.0 stores arr_id as episode_file_id for independent episode-file rows.
+func (c *Client) LatestGrabbedTorrentForState(ctx context.Context, item model.MediaCacheState) (model.TorrentMetadata, error) {
+	switch item.MediaType {
+	case model.MediaMovie:
+		return c.LatestGrabbedTorrent(ctx, item.ArrID, item.MediaType)
+	case model.MediaSeries:
+		seriesID := intPtrValue(item.SeriesID)
+		episodeFileID := intPtrValue(item.EpisodeFileID)
+		episodeID := intPtrValue(item.EpisodeID)
+		if episodeFileID == 0 {
+			episodeFileID = item.ArrID
+		}
+		if seriesID <= 0 {
+			return model.TorrentMetadata{}, fmt.Errorf("series row missing series_id for episode_file_id=%d", episodeFileID)
+		}
+		return c.latestGrabbedTorrentForEpisode(ctx, seriesID, episodeFileID, episodeID)
+	default:
+		return model.TorrentMetadata{}, fmt.Errorf("unsupported media type: %s", item.MediaType)
+	}
+}
+
+func (c *Client) latestGrabbedTorrentForEpisode(ctx context.Context, seriesID int, episodeFileID int, episodeID int) (model.TorrentMetadata, error) {
+	records, err := c.history(ctx, seriesID, model.MediaSeries)
+	if err != nil {
+		return model.TorrentMetadata{}, err
+	}
+
+	matchingImports := make([]HistoryRecord, 0, len(records))
+	for _, r := range records {
+		if recordMatchesEpisodeFile(r, seriesID, episodeFileID, episodeID) {
+			matchingImports = append(matchingImports, r)
+		}
+	}
+	if len(matchingImports) == 0 {
+		return model.TorrentMetadata{}, fmt.Errorf("no matching series history records found for series_id=%d episode_file_id=%d episode_id=%d", seriesID, episodeFileID, episodeID)
+	}
+
+	if imported := latestImportRecord(matchingImports); imported != nil {
+		importDownloadID := firstNonEmpty(imported.DownloadID, dataString(imported.Data, "downloadId"))
+		if importDownloadID != "" {
+			for _, r := range records {
+				if r.EventType != "grabbed" || !sameDownloadID(r.DownloadID, importDownloadID) {
+					continue
+				}
+				if r.SeriesID != 0 && r.SeriesID != seriesID {
+					continue
+				}
+				torrent, ok := torrentMetadataFromGrabbed(c.name, episodeFileID, model.MediaSeries, r)
+				if ok {
+					logSelectedRecord(c.name, episodeFileID, model.MediaSeries, r, "matched_episode_import_download_id", torrent)
+					return torrent, nil
+				}
+			}
+		}
+	}
+
+	// Conservative fallback: newest grabbed record from the same series. This keeps
+	// rehydration possible when Sonarr does not retain episodeFileId on grabbed rows.
+	for _, r := range records {
+		if r.EventType != "grabbed" {
+			continue
+		}
+		if r.SeriesID != 0 && r.SeriesID != seriesID {
+			continue
+		}
+		torrent, ok := torrentMetadataFromGrabbed(c.name, episodeFileID, model.MediaSeries, r)
+		if ok {
+			logSelectedRecord(c.name, episodeFileID, model.MediaSeries, r, "latest_series_grabbed_fallback", torrent)
+			return torrent, nil
+		}
+	}
+
+	return model.TorrentMetadata{}, fmt.Errorf("no usable grabbed torrent found for series_id=%d episode_file_id=%d", seriesID, episodeFileID)
 }
 
 // LatestGrabbedTorrent returns the safest torrent metadata for rehydrating an Arr item.
@@ -185,6 +264,23 @@ func recordMatchesMedia(r HistoryRecord, arrID int, mediaType model.MediaType) b
 	default:
 		return false
 	}
+}
+
+func recordMatchesEpisodeFile(r HistoryRecord, seriesID int, episodeFileID int, episodeID int) bool {
+	if seriesID > 0 && r.SeriesID != 0 && r.SeriesID != seriesID {
+		return false
+	}
+	if episodeFileID > 0 {
+		if r.EpisodeFileID == episodeFileID || dataInt(r.Data, "episodeFileId", "episode_file_id") == episodeFileID {
+			return true
+		}
+	}
+	if episodeID > 0 {
+		if r.EpisodeID == episodeID || dataInt(r.Data, "episodeId", "episode_id") == episodeID {
+			return true
+		}
+	}
+	return episodeFileID == 0 && episodeID == 0
 }
 
 func latestImportRecord(records []HistoryRecord) *HistoryRecord {
@@ -351,6 +447,40 @@ func firstN(s string, n int) string {
 	return s[:n]
 }
 
+func dataInt(data map[string]any, keys ...string) int {
+	if data == nil {
+		return 0
+	}
+	for _, key := range keys {
+		v, ok := data[key]
+		if !ok || v == nil {
+			continue
+		}
+		switch t := v.(type) {
+		case int:
+			return t
+		case int64:
+			return int(t)
+		case float64:
+			return int(t)
+		case string:
+			var out int
+			_, _ = fmt.Sscanf(strings.TrimSpace(t), "%d", &out)
+			if out != 0 {
+				return out
+			}
+		}
+	}
+	return 0
+}
+
+func intPtrValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
 type Movie struct {
 	ID        int        `json:"id"`
 	Title     string     `json:"title"`
@@ -398,4 +528,95 @@ func (c *Client) Movies(ctx context.Context) ([]Movie, error) {
 	}
 
 	return movies, nil
+}
+
+type Series struct {
+	ID     int    `json:"id"`
+	Title  string `json:"title"`
+	Path   string `json:"path"`
+	TVDBID int    `json:"tvdbId"`
+}
+
+type Episode struct {
+	ID            int          `json:"id"`
+	SeriesID      int          `json:"seriesId"`
+	TVDBID        int          `json:"tvdbId"`
+	SeasonNumber  int          `json:"seasonNumber"`
+	EpisodeNumber int          `json:"episodeNumber"`
+	Title         string       `json:"title"`
+	EpisodeFileID int          `json:"episodeFileId"`
+	HasFile       bool         `json:"hasFile"`
+	EpisodeFile   *EpisodeFile `json:"episodeFile"`
+}
+
+type EpisodeFile struct {
+	ID       int    `json:"id"`
+	SeriesID int    `json:"seriesId"`
+	Path     string `json:"path"`
+}
+
+func (e Episode) ImportedPath() string {
+	if e.EpisodeFile != nil && strings.TrimSpace(e.EpisodeFile.Path) != "" {
+		return strings.TrimSpace(e.EpisodeFile.Path)
+	}
+	return ""
+}
+
+func (c *Client) Series(ctx context.Context) ([]Series, error) {
+	if c.base == "" || c.key == "" {
+		return nil, fmt.Errorf("%s client is not configured", c.name)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v3/series", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.key)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := httpx.CheckStatus(resp); err != nil {
+		return nil, err
+	}
+
+	var series []Series
+	if err := json.NewDecoder(resp.Body).Decode(&series); err != nil {
+		return nil, err
+	}
+	return series, nil
+}
+
+func (c *Client) Episodes(ctx context.Context, seriesID int) ([]Episode, error) {
+	if c.base == "" || c.key == "" {
+		return nil, fmt.Errorf("%s client is not configured", c.name)
+	}
+	if seriesID <= 0 {
+		return nil, fmt.Errorf("seriesID is required")
+	}
+	q := url.Values{}
+	q.Set("seriesId", fmt.Sprintf("%d", seriesID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v3/episode?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.key)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := httpx.CheckStatus(resp); err != nil {
+		return nil, err
+	}
+
+	var episodes []Episode
+	if err := json.NewDecoder(resp.Body).Decode(&episodes); err != nil {
+		return nil, err
+	}
+	return episodes, nil
 }

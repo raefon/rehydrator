@@ -5,7 +5,9 @@ import "time"
 type MediaType string
 
 const (
-	MediaMovie  MediaType = "movie"
+	MediaMovie MediaType = "movie"
+	// MediaSeries is the series/episode-file lifecycle type. v0.4.0 stores one
+	// row per imported Sonarr episode file and uses ArrID as episode_file_id.
 	MediaSeries MediaType = "series"
 )
 
@@ -28,7 +30,7 @@ type MediaCacheState struct {
 	ID          string
 	Tenant      string
 	MediaType   MediaType
-	ArrID       int
+	ArrID       int // movie: Radarr movie id; series: Sonarr episodeFileId.
 	SymlinkPath string
 	State       State
 
@@ -47,6 +49,16 @@ type MediaCacheState struct {
 	SourceTitle      *string
 	TMDBID           *int
 	TVDBID           *int
+
+	// v0.4.0 Sonarr episode-file metadata. Movies leave these nil/empty.
+	SeriesID      *int
+	EpisodeID     *int
+	EpisodeFileID *int
+	SeasonNumber  *int
+	EpisodeNumber *int
+	SeriesTitle   *string
+	EpisodeTitle  *string
+	CacheGroupKey *string
 
 	RetryCount  int
 	NextRetryAt *time.Time

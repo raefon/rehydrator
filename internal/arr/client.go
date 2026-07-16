@@ -72,7 +72,7 @@ type HistoryRecord struct {
 
 // LatestGrabbedTorrentForState resolves torrent metadata for the exact tracked row.
 // Movies use Radarr movieId; Sonarr rows use seriesId + episodeFileId metadata,
-// because v0.4.0 stores arr_id as episode_file_id for independent episode-file rows.
+// because v0.4.1 stores arr_id as episode_file_id for independent episode-file rows.
 func (c *Client) LatestGrabbedTorrentForState(ctx context.Context, item model.MediaCacheState) (model.TorrentMetadata, error) {
 	switch item.MediaType {
 	case model.MediaMovie:
@@ -550,9 +550,15 @@ type Episode struct {
 }
 
 type EpisodeFile struct {
-	ID       int    `json:"id"`
-	SeriesID int    `json:"seriesId"`
-	Path     string `json:"path"`
+	ID           int    `json:"id"`
+	SeriesID     int    `json:"seriesId"`
+	SeasonNumber int    `json:"seasonNumber"`
+	Path         string `json:"path"`
+	RelativePath string `json:"relativePath"`
+}
+
+func (f EpisodeFile) ImportedPath() string {
+	return strings.TrimSpace(f.Path)
 }
 
 func (e Episode) ImportedPath() string {
@@ -619,4 +625,39 @@ func (c *Client) Episodes(ctx context.Context, seriesID int) ([]Episode, error) 
 		return nil, err
 	}
 	return episodes, nil
+}
+
+// EpisodeFiles returns imported Sonarr episode files for a series. This endpoint
+// is authoritative for imported files; /episode often omits the nested
+// episodeFile object even when Sonarr has files on disk.
+func (c *Client) EpisodeFiles(ctx context.Context, seriesID int) ([]EpisodeFile, error) {
+	if c.base == "" || c.key == "" {
+		return nil, fmt.Errorf("%s client is not configured", c.name)
+	}
+	if seriesID <= 0 {
+		return nil, fmt.Errorf("seriesID is required")
+	}
+	q := url.Values{}
+	q.Set("seriesId", fmt.Sprintf("%d", seriesID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v3/episodeFile?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.key)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := httpx.CheckStatus(resp); err != nil {
+		return nil, err
+	}
+
+	var files []EpisodeFile
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return nil, err
+	}
+	return files, nil
 }

@@ -1,0 +1,7 @@
+-- v0.4.1 Sonarr seed fix
+-- No schema change required.
+-- Code changes:
+--   - use /api/v3/episodeFile?seriesId=<id> as authoritative imported file source
+--   - join episode-file rows back to /api/v3/episode rows for labels/season metadata
+--   - add Sonarr sync locking/debounce
+--   - add Sonarr debug endpoints

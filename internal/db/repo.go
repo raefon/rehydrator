@@ -173,11 +173,7 @@ func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([
         FROM candidates
         WHERE m.id = candidates.id
         RETURNING
-            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state,
-            m.rearm_requested, m.cached_until, m.torbox_torrent_id,
-            m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title,
-            m.tmdb_id, m.tvdb_id,
-            m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
     `, maxRetries, limit)
 	if err != nil {
 		return nil, err
@@ -212,11 +208,7 @@ func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCach
         FROM candidates
         WHERE m.id = candidates.id
         RETURNING
-            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state,
-            m.rearm_requested, m.cached_until, m.torbox_torrent_id,
-            m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title,
-            m.tmdb_id, m.tvdb_id,
-            m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
     `, limit)
 	if err != nil {
 		return nil, err
@@ -249,11 +241,7 @@ func (r *Repo) VisibilityWorkItems(ctx context.Context, limit int) ([]model.Medi
         FROM candidates
         WHERE m.id = candidates.id
         RETURNING
-            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state,
-            m.rearm_requested, m.cached_until, m.torbox_torrent_id,
-            m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title,
-            m.tmdb_id, m.tvdb_id,
-            m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
     `, limit)
 	if err != nil {
 		return nil, err
@@ -1314,4 +1302,50 @@ func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, err
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_plex_refreshes WHERE tenant = $1`, tenant).Scan(&s.PlexRefreshTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_plex_refreshes WHERE tenant = $1 AND status <> 'success'`, tenant).Scan(&s.PlexRefreshFailures)
 	return s, nil
+}
+
+// SeriesEpisodeRows lists tracked Sonarr episode-file rows for debugging.
+func (r *Repo) SeriesEpisodeRows(ctx context.Context, tenant string, limit int) ([]model.MediaCacheState, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+        SELECT `+itemSelectColumns+`
+        FROM media_cache_state
+        WHERE tenant = $1
+          AND media_type = 'series'
+        ORDER BY series_title ASC NULLS LAST, season_number ASC NULLS LAST, episode_number ASC NULLS LAST, arr_id ASC
+        LIMIT $2
+    `, tenant, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
+// SeriesStateSummary returns counts by state for tracked Sonarr episode-file rows.
+func (r *Repo) SeriesStateSummary(ctx context.Context, tenant string) (map[string]int64, error) {
+	rows, err := r.pool.Query(ctx, `
+        SELECT state, count(*)
+        FROM media_cache_state
+        WHERE tenant = $1
+          AND media_type = 'series'
+        GROUP BY state
+        ORDER BY state
+    `, tenant)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var state string
+		var count int64
+		if err := rows.Scan(&state, &count); err != nil {
+			return nil, err
+		}
+		out[state] = count
+	}
+	return out, rows.Err()
 }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/raefon/rehydrator/internal/db"
@@ -171,6 +172,8 @@ type apiHandler struct {
 	plexRefreshTV                func(context.Context) error
 	selfHealRun                  func(context.Context) error
 	dependencyChecks             map[string]func(context.Context) error
+	sonarrWebhookMu              sync.Mutex
+	lastSonarrWebhookRefresh     time.Time
 }
 
 func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -472,6 +475,68 @@ func (h *apiHandler) handleAdminSelfHealRun(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "tenant": h.tenant, "action": "self_heal_run"})
 }
 
+func (h *apiHandler) handleAdminSonarrStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	seriesSummary, err := h.repo.SeriesStateSummary(r.Context(), h.tenant)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tracked := int64(0)
+	for _, count := range seriesSummary {
+		tracked += count
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                               true,
+		"tenant":                           h.tenant,
+		"tracked_series_episode_files":     tracked,
+		"items_by_state":                   seriesSummary,
+		"webhook_refresh_debounce_seconds": 60,
+		"last_sonarr_webhook_refresh":      h.lastSonarrWebhookRefresh,
+	})
+}
+
+func (h *apiHandler) handleAdminSonarrEpisodeFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	items, err := h.repo.SeriesEpisodeRows(r.Context(), h.tenant, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": h.tenant, "count": len(items), "episode_files": items})
+}
+
+func (h *apiHandler) shouldRunSonarrWebhookRefresh() bool {
+	h.sonarrWebhookMu.Lock()
+	defer h.sonarrWebhookMu.Unlock()
+	now := time.Now()
+	if !h.lastSonarrWebhookRefresh.IsZero() && now.Sub(h.lastSonarrWebhookRefresh) < 60*time.Second {
+		return false
+	}
+	h.lastSonarrWebhookRefresh = now
+	return true
+}
+
 func (h *apiHandler) handleAdminRetryFailed(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -715,12 +780,18 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 	raw, _ := json.Marshal(payload)
 	eventType := firstString(payload, "eventType", "event", "type")
 	refreshed := false
+	refreshSkipped := false
 	if h.refreshSonarr != nil {
-		if err := h.refreshSonarr(r.Context()); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		if h.shouldRunSonarrWebhookRefresh() {
+			if err := h.refreshSonarr(r.Context()); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			refreshed = true
+		} else {
+			refreshSkipped = true
+			slog.Info("sonarr webhook refresh skipped by debounce", "event", eventType)
 		}
-		refreshed = true
 	}
 	// If the webhook includes episode-file path metadata, attach an audit event to the seeded row.
 	episodeFile := firstMap(payload, "episodeFile", "EpisodeFile", "episode_file")
@@ -740,10 +811,10 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if matched {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "refresh": refreshed, "event": eventType, "episode_file_id": item.ArrID, "state": item.State, "path": path})
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "refresh": refreshed, "refresh_skipped_by_debounce": refreshSkipped, "event": eventType, "episode_file_id": item.ArrID, "state": item.State, "path": path})
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "refresh": refreshed, "event": eventType, "path": path})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "refresh": refreshed, "refresh_skipped_by_debounce": refreshSkipped, "event": eventType, "path": path})
 }
 
 func (h *apiHandler) handleSeerrWebhook(w http.ResponseWriter, r *http.Request) {

@@ -6,7 +6,7 @@ type MediaType string
 
 const (
 	MediaMovie MediaType = "movie"
-	// MediaSeries is the series/episode-file lifecycle type. v0.4.0 stores one
+	// MediaSeries is the series/episode-file lifecycle type. v0.4.1 stores one
 	// row per imported Sonarr episode file and uses ArrID as episode_file_id.
 	MediaSeries MediaType = "series"
 )
@@ -50,7 +50,7 @@ type MediaCacheState struct {
 	TMDBID           *int
 	TVDBID           *int
 
-	// v0.4.0 Sonarr episode-file metadata. Movies leave these nil/empty.
+	// v0.4.1 Sonarr episode-file metadata. Movies leave these nil/empty.
 	SeriesID      *int
 	EpisodeID     *int
 	EpisodeFileID *int

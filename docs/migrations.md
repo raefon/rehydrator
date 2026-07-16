@@ -70,3 +70,11 @@ series_title, episode_title, cache_group_key
 ```
 
 Also adds indexes for series episode-file lookup, path playback matching, and future cache grouping.
+
+## 017_sonarr_seed_fix.sql
+
+No schema change. Documents the v0.4.1 Sonarr seed fix:
+
+- `/api/v3/episodeFile?seriesId=<id>` is now authoritative for imported Sonarr files.
+- `/api/v3/episode?seriesId=<id>` is used only to enrich labels/season/episode metadata.
+- Sonarr sync has a lock/debounce so webhook bursts do not create overlapping seed runs.

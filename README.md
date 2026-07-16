@@ -18,7 +18,7 @@ It keeps Plex/Radarr library entries intact while allowing old TorBox cache entr
 
 Movie support is the stable path right now.
 
-Sonarr/series support is planned, but series need a separate lifecycle model because episodes, seasons, and season packs behave differently from single movie files.
+Sonarr/series support is an MVP in `v0.4.1`. It tracks one lifecycle row per imported Sonarr episode file. Season-pack/group-aware pruning is still future work.
 
 ## Architecture
 
@@ -179,9 +179,9 @@ New admin helpers:
 - `GET /api/admin/invalid-rows`
 - `POST /api/admin/self-heal/run`
 
-## v0.4.0 Sonarr / series MVP
+## v0.4.1 Sonarr / series MVP
 
-v0.4.0 adds Sonarr episode-file tracking. Series rows use `media_type=series` and `arr_id=<Sonarr episodeFileId>`, with `series_id`, `episode_id`, `season_number`, `episode_number`, `series_title`, and `episode_title` stored as metadata.
+v0.4.1 includes Sonarr episode-file tracking. Series rows use `media_type=series` and `arr_id=<Sonarr episodeFileId>`, with `series_id`, `episode_id`, `season_number`, `episode_number`, `series_title`, and `episode_title` stored as metadata.
 
 Enable it with:
 
@@ -214,3 +214,22 @@ POST /api/plex/refresh/tv
 ```
 
 See `docs/sonarr-series-support.md` for the testing flow and current season-pack limitations.
+
+## v0.4.1 Sonarr seed fix
+
+v0.4.1 fixes the first Sonarr MVP seed behavior:
+
+```text
+- Uses /api/v3/episodeFile?seriesId=<id> as the authoritative imported file source
+- Still reads /api/v3/episode for episode labels/season metadata where available
+- Adds a Sonarr sync mutex so overlapping syncs are skipped
+- Adds webhook debounce to prevent a Sonarr import burst from launching many full syncs
+- Adds debug endpoints for tracked Sonarr rows
+```
+
+New debug endpoints:
+
+```text
+GET /api/admin/sonarr/status
+GET /api/admin/sonarr/episode-files?limit=100
+```

@@ -1,6 +1,6 @@
-# Sonarr / series support (v0.4.0)
+# Sonarr / series support (v0.4.1)
 
-v0.4.0 adds the first Sonarr MVP. It tracks one Rehydrator row per imported Sonarr episode file.
+v0.4.1 fixes and extends the first Sonarr MVP. It tracks one Rehydrator row per imported Sonarr episode file, using Sonarr episode-file rows as the source of truth.
 
 ## Model
 
@@ -54,7 +54,7 @@ plex:
 ## Flow
 
 ```text
-Sonarr imported episode file
+Sonarr /api/v3/episodeFile?seriesId=<id> imported episode file
 → sonarr_sync seeds media_cache_state row
 → row becomes AVAILABLE
 → metadata resolution tries to match Sonarr history and save infohash/magnet
@@ -63,6 +63,12 @@ Sonarr imported episode file
 → CSI visibility marks AVAILABLE again
 → Plex refresh targets the season folder / episode parent folder
 ```
+
+## v0.4.1 seed behavior
+
+The syncer now uses `/api/v3/episodeFile?seriesId=<id>` for imported files. `/api/v3/episode?seriesId=<id>` is still read for labels such as episode title, season number, and episode number, but it is no longer used to decide whether a file exists.
+
+Webhook-triggered Sonarr refreshes are debounced so import/rename bursts do not launch many overlapping full seed syncs. Overlapping sync attempts are skipped and logged.
 
 ## Endpoints
 
@@ -74,6 +80,8 @@ GET  /api/state/series/<episodeFileId>
 POST /api/sonarr/webhook
 POST /api/plex/refresh/series/<episodeFileId>
 POST /api/plex/refresh/tv
+GET  /api/admin/sonarr/status
+GET  /api/admin/sonarr/episode-files?limit=100
 ```
 
 ## Plex playback matching

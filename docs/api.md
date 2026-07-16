@@ -124,7 +124,7 @@ curl -i -X POST -H "Authorization: Bearer $API_TOKEN" \
 
 `plex.refresh_dedupe_minutes` suppresses duplicate automated refreshes for the same media item and folder path. This prevents `rehydration_complete` and `self_heal_available` from firing two Plex scans for the same movie folder in the same minute. Manual movie and whole-section refresh endpoints remain available for repair work.
 
-## v0.4.0 Sonarr / series endpoints
+## v0.4.1 Sonarr / series endpoints
 
 ```bash
 curl -i -X POST -H "Authorization: Bearer $API_TOKEN" \
@@ -144,4 +144,10 @@ curl -i -X POST -H "Authorization: Bearer $API_TOKEN" \
 
 curl -i -X POST -H "Authorization: Bearer $API_TOKEN" \
   http://localhost:8080/api/plex/refresh/tv
+
+curl -s -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:8080/api/admin/sonarr/status | jq
+
+curl -s -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:8080/api/admin/sonarr/episode-files?limit=100" | jq
 ```

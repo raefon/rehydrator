@@ -217,7 +217,7 @@ func main() {
 	}
 	var refreshSonarr func(context.Context) error
 	if sonarrSyncer != nil {
-		refreshSonarr = sonarrSyncer.SyncOnce
+		refreshSonarr = func(ctx context.Context) error { return sonarrSyncer.SyncOnceSource(ctx, "api_or_webhook") }
 	}
 	var refreshSeerr func(context.Context) error
 	if seerrSyncer != nil {
@@ -237,11 +237,11 @@ func main() {
 			if !found {
 				return os.ErrNotExist
 			}
-			targetPath := plexClient.TargetScanPath(item.SymlinkPath)
+			targetPath := plexClient.TargetScanPath(item.SymlinkPath, model.MediaMovie)
 			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
 			defer cancel()
 			slog.Info("manual Plex refresh starting", "arr_id", item.ArrID, "target_path", targetPath)
-			err = plexClient.RefreshPath(refreshCtx, targetPath)
+			err = plexClient.RefreshPathForMedia(refreshCtx, targetPath, model.MediaMovie)
 			status := "success"
 			message := ""
 			if err != nil {

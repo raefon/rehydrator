@@ -1,6 +1,6 @@
 # Initial import Plex refresh
 
-v0.4.2 adds targeted Plex refreshes for first imports and path changes. Earlier
+v0.4.3 adds targeted Plex refreshes for first imports and path changes. Earlier
 versions refreshed Plex after rehydration and self-heal, but an item first
 imported by Radarr/Sonarr could stay invisible until a manual Plex scan.
 

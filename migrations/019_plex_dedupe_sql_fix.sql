@@ -1,0 +1,5 @@
+-- v0.4.3 Plex refresh dedupe SQL fix
+-- No schema change required.
+-- This release changes the dedupe DB check to pass an explicit timestamptz cutoff
+-- instead of sending an unused/ambiguous SQL parameter. It fixes PostgreSQL errors
+-- like: could not determine data type of parameter $2.

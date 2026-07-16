@@ -103,4 +103,4 @@ This is intentionally conservative. It only queues targeted movie-folder refresh
 
 ## Initial imports
 
-Starting in v0.4.2, Rehydrator can own the first Plex scan after Radarr or Sonarr imports media. Enable `plex.refresh_after_import: true`. This queues a targeted movie folder or season folder refresh only when a row is new, promoted from `REQUESTED`, filled with a real path, or changed by rename/upgrade.
+Starting in v0.4.3, Rehydrator can own the first Plex scan after Radarr or Sonarr imports media. Enable `plex.refresh_after_import: true`. This queues a targeted movie folder or season folder refresh only when a row is new, promoted from `REQUESTED`, filled with a real path, or changed by rename/upgrade.

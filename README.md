@@ -235,7 +235,7 @@ GET /api/admin/sonarr/episode-files?limit=100
 ```
 
 
-## v0.4.2 initial import Plex refresh
+## v0.4.3 initial import Plex refresh
 
 - Queues targeted Plex refreshes on initial Radarr/Sonarr import.
 - Queues refreshes when REQUESTED rows are promoted to AVAILABLE.
@@ -244,3 +244,13 @@ GET /api/admin/sonarr/episode-files?limit=100
 - Adds `plex.refresh_after_import` / `PLEX_REFRESH_AFTER_IMPORT`.
 
 See `docs/initial-import-plex-refresh.md`.
+
+## v0.4.3 notes
+
+`v0.4.3` fixes the PostgreSQL Plex refresh dedupe warning seen during bulk Sonarr initial imports:
+
+```text
+ERROR: could not determine data type of parameter $2 (SQLSTATE 42P18)
+```
+
+No schema change is required. The database dedupe check now uses an explicit timestamp cutoff and no unused SQL parameters. See [`docs/plex-dedupe-sql-fix.md`](docs/plex-dedupe-sql-fix.md).

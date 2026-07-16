@@ -640,9 +640,10 @@ func (c *Controller) reservePlexRefresh(ctx context.Context, item model.MediaCac
 	c.plexRefreshDedupeMu.Unlock()
 
 	if c.opt.Repo != nil {
-		recent, err := c.opt.Repo.RecentSuccessfulPlexRefresh(ctx, item.Tenant, item.ID, targetPath, int(c.opt.PlexRefreshDedupe.Seconds()))
+		cutoff := now.Add(-c.opt.PlexRefreshDedupe)
+		recent, err := c.opt.Repo.RecentSuccessfulPlexRefresh(ctx, item.Tenant, targetPath, cutoff)
 		if err != nil {
-			slog.Warn("Plex refresh dedupe DB check failed; continuing", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "error", err)
+			slog.Warn("Plex refresh dedupe DB check failed; continuing", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "cutoff", cutoff, "error", err)
 			return true, ""
 		}
 		if recent {

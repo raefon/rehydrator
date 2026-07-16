@@ -80,4 +80,16 @@ No schema change. Documents the v0.4.1 Sonarr seed fix:
 - Sonarr sync has a lock/debounce so webhook bursts do not create overlapping seed runs.
 
 
-- `018_initial_import_plex_refresh.sql` - no-op note for v0.4.2; targeted Plex refresh on first import/promote/path-change is a code change only.
+- `018_initial_import_plex_refresh.sql` - no-op note for v0.4.3; targeted Plex refresh on first import/promote/path-change is a code change only.
+
+## 018_initial_import_plex_refresh.sql
+
+No schema change. Documents the v0.4.2 initial import refresh behavior:
+
+- Radarr seed sync queues targeted Plex refreshes on first import, REQUESTED -> AVAILABLE, path fill, rename, or upgrade.
+- Sonarr seed sync queues targeted Plex refreshes on first episode-file import, REQUESTED/incomplete -> AVAILABLE, path fill, rename, or upgrade.
+- Refreshes use existing Plex target-path dedupe.
+
+## 019_plex_dedupe_sql_fix.sql
+
+No schema change. Documents the v0.4.3 Plex refresh dedupe SQL fix. The dedupe DB query now passes a concrete `timestamptz` cutoff and avoids the PostgreSQL parameter type error from the previous query shape.

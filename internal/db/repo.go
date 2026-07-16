@@ -1092,21 +1092,18 @@ func (r *Repo) RecordPlexRefresh(ctx context.Context, tenant string, mediaID str
 	return err
 }
 
-func (r *Repo) RecentSuccessfulPlexRefresh(ctx context.Context, tenant string, mediaID string, path string, withinSeconds int) (bool, error) {
-	if withinSeconds <= 0 {
-		withinSeconds = 600
-	}
+func (r *Repo) RecentSuccessfulPlexRefresh(ctx context.Context, tenant string, path string, cutoff time.Time) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1
             FROM media_cache_plex_refreshes
             WHERE tenant = $1
-              AND path = NULLIF($3, '')
+              AND path = NULLIF($2, '')
               AND status = 'success'
-              AND created_at > now() - ($4::int * interval '1 second')
+              AND created_at > $3::timestamptz
         )
-    `, tenant, mediaID, path, withinSeconds).Scan(&exists)
+    `, tenant, path, cutoff).Scan(&exists)
 	return exists, err
 }
 

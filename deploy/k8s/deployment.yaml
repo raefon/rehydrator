@@ -122,6 +122,8 @@ spec:
               value: "true"
             - name: PLEX_REFRESH_AFTER_VISIBILITY
               value: "true"
+            - name: PLEX_REFRESH_AFTER_IMPORT
+              value: "true"
             - name: PLEX_REFRESH_AFTER_PRUNE
               value: "false"
             - name: PLEX_REFRESH_DELAY_SECONDS

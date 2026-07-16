@@ -78,3 +78,6 @@ No schema change. Documents the v0.4.1 Sonarr seed fix:
 - `/api/v3/episodeFile?seriesId=<id>` is now authoritative for imported Sonarr files.
 - `/api/v3/episode?seriesId=<id>` is used only to enrich labels/season/episode metadata.
 - Sonarr sync has a lock/debounce so webhook bursts do not create overlapping seed runs.
+
+
+- `018_initial_import_plex_refresh.sql` - no-op note for v0.4.2; targeted Plex refresh on first import/promote/path-change is a code change only.

@@ -74,6 +74,8 @@ plex:
   tv_section_id: 0
   refresh_after_rearm: true
   refresh_after_visibility: true
+  # Queue targeted Plex refreshes when Radarr/Sonarr first imports or promotes media.
+  refresh_after_import: true
   refresh_after_prune: false
   refresh_delay_seconds: 45
   refresh_timeout_seconds: 20
@@ -179,6 +181,7 @@ type Config struct {
 	PlexTVSectionID            int
 	PlexRefreshAfterRearm      bool
 	PlexRefreshAfterVisibility bool
+	PlexRefreshAfterImport     bool
 	PlexRefreshAfterPrune      bool
 	PlexRefreshDelaySeconds    int
 	PlexRefreshTimeoutSeconds  int
@@ -307,6 +310,7 @@ type fileConfig struct {
 		TVSectionID            int    `yaml:"tv_section_id"`
 		RefreshAfterRearm      *bool  `yaml:"refresh_after_rearm"`
 		RefreshAfterVisibility *bool  `yaml:"refresh_after_visibility"`
+		RefreshAfterImport     *bool  `yaml:"refresh_after_import"`
 		RefreshAfterPrune      *bool  `yaml:"refresh_after_prune"`
 		RefreshDelaySeconds    int    `yaml:"refresh_delay_seconds"`
 		RefreshTimeoutSeconds  int    `yaml:"refresh_timeout_seconds"`
@@ -413,6 +417,7 @@ func defaults() Config {
 		PlexURL:                        "http://plex:32400",
 		PlexRefreshAfterRearm:          true,
 		PlexRefreshAfterVisibility:     true,
+		PlexRefreshAfterImport:         true,
 		PlexRefreshAfterPrune:          false,
 		PlexRefreshDelaySeconds:        45,
 		PlexRefreshTimeoutSeconds:      20,
@@ -603,6 +608,9 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.Plex.RefreshAfterVisibility != nil {
 		cfg.PlexRefreshAfterVisibility = *fc.Plex.RefreshAfterVisibility
 	}
+	if fc.Plex.RefreshAfterImport != nil {
+		cfg.PlexRefreshAfterImport = *fc.Plex.RefreshAfterImport
+	}
 	if fc.Plex.RefreshAfterPrune != nil {
 		cfg.PlexRefreshAfterPrune = *fc.Plex.RefreshAfterPrune
 	}
@@ -751,6 +759,7 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.PlexTVSectionID = getenvInt("PLEX_TV_SECTION_ID", cfg.PlexTVSectionID)
 	cfg.PlexRefreshAfterRearm = getenvBool("PLEX_REFRESH_AFTER_REARM", cfg.PlexRefreshAfterRearm)
 	cfg.PlexRefreshAfterVisibility = getenvBool("PLEX_REFRESH_AFTER_VISIBILITY", cfg.PlexRefreshAfterVisibility)
+	cfg.PlexRefreshAfterImport = getenvBool("PLEX_REFRESH_AFTER_IMPORT", cfg.PlexRefreshAfterImport)
 	cfg.PlexRefreshAfterPrune = getenvBool("PLEX_REFRESH_AFTER_PRUNE", cfg.PlexRefreshAfterPrune)
 	cfg.PlexRefreshDelaySeconds = getenvInt("PLEX_REFRESH_DELAY_SECONDS", cfg.PlexRefreshDelaySeconds)
 	cfg.PlexRefreshTimeoutSeconds = getenvInt("PLEX_REFRESH_TIMEOUT_SECONDS", cfg.PlexRefreshTimeoutSeconds)

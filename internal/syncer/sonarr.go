@@ -20,6 +20,7 @@ type SonarrSyncer struct {
 	category   string
 	interval   time.Duration
 	cacheGrace time.Duration
+	onImported func(context.Context, model.MediaCacheState, string)
 
 	mu          sync.Mutex
 	running     bool
@@ -37,6 +38,7 @@ type SonarrOptions struct {
 	Interval   time.Duration
 	CacheGrace time.Duration
 	Debounce   time.Duration
+	OnImported func(context.Context, model.MediaCacheState, string)
 }
 
 func NewSonarr(opt SonarrOptions) *SonarrSyncer {
@@ -59,6 +61,7 @@ func NewSonarr(opt SonarrOptions) *SonarrSyncer {
 		category:   opt.Category,
 		interval:   opt.Interval,
 		cacheGrace: opt.CacheGrace,
+		onImported: opt.OnImported,
 		debounce:   opt.Debounce,
 	}
 }
@@ -173,6 +176,13 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 			}
 			importedFiles++
 
+			refreshReason := ""
+			if existing, found, err := s.repo.GetState(ctx, s.tenant, model.MediaSeries, episodeFile.ID); err != nil {
+				slog.Warn("sonarr seed sync could not check existing episode-file row", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "error", err)
+			} else {
+				refreshReason = initialImportRefreshReason(found, existing, path)
+			}
+
 			episode := episodeByFileID[episodeFile.ID]
 			episodeID := episode.ID
 			episodeTitle := episode.Title
@@ -185,6 +195,11 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 				continue
 			}
 			seeded++
+
+			if refreshReason != "" && s.onImported != nil {
+				slog.Info("sonarr imported episode file queued for Plex refresh", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "reason", refreshReason, "path", path)
+				s.onImported(ctx, item, refreshReason)
+			}
 
 			if item.InfoHash == nil || *item.InfoHash == "" {
 				torrent, err := s.sonarr.LatestGrabbedTorrentForState(ctx, item)

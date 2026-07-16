@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/raefon/rehydrator/internal/arr"
@@ -19,6 +20,7 @@ type RadarrSyncer struct {
 	category   string
 	interval   time.Duration
 	cacheGrace time.Duration
+	onImported func(context.Context, model.MediaCacheState, string)
 }
 
 type RadarrOptions struct {
@@ -28,6 +30,7 @@ type RadarrOptions struct {
 	Category   string
 	Interval   time.Duration
 	CacheGrace time.Duration
+	OnImported func(context.Context, model.MediaCacheState, string)
 }
 
 func NewRadarr(opt RadarrOptions) *RadarrSyncer {
@@ -47,6 +50,7 @@ func NewRadarr(opt RadarrOptions) *RadarrSyncer {
 		category:   opt.Category,
 		interval:   opt.Interval,
 		cacheGrace: opt.CacheGrace,
+		onImported: opt.OnImported,
 	}
 }
 
@@ -86,12 +90,24 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 		}
 		imported++
 
+		refreshReason := ""
+		if existing, found, err := s.repo.GetState(ctx, s.tenant, model.MediaMovie, movie.ID); err != nil {
+			slog.Warn("radarr seed sync could not check existing movie row", "movie_id", movie.ID, "title", movie.Title, "error", err)
+		} else {
+			refreshReason = initialImportRefreshReason(found, existing, path)
+		}
+
 		item, err := s.repo.UpsertImportedMovie(ctx, s.tenant, movie.ID, movie.Title, path, s.category, time.Now().Add(s.cacheGrace), movie.TMDBID, 0)
 		if err != nil {
 			slog.Warn("radarr seed sync failed to upsert movie", "movie_id", movie.ID, "title", movie.Title, "error", err)
 			continue
 		}
 		seeded++
+
+		if refreshReason != "" && s.onImported != nil {
+			slog.Info("radarr imported item queued for Plex refresh", "movie_id", movie.ID, "title", movie.Title, "reason", refreshReason, "path", path)
+			s.onImported(ctx, item, refreshReason)
+		}
 
 		if item.InfoHash == nil || *item.InfoHash == "" {
 			torrent, err := s.radarr.LatestGrabbedTorrent(ctx, movie.ID, model.MediaMovie)
@@ -118,4 +134,22 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 
 	slog.Info("radarr seed sync complete", "movies", len(movies), "imported", imported, "seeded", seeded, "metadata_resolved", metadataResolved)
 	return nil
+}
+
+func initialImportRefreshReason(found bool, existing model.MediaCacheState, newPath string) string {
+	if !found {
+		return "initial_import_available"
+	}
+	oldPath := strings.TrimSpace(existing.SymlinkPath)
+	newPath = strings.TrimSpace(newPath)
+	if oldPath == "" && newPath != "" {
+		return "path_filled_available"
+	}
+	if existing.State == model.StateRequested && newPath != "" {
+		return "requested_promoted_available"
+	}
+	if oldPath != "" && newPath != "" && oldPath != newPath {
+		return "path_changed_available"
+	}
+	return ""
 }

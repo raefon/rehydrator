@@ -96,6 +96,7 @@ func main() {
 		PlexEnabled:                    cfg.PlexEnabled,
 		PlexRefreshAfterRearm:          cfg.PlexRefreshAfterRearm,
 		PlexRefreshAfterVisibility:     cfg.PlexRefreshAfterVisibility,
+		PlexRefreshAfterImport:         cfg.PlexRefreshAfterImport,
 		PlexRefreshAfterPrune:          cfg.PlexRefreshAfterPrune,
 		PlexRefreshDelay:               time.Duration(cfg.PlexRefreshDelaySeconds) * time.Second,
 		PlexRefreshTimeout:             time.Duration(cfg.PlexRefreshTimeoutSeconds) * time.Second,
@@ -146,6 +147,7 @@ func main() {
 		"plex_tv_section_id", cfg.PlexTVSectionID,
 		"plex_refresh_after_rearm", cfg.PlexRefreshAfterRearm,
 		"plex_refresh_after_visibility", cfg.PlexRefreshAfterVisibility,
+		"plex_refresh_after_import", cfg.PlexRefreshAfterImport,
 		"plex_refresh_after_prune", cfg.PlexRefreshAfterPrune,
 		"plex_refresh_delay", cfg.PlexRefreshDelaySeconds,
 		"plex_max_refreshes_per_run", cfg.PlexMaxRefreshesPerRun,
@@ -187,6 +189,9 @@ func main() {
 			Category:   cfg.DecypharrRadarrCategory,
 			Interval:   cfg.RadarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
+			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
+				ctrl.ScheduleInitialImportPlexRefresh(syncCtx, item, "radarr_"+reason)
+			},
 		})
 	}
 
@@ -198,6 +203,9 @@ func main() {
 			Category:   cfg.DecypharrSonarrCategory,
 			Interval:   cfg.SonarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
+			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
+				ctrl.ScheduleInitialImportPlexRefresh(syncCtx, item, "sonarr_"+reason)
+			},
 		})
 	}
 

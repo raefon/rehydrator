@@ -66,6 +66,7 @@ plex:
   movie_section_id: 0
   refresh_after_rearm: true
   refresh_after_visibility: true
+  refresh_after_import: true
   refresh_after_prune: false
   refresh_delay_seconds: 45
 ```

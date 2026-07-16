@@ -106,3 +106,8 @@ curl -i -X POST \
 ## Season packs
 
 This MVP uses one row per episode file. Multi-episode files and season packs are represented by the episodeFileId row using the first episode label Sonarr returns for that file. Later work should add shared infohash/cache group handling for season-pack aware rearm/prune decisions.
+
+
+## v0.4.2 first-import refresh
+
+Sonarr episode-file seed sync now queues a targeted Plex season-folder refresh when an episode file is first discovered, when a placeholder/requested row becomes available, or when an episode file path changes. Normal steady-state syncs do not queue refreshes.

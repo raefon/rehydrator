@@ -233,3 +233,14 @@ New debug endpoints:
 GET /api/admin/sonarr/status
 GET /api/admin/sonarr/episode-files?limit=100
 ```
+
+
+## v0.4.2 initial import Plex refresh
+
+- Queues targeted Plex refreshes on initial Radarr/Sonarr import.
+- Queues refreshes when REQUESTED rows are promoted to AVAILABLE.
+- Queues refreshes when imported paths change because of upgrades/renames.
+- Uses existing Plex dedupe/cooldown so steady seed loops do not repeatedly scan Plex.
+- Adds `plex.refresh_after_import` / `PLEX_REFRESH_AFTER_IMPORT`.
+
+See `docs/initial-import-plex-refresh.md`.

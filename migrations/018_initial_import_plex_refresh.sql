@@ -1,0 +1,5 @@
+-- v0.4.2 initial import Plex refresh
+-- No schema change required.
+-- This release queues targeted Plex folder refreshes when Radarr/Sonarr seed sync
+-- creates a new AVAILABLE row, promotes REQUESTED -> AVAILABLE, fills an empty
+-- symlink_path, or sees an imported path change/upgrade/rename.

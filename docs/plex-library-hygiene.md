@@ -19,6 +19,7 @@ plex:
   movie_section_id: 0
   refresh_after_rearm: true
   refresh_after_visibility: true
+  refresh_after_import: true
   refresh_after_prune: false
   refresh_delay_seconds: 45
   refresh_timeout_seconds: 20
@@ -98,3 +99,8 @@ self_heal:
 ```
 
 This is intentionally conservative. It only queues targeted movie-folder refreshes, and it does not refresh after prune.
+
+
+## Initial imports
+
+Starting in v0.4.2, Rehydrator can own the first Plex scan after Radarr or Sonarr imports media. Enable `plex.refresh_after_import: true`. This queues a targeted movie folder or season folder refresh only when a row is new, promoted from `REQUESTED`, filled with a real path, or changed by rename/upgrade.

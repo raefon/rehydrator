@@ -44,6 +44,7 @@ type Options struct {
 	PlexRefreshAfterRearm          bool
 	PlexRefreshAfterVisibility     bool
 	PlexRefreshAfterPrune          bool
+	PlexRefreshAfterImport         bool
 	PlexRefreshDelay               time.Duration
 	PlexRefreshTimeout             time.Duration
 	PlexMaxRefreshesPerRun         int
@@ -219,6 +220,16 @@ func (c *Controller) reconcileSelfHeal(ctx context.Context) {
 
 func (c *Controller) RunSelfHealOnce(ctx context.Context) {
 	c.runSelfHealPass(ctx, "manual")
+}
+
+// ScheduleInitialImportPlexRefresh queues a targeted Plex refresh for newly imported
+// or newly promoted media. It uses the same dedupe/cooldown path as rehydration and
+// self-heal refreshes, so seed loops and webhook bursts do not repeatedly scan Plex.
+func (c *Controller) ScheduleInitialImportPlexRefresh(ctx context.Context, item model.MediaCacheState, action string) {
+	if strings.TrimSpace(action) == "" {
+		action = "initial_import_available"
+	}
+	c.schedulePlexRefresh(ctx, item, action, c.opt.PlexRefreshAfterImport)
 }
 
 func (c *Controller) runSelfHealPass(ctx context.Context, source string) {
@@ -613,7 +624,7 @@ func (c *Controller) reservePlexRefresh(ctx context.Context, item model.MediaCac
 		return true, ""
 	}
 	now := time.Now()
-	key := strings.Join([]string{item.Tenant, item.ID, targetPath}, "|")
+	key := strings.Join([]string{item.Tenant, string(item.MediaType), targetPath}, "|")
 
 	c.plexRefreshDedupeMu.Lock()
 	for k, until := range c.plexRefreshDedupe {

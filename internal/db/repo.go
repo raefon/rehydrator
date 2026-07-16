@@ -1102,7 +1102,6 @@ func (r *Repo) RecentSuccessfulPlexRefresh(ctx context.Context, tenant string, m
             SELECT 1
             FROM media_cache_plex_refreshes
             WHERE tenant = $1
-              AND media_id = NULLIF($2, '')::uuid
               AND path = NULLIF($3, '')
               AND status = 'success'
               AND created_at > now() - ($4::int * interval '1 second')

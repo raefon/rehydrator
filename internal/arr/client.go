@@ -333,9 +333,15 @@ func torrentMetadataFromGrabbed(arrName string, arrID int, mediaType model.Media
 		return model.TorrentMetadata{}, false
 	}
 
+	torrentURL := strings.TrimSpace(rawDownloadURL)
+	if strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
+		torrentURL = ""
+	}
+
 	return model.TorrentMetadata{
 		InfoHash:    infoHash,
 		Magnet:      magnet,
+		TorrentURL:  torrentURL,
 		Source:      arrName,
 		SourceTitle: r.SourceTitle,
 		DownloadID:  r.DownloadID,
@@ -356,6 +362,7 @@ func logSelectedRecord(arrName string, arrID int, mediaType model.MediaType, r H
 		"infohash", torrent.InfoHash,
 		"magnet_len", len(torrent.Magnet),
 		"magnet_prefix", firstN(torrent.Magnet, 30),
+		"torrent_url_present", strings.TrimSpace(torrent.TorrentURL) != "",
 	)
 }
 

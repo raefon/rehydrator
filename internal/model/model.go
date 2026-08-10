@@ -75,6 +75,7 @@ type MediaCacheState struct {
 type TorrentMetadata struct {
 	InfoHash    string
 	Magnet      string
+	TorrentURL  string
 	Source      string
 	SourceTitle string
 	DownloadID  string

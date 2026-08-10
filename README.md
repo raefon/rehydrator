@@ -9,6 +9,7 @@ It keeps Plex/Radarr library entries intact while allowing old TorBox cache entr
 - Tracks imported Radarr movies in Postgres.
 - Prunes old TorBox cache entries after a configurable grace period.
 - Re-arms archived media through Decypharr when Plex playback is attempted.
+- Preserves Arr-provided `.torrent` download URLs for re-arms, allowing private-tracker torrent files to be submitted instead of reducing them to bare magnets.
 - Handles slow CSI-rclone visibility with `WAITING_FOR_VISIBILITY` instead of duplicate re-adds.
 - Refreshes only the restored movie folder in Plex after a movie becomes available again to clear stale unavailable/trash indicators.
 - Exposes health, API, admin, dependency-check, and Prometheus-style metrics endpoints.
@@ -254,3 +255,11 @@ ERROR: could not determine data type of parameter $2 (SQLSTATE 42P18)
 ```
 
 No schema change is required. The database dedupe check now uses an explicit timestamp cutoff and no unused SQL parameters. See [`docs/plex-dedupe-sql-fix.md`](docs/plex-dedupe-sql-fix.md).
+
+## v0.4.4 torrent-file rearm support
+
+This release adds rehydrator-side support for Arr history records that contain a regular `.torrent` download URL. During re-arm, Rehydrator downloads the original torrent file from the Arr/Prowlarr-provided URL and submits it to Decypharr using the qBittorrent-compatible multipart `torrents` field.
+
+Magnets remain the default fallback when no torrent-file URL is available. The original `.torrent` is not reconstructed from the infohash, which preserves private-tracker metadata such as the announce list and private flag.
+
+**Important:** this changes Rehydrator's re-arm path. Initial Radarr/Sonarr grabs still go directly from the *Arr application to Decypharr, so Decypharr itself must also correctly implement multipart `.torrent` uploads for new IPT/private-tracker downloads.

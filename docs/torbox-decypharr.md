@@ -57,3 +57,11 @@ prune_enabled: false
 ```
 
 Let Radarr/Decypharr/TorBox settle, then re-enable pruning.
+
+## Regular `.torrent` files
+
+v0.4.4 preserves non-magnet `downloadUrl` values from Radarr/Sonarr grabbed history. During a Rehydrator re-arm, the original torrent file is downloaded and submitted to Decypharr as multipart `torrents`, rather than being replaced with a minimal magnet.
+
+This is important for private trackers because the original torrent can contain tracker-specific metadata that an infohash-only magnet does not reproduce.
+
+This does **not** replace Decypharr's initial-download implementation. New `.torrent` grabs still travel directly from Radarr/Sonarr to Decypharr and require Decypharr's `/api/v2/torrents/add` implementation to correctly accept the qBittorrent multipart `torrents` upload and forward the file to the provider.

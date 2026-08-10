@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/raefon/rehydrator/internal/httpx"
@@ -75,24 +76,40 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 		return model.DownloadClientAddResult{}, fmt.Errorf("missing Decypharr URL")
 	}
 
-	magnet := strings.TrimSpace(torrent.Magnet)
-	if magnet == "" && torrent.InfoHash != "" {
-		magnet = "magnet:?xt=urn:btih:" + strings.ToLower(strings.TrimSpace(torrent.InfoHash))
-	}
-	if magnet == "" {
-		return model.DownloadClientAddResult{}, fmt.Errorf("missing magnet/infohash for Decypharr add")
-	}
-
 	if err := c.authenticate(ctx); err != nil {
 		return model.DownloadClientAddResult{}, err
 	}
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
+	submissionMode := "magnet"
 
-	if err := writer.WriteField("urls", magnet); err != nil {
-		return model.DownloadClientAddResult{}, err
+	if torrentURL := strings.TrimSpace(torrent.TorrentURL); torrentURL != "" && !strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
+		torrentBytes, filename, err := c.fetchTorrentFile(ctx, torrentURL, torrent.SourceTitle)
+		if err != nil {
+			return model.DownloadClientAddResult{}, fmt.Errorf("fetch torrent file: %w", err)
+		}
+		part, err := writer.CreateFormFile("torrents", filename)
+		if err != nil {
+			return model.DownloadClientAddResult{}, err
+		}
+		if _, err := part.Write(torrentBytes); err != nil {
+			return model.DownloadClientAddResult{}, err
+		}
+		submissionMode = "torrent_file"
+	} else {
+		magnet := strings.TrimSpace(torrent.Magnet)
+		if magnet == "" && torrent.InfoHash != "" {
+			magnet = "magnet:?xt=urn:btih:" + strings.ToLower(strings.TrimSpace(torrent.InfoHash))
+		}
+		if magnet == "" {
+			return model.DownloadClientAddResult{}, fmt.Errorf("missing magnet/infohash for Decypharr add")
+		}
+		if err := writer.WriteField("urls", magnet); err != nil {
+			return model.DownloadClientAddResult{}, err
+		}
 	}
+
 	if err := writer.WriteField("paused", "false"); err != nil {
 		return model.DownloadClientAddResult{}, err
 	}
@@ -115,7 +132,9 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 		"url", req.URL.String(),
 		"category", category,
 		"infohash", torrent.InfoHash,
-		"magnet_len", len(magnet),
+		"magnet_len", len(torrent.Magnet),
+		"torrent_url_present", strings.TrimSpace(torrent.TorrentURL) != "",
+		"submission_mode", submissionMode,
 	)
 
 	raw, status, err := c.do(req)
@@ -128,6 +147,53 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 
 	hash := strings.ToLower(strings.TrimSpace(torrent.InfoHash))
 	return model.DownloadClientAddResult{Hash: hash}, nil
+}
+
+const maxTorrentFileSize = 50 << 20
+
+func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, torrentURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if err := httpx.CheckStatus(resp); err != nil {
+		return nil, "", fmt.Errorf("download URL returned %w", err)
+	}
+	if resp.ContentLength > maxTorrentFileSize {
+		return nil, "", fmt.Errorf("torrent file is too large: %d bytes", resp.ContentLength)
+	}
+
+	limited := io.LimitReader(resp.Body, maxTorrentFileSize+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > maxTorrentFileSize {
+		return nil, "", fmt.Errorf("torrent file exceeds %d-byte limit", maxTorrentFileSize)
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("torrent file is empty")
+	}
+
+	filename := "download.torrent"
+	if u, err := url.Parse(torrentURL); err == nil {
+		if base := path.Base(u.Path); base != "." && base != "/" && base != "" {
+			filename = base
+		}
+	}
+	if !strings.HasSuffix(strings.ToLower(filename), ".torrent") {
+		filename += ".torrent"
+	}
+	if strings.TrimSpace(sourceTitle) != "" && filename == "download.torrent" {
+		filename = strings.TrimSpace(sourceTitle) + ".torrent"
+	}
+	return data, filename, nil
 }
 
 func (c *Client) DeleteTorrent(ctx context.Context, infoHash string, deleteFiles bool) error {

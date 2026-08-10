@@ -341,13 +341,18 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		return
 	}
 
+	submissionMode := "magnet"
+	if strings.TrimSpace(torrent.TorrentURL) != "" {
+		submissionMode = "torrent_file"
+	}
 	metaJSON, _ := json.Marshal(map[string]string{
-		"infohash":     torrent.InfoHash,
-		"source":       torrent.Source,
-		"source_title": torrent.SourceTitle,
-		"download_id":  torrent.DownloadID,
-		"category":     category,
-		"client":       "decypharr",
+		"infohash":        torrent.InfoHash,
+		"source":          torrent.Source,
+		"source_title":    torrent.SourceTitle,
+		"download_id":     torrent.DownloadID,
+		"category":        category,
+		"client":          "decypharr",
+		"submission_mode": submissionMode,
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "torrent_metadata_resolved", string(metaJSON))
 
@@ -358,9 +363,10 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	}
 
 	addJSON, _ := json.Marshal(map[string]string{
-		"infohash": addResult.Hash,
-		"category": category,
-		"client":   "decypharr",
+		"infohash":        addResult.Hash,
+		"category":        category,
+		"client":          "decypharr",
+		"submission_mode": submissionMode,
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_readd_requested", string(addJSON))
 	if ok, reason := itemHasUsablePath(item); !ok {

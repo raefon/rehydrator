@@ -4,6 +4,17 @@ Rehydrator is an on-demand cache lifecycle manager for media stacks that use Rad
 
 It keeps Plex/Radarr library entries intact while allowing old TorBox cache entries to be pruned and re-armed later when someone tries to play the title again.
 
+## Version information
+
+The application prints its version at startup. To print the version and exit without loading configuration or connecting to dependencies, run:
+
+```bash
+rehydrator --version
+# Rehydrator 0.4.8
+```
+
+Release builds can set the embedded version with the Docker build argument `VERSION` (defaults to `0.4.8`).
+
 ## What it does
 
 - Tracks imported Radarr movies in Postgres.

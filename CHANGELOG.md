@@ -1,3 +1,17 @@
+# Rehydrator v0.4.8 — Version reporting
+
+## Added
+- Print the embedded version during application startup, making the actual running build visible in pod logs.
+- Add `--version` / `-version` CLI flag to print the version and exit before loading configuration or connecting to dependencies.
+- Add Docker build argument `VERSION` and inject it into the binary using Go linker flags.
+- Update the Makefile build target to embed the version from `VERSION`.
+
+## Validation
+- Go source formatted with `gofmt`.
+- Full Go tests/build not run in this environment because dependency availability is not verified.
+
+---
+
 # Rehydrator v0.4.7 — Webhook diagnostics
 
 ## Added

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -24,12 +25,23 @@ import (
 	"github.com/raefon/rehydrator/internal/torbox"
 )
 
+// version is overridden by the release build with -ldflags; the default keeps
+// local development builds identifiable as well.
+var version = "0.4.8"
+
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
+	showVersion := flag.Bool("version", false, "print Rehydrator version and exit")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+
+	if *showVersion {
+		fmt.Printf("Rehydrator %s\n", version)
+		return
+	}
+	slog.Info("rehydrator version", "version", version)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {

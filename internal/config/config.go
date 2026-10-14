@@ -272,6 +272,7 @@ type fileConfig struct {
 		URL                string `yaml:"url"`
 		Username           string `yaml:"username"`
 		Password           string `yaml:"password"`
+		APIToken           string `yaml:"api_token"`
 		RadarrCategory     string `yaml:"radarr_category"`
 		SonarrCategory     string `yaml:"sonarr_category"`
 		DeleteFilesOnPrune *bool  `yaml:"delete_files_on_prune"`

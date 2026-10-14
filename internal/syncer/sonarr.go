@@ -132,6 +132,14 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 		return err
 	}
 
+	seriesIDs := make([]int32, 0, len(series))
+	for _, show := range series {
+		if show.ID > 0 {
+			seriesIDs = append(seriesIDs, int32(show.ID))
+		}
+	}
+	episodeFileIDs := make([]int32, 0)
+	inventoryComplete := true
 	seriesSeen := len(series)
 	episodesSeen := 0
 	episodeFilesSeen := 0
@@ -142,6 +150,7 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 	for _, show := range series {
 		episodes, err := s.sonarr.Episodes(ctx, show.ID)
 		if err != nil {
+			inventoryComplete = false
 			slog.Warn("sonarr seed sync failed to list episodes", "source", source, "series_id", show.ID, "series_title", show.Title, "error", err)
 			episodes = nil
 		} else {
@@ -164,8 +173,14 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 
 		episodeFiles, err := s.sonarr.EpisodeFiles(ctx, show.ID)
 		if err != nil {
+			inventoryComplete = false
 			slog.Warn("sonarr seed sync failed to list episode files", "source", source, "series_id", show.ID, "series_title", show.Title, "error", err)
 			continue
+		}
+		for _, file := range episodeFiles {
+			if file.ID > 0 {
+				episodeFileIDs = append(episodeFileIDs, int32(file.ID))
+			}
 		}
 		episodeFilesSeen += len(episodeFiles)
 
@@ -231,7 +246,18 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 		}
 	}
 
-	slog.Info("sonarr seed sync complete", "source", source, "series", seriesSeen, "episodes", episodesSeen, "episode_files", episodeFilesSeen, "imported_episode_files", importedFiles, "seeded", seeded, "metadata_resolved", metadataResolved)
+	pruned := int64(0)
+	if inventoryComplete {
+		var pruneErr error
+		pruned, pruneErr = s.repo.ReconcileSonarrInventory(ctx, s.tenant, seriesIDs, episodeFileIDs)
+		if pruneErr != nil {
+			slog.Error("sonarr inventory reconciliation failed; stale rows were not pruned", "source", source, "error", pruneErr)
+			return pruneErr
+		}
+	} else {
+		slog.Warn("sonarr inventory incomplete; skipping stale-row pruning", "source", source)
+	}
+	slog.Info("sonarr seed sync complete", "source", source, "series", seriesSeen, "episodes", episodesSeen, "episode_files", episodeFilesSeen, "imported_episode_files", importedFiles, "seeded", seeded, "metadata_resolved", metadataResolved, "stale_rows_pruned", pruned, "inventory_complete", inventoryComplete)
 	return nil
 }
 

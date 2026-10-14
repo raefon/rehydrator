@@ -109,6 +109,7 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/admin/invalid-rows", api.handleAdminInvalidRows)
 		mux.HandleFunc("/api/admin/self-heal/run", api.handleAdminSelfHealRun)
 		mux.HandleFunc("/api/admin/retry-failed", api.handleAdminRetryFailed)
+		mux.HandleFunc("/api/admin/rearm-all", api.handleAdminRearmAll)
 		mux.HandleFunc("/api/refresh/radarr", api.handleRefreshRadarr)
 		mux.HandleFunc("/api/refresh/sonarr", api.handleRefreshSonarr)
 		mux.HandleFunc("/api/refresh/seerr", api.handleRefreshSeerr)
@@ -537,6 +538,55 @@ func (h *apiHandler) shouldRunSonarrWebhookRefresh() bool {
 	return true
 }
 
+// handleAdminRearmAll queues a full-library re-arm. Dry-run is the default;
+// callers must explicitly pass confirm=true to mutate lifecycle rows.
+func (h *apiHandler) handleAdminRearmAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+
+	confirm := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("confirm")), "true")
+	count, err := h.repo.CountFullRearmCandidates(r.Context(), h.tenant)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !confirm {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                true,
+			"tenant":            h.tenant,
+			"action":            "full_rearm_dry_run",
+			"dry_run":           true,
+			"eligible":          count,
+			"message":           "No changes made. Repeat with ?confirm=true to queue eligible rows.",
+			"includes":          []string{"movie", "series"},
+			"excludes":          []string{"REQUESTED placeholders", "in-flight REARMING/PRUNING rows", "rows missing arr_id or symlink_path"},
+			"provider_deletion": false,
+		})
+		return
+	}
+
+	queued, err := h.repo.QueueFullRearm(r.Context(), h.tenant)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok":                true,
+		"tenant":            h.tenant,
+		"action":            "full_rearm_queued",
+		"dry_run":           false,
+		"queued":            queued,
+		"message":           "Rows queued for the existing bounded re-arm worker. Provider-side torrents were not deleted.",
+		"provider_deletion": false,
+	})
+}
+
 func (h *apiHandler) handleAdminRetryFailed(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -732,6 +782,19 @@ func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request)
 	title := firstNonEmptyString(firstString(movie, "title", "name"), firstString(payload, "title", "movieTitle"))
 	eventType := firstString(payload, "eventType", "event", "type")
 	importedPath := firstNonEmptyString(firstString(movieFile, "path"), firstString(payload, "movieFilePath", "path"))
+	if isDeleteEvent(eventType, "MovieDelete", "MovieDeleted") {
+		if arrID <= 0 {
+			http.Error(w, "movie delete webhook missing movie id", http.StatusBadRequest)
+			return
+		}
+		deleted, err := h.repo.DeleteRadarrMovie(r.Context(), h.tenant, arrID, "radarr_movie_deleted_webhook", string(raw))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "radarr_delete_reconciled", "deleted_rows": deleted, "arr_id": arrID, "event": eventType})
+		return
+	}
 
 	if arrID > 0 {
 		item, err := h.repo.UpsertRequestedRadarrMovie(r.Context(), h.tenant, arrID, title, tmdbID)
@@ -779,6 +842,24 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 	}
 	raw, _ := json.Marshal(payload)
 	eventType := firstString(payload, "eventType", "event", "type")
+	series := firstMap(payload, "series", "Series")
+	seriesID := firstInt(series, "id", "seriesId")
+	if seriesID == 0 {
+		seriesID = firstInt(payload, "seriesId", "sonarrId", "arrId")
+	}
+	if isDeleteEvent(eventType, "SeriesDelete", "SeriesDeleted") {
+		if seriesID <= 0 {
+			http.Error(w, "series delete webhook missing series id", http.StatusBadRequest)
+			return
+		}
+		deleted, err := h.repo.DeleteSonarrSeries(r.Context(), h.tenant, seriesID, "sonarr_series_deleted_webhook", string(raw))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "sonarr_delete_reconciled", "deleted_rows": deleted, "series_id": seriesID, "event": eventType})
+		return
+	}
 	refreshed := false
 	refreshSkipped := false
 	if h.refreshSonarr != nil {
@@ -1376,6 +1457,16 @@ func (h *apiHandler) authorized(r *http.Request) bool {
 	}
 	auth := r.Header.Get("Authorization")
 	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) == h.token
+}
+
+func isDeleteEvent(event string, variants ...string) bool {
+	event = strings.ToLower(strings.TrimSpace(event))
+	for _, variant := range variants {
+		if event == strings.ToLower(variant) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeMediaType(s string) model.MediaType {

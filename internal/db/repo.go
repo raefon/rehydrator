@@ -182,6 +182,48 @@ func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([
 	return scanItems(rows)
 }
 
+// CountFullRearmCandidates counts valid tracked rows that a full re-arm would queue.
+// In-flight rows and REQUESTED placeholders are intentionally excluded.
+func (r *Repo) CountFullRearmCandidates(ctx context.Context, tenant string) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `
+        SELECT count(*)
+        FROM media_cache_state
+        WHERE tenant = $1
+          AND media_type IN ('movie', 'series')
+          AND arr_id > 0
+          AND COALESCE(symlink_path, '') <> ''
+          AND state IN ('AVAILABLE', 'HOT', 'COOLING', 'ARCHIVED', 'BROKEN', 'FAILED')
+    `, tenant).Scan(&count)
+	return count, err
+}
+
+// QueueFullRearm marks all eligible tracked media for the existing re-arm worker.
+// It never deletes provider-side torrents or rows. CSI-visible items are short-circuited
+// by the normal re-arm handler when configured; missing items use the normal Arr/Decypharr path.
+func (r *Repo) QueueFullRearm(ctx context.Context, tenant string) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+        UPDATE media_cache_state
+        SET state = 'ARCHIVED',
+            rearm_requested = true,
+            cached_until = NULL,
+            retry_count = 0,
+            next_retry_at = NULL,
+            last_error = NULL,
+            last_checked = now(),
+            updated_at = now()
+        WHERE tenant = $1
+          AND media_type IN ('movie', 'series')
+          AND arr_id > 0
+          AND COALESCE(symlink_path, '') <> ''
+          AND state IN ('AVAILABLE', 'HOT', 'COOLING', 'ARCHIVED', 'BROKEN', 'FAILED')
+    `, tenant)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // PruneWorkItems atomically claims prune work with SKIP LOCKED.
 func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCacheState, error) {
 	if limit <= 0 {
@@ -1071,6 +1113,98 @@ func (r *Repo) ProviderCooldownActive(ctx context.Context, tenant string, provid
 		return true, until, "", nil
 	}
 	return true, until, *reason, nil
+}
+
+// DeleteRadarrMovie removes active tracking for a movie explicitly deleted from Radarr.
+// A tombstone preserves enough identity to explain the removal and support later re-adds.
+func (r *Repo) DeleteRadarrMovie(ctx context.Context, tenant string, movieID int, reason string, metadata string) (int64, error) {
+	if movieID <= 0 {
+		return 0, nil
+	}
+	if reason == "" {
+		reason = "radarr_movie_deleted"
+	}
+	if metadata == "" {
+		metadata = "{}"
+	}
+	tag, err := r.pool.Exec(ctx, `
+        WITH removed AS (
+            DELETE FROM media_cache_state
+            WHERE tenant = $1 AND media_type = 'movie' AND arr_id = $2
+            RETURNING tenant, media_type, arr_id, tmdb_id, COALESCE(arr_title, '') AS title
+        )
+        INSERT INTO media_cache_tombstones (tenant, arr_app, media_type, arr_id, external_id, title, reason, metadata)
+        SELECT tenant, 'radarr', media_type, arr_id, tmdb_id, NULLIF(title, ''), $3, $4::jsonb FROM removed
+    `, tenant, movieID, reason, metadata)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteSonarrSeries removes every tracked episode-file row for a deleted Sonarr series.
+func (r *Repo) DeleteSonarrSeries(ctx context.Context, tenant string, seriesID int, reason string, metadata string) (int64, error) {
+	if seriesID <= 0 {
+		return 0, nil
+	}
+	if reason == "" {
+		reason = "sonarr_series_deleted"
+	}
+	if metadata == "" {
+		metadata = "{}"
+	}
+	tag, err := r.pool.Exec(ctx, `
+        WITH removed AS (
+            DELETE FROM media_cache_state
+            WHERE tenant = $1 AND media_type = 'series' AND series_id = $2
+            RETURNING tenant, media_type, arr_id, tvdb_id, COALESCE(series_title, arr_title, '') AS title
+        )
+        INSERT INTO media_cache_tombstones (tenant, arr_app, media_type, arr_id, external_id, title, reason, metadata)
+        SELECT tenant, 'sonarr', media_type, arr_id, tvdb_id, NULLIF(title, ''), $3, $4::jsonb FROM removed
+    `, tenant, seriesID, reason, metadata)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ReconcileRadarrInventory prunes only tracked rows absent from a successfully fetched full inventory.
+func (r *Repo) ReconcileRadarrInventory(ctx context.Context, tenant string, movieIDs []int32) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+        WITH removed AS (
+            DELETE FROM media_cache_state
+            WHERE tenant = $1 AND media_type = 'movie' AND arr_id > 0
+              AND state <> 'REQUESTED' AND NOT (arr_id = ANY($2::integer[]))
+            RETURNING tenant, media_type, arr_id, tmdb_id, COALESCE(arr_title, '') AS title
+        )
+        INSERT INTO media_cache_tombstones (tenant, arr_app, media_type, arr_id, external_id, title, reason)
+        SELECT tenant, 'radarr', media_type, arr_id, tmdb_id, NULLIF(title, ''), 'missing_from_radarr_inventory' FROM removed
+    `, tenant, movieIDs)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ReconcileSonarrInventory prunes stale episode rows only after all series and episode-file
+// inventories were fetched successfully. Requested placeholders without a series_id are retained.
+func (r *Repo) ReconcileSonarrInventory(ctx context.Context, tenant string, seriesIDs, episodeFileIDs []int32) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+        WITH removed AS (
+            DELETE FROM media_cache_state
+            WHERE tenant = $1 AND media_type = 'series' AND state <> 'REQUESTED'
+              AND series_id IS NOT NULL
+              AND (NOT (series_id = ANY($2::integer[]))
+                   OR (arr_id > 0 AND NOT (arr_id = ANY($3::integer[]))))
+            RETURNING tenant, media_type, arr_id, tvdb_id, COALESCE(series_title, arr_title, '') AS title
+        )
+        INSERT INTO media_cache_tombstones (tenant, arr_app, media_type, arr_id, external_id, title, reason)
+        SELECT tenant, 'sonarr', media_type, arr_id, tvdb_id, NULLIF(title, ''), 'missing_from_sonarr_inventory' FROM removed
+    `, tenant, seriesIDs, episodeFileIDs)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (r *Repo) Event(ctx context.Context, mediaID string, eventType string, metadata string) error {

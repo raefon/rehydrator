@@ -14,6 +14,7 @@ It keeps Plex/Radarr library entries intact while allowing old TorBox cache entr
 - Refreshes only the restored movie folder in Plex after a movie becomes available again to clear stale unavailable/trash indicators.
 - Exposes health, API, admin, dependency-check, and Prometheus-style metrics endpoints.
 - Includes a self-heal worker for recently restored movies that missed a Plex refresh.
+- Reconciles tracked items against complete Radarr/Sonarr inventories and removes stale active rows when items are deleted from Arr, while retaining tombstone audit history.
 
 ## Current scope
 
@@ -120,6 +121,7 @@ GET  /api/state
 POST /api/playback/plex
 POST /api/playback/event
 POST /api/radarr/webhook
+POST /api/sonarr/webhook
 POST /api/seerr/webhook
 POST /api/rearm/movie/{radarr_id}
 POST /api/rearm/movie/tmdb/{tmdb_id}
@@ -263,3 +265,14 @@ This release adds rehydrator-side support for Arr history records that contain a
 Magnets remain the default fallback when no torrent-file URL is available. The original `.torrent` is not reconstructed from the infohash, which preserves private-tracker metadata such as the announce list and private flag.
 
 **Important:** this changes Rehydrator's re-arm path. Initial Radarr/Sonarr grabs still go directly from the *Arr application to Decypharr, so Decypharr itself must also correctly implement multipart `.torrent` uploads for new IPT/private-tracker downloads.
+
+
+## v0.4.6 Arr deletion reconciliation
+
+- Radarr movie-delete and Sonarr series-delete webhooks remove active Rehydrator tracking immediately.
+- Periodic inventory sync catches missed delete webhooks and removes stale active rows only after a successful complete inventory.
+- Sonarr skips pruning if any episode or episode-file API call fails; transient API failures never look like a deleted library.
+- Tombstones preserve deletion history without keeping stale rows active or deleting provider torrents/files.
+- Re-added items are rediscovered by the normal Arr sync. Seerr/watchlist can continue to drive the existing request/re-arm workflow.
+
+See `docs/api.md` for webhook setup and safeguards.

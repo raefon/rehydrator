@@ -79,13 +79,26 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 		return err
 	}
 
+	movieIDs := make([]int32, 0, len(movies))
+	for _, movie := range movies {
+		if movie.ID > 0 {
+			movieIDs = append(movieIDs, int32(movie.ID))
+		}
+	}
+
 	imported := 0
 	seeded := 0
 	metadataResolved := 0
 
 	for _, movie := range movies {
+		// Ensure re-added movies are tracked even before an imported file exists,
+		// and promote any matching TMDb request placeholder to the real Arr ID.
+		if _, err := s.repo.UpsertRequestedRadarrMovie(ctx, s.tenant, movie.ID, movie.Title, movie.TMDBID); err != nil {
+			slog.Warn("radarr seed sync failed to track movie entry", "movie_id", movie.ID, "title", movie.Title, "error", err)
+		}
 		path := movie.ImportedPath()
 		if path == "" {
+			// No path means no re-arm/download is queued by this sync.
 			continue
 		}
 		imported++
@@ -132,7 +145,12 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 		}
 	}
 
-	slog.Info("radarr seed sync complete", "movies", len(movies), "imported", imported, "seeded", seeded, "metadata_resolved", metadataResolved)
+	pruned, pruneErr := s.repo.ReconcileRadarrInventory(ctx, s.tenant, movieIDs)
+	if pruneErr != nil {
+		slog.Error("radarr inventory reconciliation failed; stale rows were not pruned", "error", pruneErr)
+		return pruneErr
+	}
+	slog.Info("radarr seed sync complete", "movies", len(movies), "imported", imported, "seeded", seeded, "metadata_resolved", metadataResolved, "stale_rows_pruned", pruned)
 	return nil
 }
 

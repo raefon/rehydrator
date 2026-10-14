@@ -56,10 +56,25 @@ Generic playback JSON:
 
 ```text
 POST /api/radarr/webhook
+POST /api/sonarr/webhook
 POST /api/seerr/webhook
 POST /api/refresh/radarr
 POST /api/refresh/seerr
 ```
+
+
+## Arr deletion reconciliation (v0.4.6)
+
+Radarr `MovieDelete` / `MovieDeleted` and Sonarr `SeriesDelete` / `SeriesDeleted` webhooks immediately remove the corresponding active Rehydrator rows. A tombstone is retained in `media_cache_tombstones` with the Arr app, identifier, title/external ID when known, reason, payload metadata, and timestamp. This is an audit trail only; it does not delete files or provider-side torrents.
+
+The periodic full inventory sync is the safety net if a webhook is missed:
+
+- Radarr removes tracked movie rows whose Radarr movie ID is absent from a successfully fetched full movie inventory.
+- Sonarr removes tracked episode-file rows if the series or episode-file ID is absent from a complete inventory. If any episode or episode-file inventory call fails, Sonarr skips pruning for that sync.
+- API errors do not count as an empty inventory. Requested placeholders are retained.
+- When an item is added to Arr again (including via Seerr/watchlist integrations), the normal sync recreates its active tracking rows. Re-arming still uses the normal playback/Seerr workflow; deletion never triggers a download by itself.
+
+Configure a Webhook connection in Radarr at **Settings → Connect → Webhook**, select **On Movie Delete**, and point it at `http://<rehydrator-host>:8080/api/radarr/webhook`. Configure Sonarr similarly with **On Series Delete** and `http://<rehydrator-host>:8080/api/sonarr/webhook`. If API-token authentication is enabled, configure the webhook's supported authentication to send `Authorization: Bearer <token>` or use the supported `?token=<token>` compatibility option. Restrict the endpoint to your trusted network.
 
 ## Plex hygiene
 
@@ -78,6 +93,7 @@ GET  /api/state/summary
 GET  /api/health/dependencies
 GET  /api/admin/cooldowns
 POST /api/admin/retry-failed?limit=10
+POST /api/admin/rearm-all
 ```
 
 ### GET /api/state/summary
@@ -91,6 +107,24 @@ Checks configured runtime dependencies such as Postgres, Radarr, Decypharr, Seer
 ### GET /api/admin/cooldowns
 
 Shows active provider cooldowns. This is useful after TorBox/Decypharr rate limits or 429 responses.
+
+### POST /api/admin/rearm-all
+
+Queues a full re-arm for valid tracked Radarr movie and Sonarr episode-file rows. It uses the normal bounded re-arm worker and existing CSI visibility checks. A dry run is the default and makes no changes:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $API_TOKEN" \
+  http://localhost:8080/api/admin/rearm-all | jq
+```
+
+To queue the eligible rows, explicitly confirm the operation:
+
+```bash
+curl -i -X POST -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:8080/api/admin/rearm-all?confirm=true"
+```
+
+This resets retry delays for eligible rows and queues them through the regular Arr/Decypharr path. It excludes `REQUESTED` placeholders, in-flight `REARMING`/`PRUNING` rows, and rows without a valid Arr ID or symlink path. It does **not** delete TorBox torrents or prune records. A visible CSI path is handled by the existing visibility short-circuit when enabled.
 
 ### POST /api/admin/retry-failed?limit=10
 

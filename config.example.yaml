@@ -53,7 +53,6 @@ decypharr:
   url: http://tenet-decypharr.tenet-nofear101.svc.cluster.local:8282
   username: ""
   password: ""
-  api_token: "<DECYPHARR_API_TOKEN>"
   radarr_category: radarr
   sonarr_category: sonarr
   delete_files_on_prune: true

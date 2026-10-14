@@ -185,3 +185,8 @@ curl -s -H "Authorization: Bearer $API_TOKEN" \
 curl -s -H "Authorization: Bearer $API_TOKEN" \
   "http://localhost:8080/api/admin/sonarr/episode-files?limit=100" | jq
 ```
+
+
+## Webhook diagnostics (v0.4.7)
+
+The Radarr and Sonarr webhook endpoints emit structured application logs for authenticated event receipt and processing outcomes. Look for messages such as `sonarr webhook received`, `sonarr webhook processed`, `sonarr webhook refresh completed`, `sonarr webhook refresh skipped by debounce`, and `sonarr deletion webhook processed`. Rejected method, authentication, and JSON requests are logged at warning level. `Test` events return HTTP 202 with `action: test_acknowledged` and do not trigger refreshes. Tokens, query strings, and raw webhook payloads are not written to these logs.

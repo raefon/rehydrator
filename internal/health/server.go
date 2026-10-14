@@ -755,20 +755,24 @@ func (h *apiHandler) handleRefresh(w http.ResponseWriter, r *http.Request, name 
 
 func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		slog.Warn("radarr webhook rejected: method not allowed", "method", r.Method, "remote_addr", r.RemoteAddr)
 		methodNotAllowed(w)
 		return
 	}
 	if !h.authorized(r) {
+		slog.Warn("radarr webhook rejected: unauthorized", "remote_addr", r.RemoteAddr)
 		unauthorized(w)
 		return
 	}
 	defer r.Body.Close()
 	var payload map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		slog.Warn("radarr webhook rejected: invalid JSON", "remote_addr", r.RemoteAddr, "error", err)
 		http.Error(w, "invalid json payload", http.StatusBadRequest)
 		return
 	}
 	raw, _ := json.Marshal(payload)
+	eventType := firstString(payload, "eventType", "event", "type")
 	movie := firstMap(payload, "movie", "Movie")
 	movieFile := firstMap(payload, "movieFile", "MovieFile", "movie_file")
 	arrID := firstInt(movie, "id", "movieId", "radarrId")
@@ -780,8 +784,13 @@ func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request)
 		tmdbID = firstInt(payload, "tmdbId", "tmdbID")
 	}
 	title := firstNonEmptyString(firstString(movie, "title", "name"), firstString(payload, "title", "movieTitle"))
-	eventType := firstString(payload, "eventType", "event", "type")
 	importedPath := firstNonEmptyString(firstString(movieFile, "path"), firstString(payload, "movieFilePath", "path"))
+	slog.Info("radarr webhook received", "event", eventType, "arr_id", arrID, "tmdb_id", tmdbID, "title", title, "remote_addr", r.RemoteAddr)
+	if strings.EqualFold(strings.TrimSpace(eventType), "Test") {
+		slog.Info("radarr webhook test acknowledged")
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "test_acknowledged", "event": eventType})
+		return
+	}
 	if isDeleteEvent(eventType, "MovieDelete", "MovieDeleted") {
 		if arrID <= 0 {
 			http.Error(w, "movie delete webhook missing movie id", http.StatusBadRequest)
@@ -792,6 +801,7 @@ func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		slog.Info("radarr deletion webhook processed", "event", eventType, "arr_id", arrID, "deleted_rows", deleted)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "radarr_delete_reconciled", "deleted_rows": deleted, "arr_id": arrID, "event": eventType})
 		return
 	}
@@ -806,10 +816,12 @@ func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request)
 	refreshed := false
 	if h.refreshRadarr != nil {
 		if err := h.refreshRadarr(r.Context()); err != nil {
+			slog.Error("radarr webhook refresh failed", "event", eventType, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		refreshed = true
+		slog.Info("radarr webhook refresh completed", "event", eventType)
 	}
 
 	item, found, err := h.findPlaybackMatch(r.Context(), playbackIntent{MediaType: model.MediaMovie, ArrID: arrID, TMDBID: tmdbID})
@@ -819,24 +831,29 @@ func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request)
 	}
 	if found {
 		_ = h.repo.Event(r.Context(), item.ID, "radarr_webhook_seeded", string(raw))
+		slog.Info("radarr webhook processed", "event", eventType, "arr_id", item.ArrID, "matched", true, "state", item.State, "refresh", refreshed)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "refresh": refreshed, "event": eventType, "arr_id": item.ArrID, "tmdb_id": valueInt(item.TMDBID), "state": item.State, "imported_path": importedPath})
 		return
 	}
+	slog.Info("radarr webhook processed", "event", eventType, "arr_id", arrID, "matched", false, "refresh", refreshed)
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "refresh": refreshed, "event": eventType, "arr_id": arrID, "tmdb_id": tmdbID, "title": title})
 }
 
 func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		slog.Warn("sonarr webhook rejected: method not allowed", "method", r.Method, "remote_addr", r.RemoteAddr)
 		methodNotAllowed(w)
 		return
 	}
 	if !h.authorized(r) {
+		slog.Warn("sonarr webhook rejected: unauthorized", "remote_addr", r.RemoteAddr)
 		unauthorized(w)
 		return
 	}
 	defer r.Body.Close()
 	var payload map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		slog.Warn("sonarr webhook rejected: invalid JSON", "remote_addr", r.RemoteAddr, "error", err)
 		http.Error(w, "invalid json payload", http.StatusBadRequest)
 		return
 	}
@@ -846,6 +863,13 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 	seriesID := firstInt(series, "id", "seriesId")
 	if seriesID == 0 {
 		seriesID = firstInt(payload, "seriesId", "sonarrId", "arrId")
+	}
+	title := firstNonEmptyString(firstString(series, "title", "name"), firstString(payload, "title", "seriesTitle"))
+	slog.Info("sonarr webhook received", "event", eventType, "series_id", seriesID, "title", title, "remote_addr", r.RemoteAddr)
+	if strings.EqualFold(strings.TrimSpace(eventType), "Test") {
+		slog.Info("sonarr webhook test acknowledged")
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "test_acknowledged", "event": eventType})
+		return
 	}
 	if isDeleteEvent(eventType, "SeriesDelete", "SeriesDeleted") {
 		if seriesID <= 0 {
@@ -857,6 +881,7 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		slog.Info("sonarr deletion webhook processed", "event", eventType, "series_id", seriesID, "deleted_rows", deleted)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "sonarr_delete_reconciled", "deleted_rows": deleted, "series_id": seriesID, "event": eventType})
 		return
 	}
@@ -865,13 +890,15 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 	if h.refreshSonarr != nil {
 		if h.shouldRunSonarrWebhookRefresh() {
 			if err := h.refreshSonarr(r.Context()); err != nil {
+				slog.Error("sonarr webhook refresh failed", "event", eventType, "series_id", seriesID, "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			refreshed = true
+			slog.Info("sonarr webhook refresh completed", "event", eventType, "series_id", seriesID)
 		} else {
 			refreshSkipped = true
-			slog.Info("sonarr webhook refresh skipped by debounce", "event", eventType)
+			slog.Info("sonarr webhook refresh skipped by debounce", "event", eventType, "series_id", seriesID)
 		}
 	}
 	// If the webhook includes episode-file path metadata, attach an audit event to the seeded row.
@@ -892,9 +919,11 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if matched {
+		slog.Info("sonarr webhook processed", "event", eventType, "series_id", seriesID, "matched", true, "state", item.State, "refresh", refreshed, "refresh_skipped_by_debounce", refreshSkipped)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": true, "refresh": refreshed, "refresh_skipped_by_debounce": refreshSkipped, "event": eventType, "episode_file_id": item.ArrID, "state": item.State, "path": path})
 		return
 	}
+	slog.Info("sonarr webhook processed", "event", eventType, "series_id", seriesID, "matched", false, "path_present", path != "", "refresh", refreshed, "refresh_skipped_by_debounce", refreshSkipped)
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "matched": false, "refresh": refreshed, "refresh_skipped_by_debounce": refreshSkipped, "event": eventType, "path": path})
 }
 

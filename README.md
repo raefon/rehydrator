@@ -276,3 +276,8 @@ Magnets remain the default fallback when no torrent-file URL is available. The o
 - Re-added items are rediscovered by the normal Arr sync. Seerr/watchlist can continue to drive the existing request/re-arm workflow.
 
 See `docs/api.md` for webhook setup and safeguards.
+
+
+## v0.4.7 Webhook diagnostics
+
+Radarr and Sonarr webhook handlers now emit structured logs for received events, authorization/JSON/method rejections, refresh outcomes, debounce skips, and deletion reconciliation. Arr `Test` events are explicitly acknowledged with HTTP 202 and do not trigger a library refresh. Logs omit tokens, query strings, and complete webhook payloads. See `CHANGELOG-v0.4.7.md`.

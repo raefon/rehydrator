@@ -1,3 +1,22 @@
+# Rehydrator v0.4.7 — Webhook diagnostics
+
+## Added
+- Structured `INFO` logs for authenticated Radarr and Sonarr webhook receipt, including event type, Arr ID when present, title when present, and remote address.
+- Structured logs for Radarr/Sonarr refresh completion, refresh failures, debounce skips, and successful deletion reconciliation.
+- `WARN` logs for webhook requests rejected due to unauthorized access, unsupported methods, or invalid JSON.
+- Explicit `Test` event acknowledgement (`202 Accepted`, `action: test_acknowledged`) for both Arr webhook endpoints. Test events no longer trigger a library refresh.
+- Processing outcome logs for Sonarr webhook events, including match status and whether refresh was performed or debounced.
+
+## Security and behavior
+- Logs intentionally exclude authorization headers, tokens, query strings, and complete webhook payloads.
+- Existing deletion reconciliation, tombstones, and periodic inventory reconciliation behavior are retained from v0.4.6.
+
+## Validation
+- `gofmt` completed for the modified Go source.
+- `go test ./internal/health` could not run because the checkout is missing required `go.sum` entries for `github.com/jackc/pgx/v5`; dependencies were not fetched in this environment. Tests are therefore **not verified**.
+
+---
+
 # Rehydrator v0.4.6 — Arr deletion reconciliation
 
 ## Added

@@ -1,12 +1,12 @@
 FROM golang:1.22-alpine AS build
 WORKDIR /src
-ARG VERSION=0.4.8
+ARG VERSION=dev
 
 COPY go.mod ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.version=${VERSION}" -o /out/rehydrator ./cmd/rehydrator
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -ldflags="-X main.version=${VERSION}" -o /out/rehydrator ./cmd/rehydrator
 
 FROM alpine:3.20
 RUN adduser -D -u 10001 appuser

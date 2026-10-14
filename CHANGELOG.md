@@ -1,3 +1,18 @@
+# Build and release automation (unreleased)
+
+## Added
+- Run Go tests and compile checks on pushes to `main` and pull requests targeting `main`.
+- On version-tag pushes (`v*.*.*`), build Linux AMD64, Linux ARM64, and macOS ARM64 binaries and generate SHA-256 checksums.
+- Publish multi-architecture (`linux/amd64`, `linux/arm64`) images to GHCR with versioned tags and `latest`.
+- Automatically create the GitHub Release from a pushed version tag, or replace its binary assets on a workflow rerun if the release already exists.
+- Scope write permissions to the publish job; normal commit and pull-request builds use read-only permissions.
+
+## Notes
+- The Docker build defaults to version `dev`; release workflows pass the version parsed from the Git tag.
+- Retrying a failed workflow for an existing tag should be done with GitHub Actions' **Re-run jobs**. Pushing an unchanged tag does not itself guarantee a new workflow run.
+
+---
+
 # Rehydrator v0.4.8 — Version reporting
 
 ## Added

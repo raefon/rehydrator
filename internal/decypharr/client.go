@@ -22,6 +22,7 @@ type Client struct {
 	base     string
 	username string
 	password string
+	apiToken string
 	http     *http.Client
 }
 
@@ -35,15 +36,21 @@ type TorrentInfo struct {
 	Progress    float64 `json:"progress"`
 }
 
-func NewClient(base, username, password string) *Client {
+// NewClient accepts an optional Decypharr API bearer token as the fourth argument.
+// Existing three-argument call sites still compile, but AddTorrent requires a token.
+func NewClient(base, username, password string, apiToken ...string) *Client {
 	jar, _ := cookiejar.New(nil)
 	httpClient := httpx.DefaultClient()
 	httpClient.Jar = jar
-
+	token := ""
+	if len(apiToken) > 0 {
+		token = strings.TrimSpace(apiToken[0])
+	}
 	return &Client{
 		base:     strings.TrimRight(strings.TrimSpace(base), "/"),
 		username: strings.TrimSpace(username),
 		password: password,
+		apiToken: token,
 		http:     httpClient,
 	}
 }
@@ -72,71 +79,76 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, category string) (model.DownloadClientAddResult, error) {
-	if c.base == "" {
+	if c == nil || strings.TrimSpace(c.base) == "" {
 		return model.DownloadClientAddResult{}, fmt.Errorf("missing Decypharr URL")
 	}
-
-	if err := c.authenticate(ctx); err != nil {
-		return model.DownloadClientAddResult{}, err
+	if strings.TrimSpace(c.apiToken) == "" {
+		return model.DownloadClientAddResult{}, fmt.Errorf("missing Decypharr API bearer token")
 	}
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
+	torrentURL := strings.TrimSpace(torrent.TorrentURL)
+	isTorrentFile := torrentURL != "" && !strings.HasPrefix(strings.ToLower(torrentURL), "magnet:")
+	var req *http.Request
+	var err error
 	submissionMode := "magnet"
-
-	if torrentURL := strings.TrimSpace(torrent.TorrentURL); torrentURL != "" && !strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
-		torrentBytes, filename, err := c.fetchTorrentFile(ctx, torrentURL, torrent.SourceTitle)
-		if err != nil {
-			return model.DownloadClientAddResult{}, fmt.Errorf("fetch torrent file: %w", err)
+	if isTorrentFile {
+		// Native Decypharr API expects the uploaded file field to be named "file".
+		torrentBytes, filename, fetchErr := c.fetchTorrentFile(ctx, torrentURL, torrent.SourceTitle)
+		if fetchErr != nil {
+			return model.DownloadClientAddResult{}, fmt.Errorf("fetch torrent file: %w", fetchErr)
 		}
-		part, err := writer.CreateFormFile("torrents", filename)
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		part, createErr := writer.CreateFormFile("file", filename)
+		if createErr != nil {
+			return model.DownloadClientAddResult{}, createErr
+		}
+		if _, writeErr := part.Write(torrentBytes); writeErr != nil {
+			return model.DownloadClientAddResult{}, writeErr
+		}
+		if closeErr := writer.Close(); closeErr != nil {
+			return model.DownloadClientAddResult{}, closeErr
+		}
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/add", &body)
 		if err != nil {
 			return model.DownloadClientAddResult{}, err
 		}
-		if _, err := part.Write(torrentBytes); err != nil {
-			return model.DownloadClientAddResult{}, err
-		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
 		submissionMode = "torrent_file"
 	} else {
 		magnet := strings.TrimSpace(torrent.Magnet)
-		if magnet == "" && torrent.InfoHash != "" {
+		// Some sources put the magnet URI in TorrentURL rather than Magnet.
+		// Preserve that full URI (including any tracker parameters) when present.
+		if magnet == "" && strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
+			magnet = torrentURL
+		}
+		if magnet == "" && strings.TrimSpace(torrent.InfoHash) != "" {
 			magnet = "magnet:?xt=urn:btih:" + strings.ToLower(strings.TrimSpace(torrent.InfoHash))
 		}
 		if magnet == "" {
 			return model.DownloadClientAddResult{}, fmt.Errorf("missing magnet/infohash for Decypharr add")
 		}
-		if err := writer.WriteField("urls", magnet); err != nil {
+		// Native Decypharr API expects JSON {"url":"magnet:..."}.
+		payload, marshalErr := json.Marshal(struct {
+			URL string `json:"url"`
+		}{URL: magnet})
+		if marshalErr != nil {
+			return model.DownloadClientAddResult{}, marshalErr
+		}
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/add", bytes.NewReader(payload))
+		if err != nil {
 			return model.DownloadClientAddResult{}, err
 		}
+		req.Header.Set("Content-Type", "application/json")
 	}
-
-	if err := writer.WriteField("paused", "false"); err != nil {
-		return model.DownloadClientAddResult{}, err
-	}
-	if category != "" {
-		if err := writer.WriteField("category", category); err != nil {
-			return model.DownloadClientAddResult{}, err
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return model.DownloadClientAddResult{}, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/v2/torrents/add", &body)
-	if err != nil {
-		return model.DownloadClientAddResult{}, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	slog.Info("decypharr add torrent request",
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.apiToken))
+	slog.Info("decypharr add request",
 		"url", req.URL.String(),
-		"category", category,
 		"infohash", torrent.InfoHash,
-		"magnet_len", len(torrent.Magnet),
-		"torrent_url_present", strings.TrimSpace(torrent.TorrentURL) != "",
+		"torrent_url_present", torrentURL != "",
 		"submission_mode", submissionMode,
+		// The native /api/add docs don't define category or paused fields.
+		"category_ignored", category != "",
 	)
-
 	raw, status, err := c.do(req)
 	if err != nil {
 		return model.DownloadClientAddResult{}, err
@@ -144,7 +156,6 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 	if status < 200 || status > 299 {
 		return model.DownloadClientAddResult{}, fmt.Errorf("decypharr add unexpected status: %d body=%s", status, string(raw))
 	}
-
 	hash := strings.ToLower(strings.TrimSpace(torrent.InfoHash))
 	return model.DownloadClientAddResult{Hash: hash}, nil
 }
@@ -156,7 +167,6 @@ func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle s
 	if err != nil {
 		return nil, "", err
 	}
-
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, "", err
@@ -168,7 +178,6 @@ func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle s
 	if resp.ContentLength > maxTorrentFileSize {
 		return nil, "", fmt.Errorf("torrent file is too large: %d bytes", resp.ContentLength)
 	}
-
 	limited := io.LimitReader(resp.Body, maxTorrentFileSize+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
@@ -180,7 +189,6 @@ func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle s
 	if len(data) == 0 {
 		return nil, "", fmt.Errorf("torrent file is empty")
 	}
-
 	filename := "download.torrent"
 	if u, err := url.Parse(torrentURL); err == nil {
 		if base := path.Base(u.Path); base != "." && base != "/" && base != "" {
@@ -204,27 +212,22 @@ func (c *Client) DeleteTorrent(ctx context.Context, infoHash string, deleteFiles
 	if c.base == "" {
 		return fmt.Errorf("missing Decypharr URL")
 	}
-
 	if err := c.authenticate(ctx); err != nil {
 		return err
 	}
-
 	form := url.Values{}
 	form.Set("hashes", infoHash)
 	form.Set("deleteFiles", fmt.Sprintf("%t", deleteFiles))
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/v2/torrents/delete", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
 	slog.Info("decypharr delete torrent request",
 		"url", req.URL.String(),
 		"infohash", infoHash,
 		"delete_files", deleteFiles,
 	)
-
 	raw, status, err := c.do(req)
 	if err != nil {
 		return err
@@ -232,7 +235,6 @@ func (c *Client) DeleteTorrent(ctx context.Context, infoHash string, deleteFiles
 	if status < 200 || status > 299 {
 		return fmt.Errorf("decypharr delete unexpected status: %d body=%s", status, string(raw))
 	}
-
 	return nil
 }
 
@@ -244,19 +246,15 @@ func (c *Client) TorrentInfo(ctx context.Context, infoHash string) (*TorrentInfo
 	if c.base == "" {
 		return nil, fmt.Errorf("missing Decypharr URL")
 	}
-
 	if err := c.authenticate(ctx); err != nil {
 		return nil, err
 	}
-
 	q := url.Values{}
 	q.Set("hashes", infoHash)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v2/torrents/info?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
-
 	raw, status, err := c.do(req)
 	if err != nil {
 		return nil, err
@@ -264,7 +262,6 @@ func (c *Client) TorrentInfo(ctx context.Context, infoHash string) (*TorrentInfo
 	if status < 200 || status > 299 {
 		return nil, fmt.Errorf("decypharr info unexpected status: %d body=%s", status, string(raw))
 	}
-
 	var infos []TorrentInfo
 	if err := json.Unmarshal(raw, &infos); err != nil {
 		return nil, err
@@ -272,7 +269,6 @@ func (c *Client) TorrentInfo(ctx context.Context, infoHash string) (*TorrentInfo
 	if len(infos) == 0 {
 		return nil, nil
 	}
-
 	return &infos[0], nil
 }
 
@@ -280,17 +276,14 @@ func (c *Client) authenticate(ctx context.Context) error {
 	if c.username == "" && c.password == "" {
 		return nil
 	}
-
 	form := url.Values{}
 	form.Set("username", c.username)
 	form.Set("password", c.password)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/v2/auth/login", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
 	raw, status, err := c.do(req)
 	if err != nil {
 		return err
@@ -298,12 +291,10 @@ func (c *Client) authenticate(ctx context.Context) error {
 	if status < 200 || status > 299 {
 		return fmt.Errorf("decypharr auth unexpected status: %d body=%s", status, string(raw))
 	}
-
 	body := strings.TrimSpace(string(raw))
 	if body != "" && !strings.EqualFold(body, "Ok.") {
 		return fmt.Errorf("decypharr auth failed: %s", body)
 	}
-
 	return nil
 }
 
@@ -313,11 +304,9 @@ func (c *Client) do(req *http.Request) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-
 	raw, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		return nil, resp.StatusCode, readErr
 	}
-
 	return raw, resp.StatusCode, nil
 }

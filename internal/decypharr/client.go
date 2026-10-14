@@ -37,7 +37,7 @@ type TorrentInfo struct {
 }
 
 // NewClient accepts an optional Decypharr API bearer token as the fourth argument.
-// Existing three-argument call sites still compile, but AddTorrent requires a token.
+// The token is optional because Decypharr can be configured to allow unauthenticated API requests.
 func NewClient(base, username, password string, apiToken ...string) *Client {
 	jar, _ := cookiejar.New(nil)
 	httpClient := httpx.DefaultClient()
@@ -82,16 +82,15 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 	if c == nil || strings.TrimSpace(c.base) == "" {
 		return model.DownloadClientAddResult{}, fmt.Errorf("missing Decypharr URL")
 	}
-	if strings.TrimSpace(c.apiToken) == "" {
-		return model.DownloadClientAddResult{}, fmt.Errorf("missing Decypharr API bearer token")
-	}
+
 	torrentURL := strings.TrimSpace(torrent.TorrentURL)
 	isTorrentFile := torrentURL != "" && !strings.HasPrefix(strings.ToLower(torrentURL), "magnet:")
 	var req *http.Request
 	var err error
 	submissionMode := "magnet"
+
 	if isTorrentFile {
-		// Native Decypharr API expects the uploaded file field to be named "file".
+		// Decypharr's native API expects the uploaded torrent in multipart field "file".
 		torrentBytes, filename, fetchErr := c.fetchTorrentFile(ctx, torrentURL, torrent.SourceTitle)
 		if fetchErr != nil {
 			return model.DownloadClientAddResult{}, fmt.Errorf("fetch torrent file: %w", fetchErr)
@@ -116,8 +115,7 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 		submissionMode = "torrent_file"
 	} else {
 		magnet := strings.TrimSpace(torrent.Magnet)
-		// Some sources put the magnet URI in TorrentURL rather than Magnet.
-		// Preserve that full URI (including any tracker parameters) when present.
+		// Preserve the complete magnet URI, including tracker parameters, when available.
 		if magnet == "" && strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
 			magnet = torrentURL
 		}
@@ -127,7 +125,6 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 		if magnet == "" {
 			return model.DownloadClientAddResult{}, fmt.Errorf("missing magnet/infohash for Decypharr add")
 		}
-		// Native Decypharr API expects JSON {"url":"magnet:..."}.
 		payload, marshalErr := json.Marshal(struct {
 			URL string `json:"url"`
 		}{URL: magnet})
@@ -140,13 +137,16 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 		}
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.apiToken))
+
+	// Authentication is optional. Only send the Bearer header when a token is configured.
+	if c.apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	}
 	slog.Info("decypharr add request",
 		"url", req.URL.String(),
 		"infohash", torrent.InfoHash,
 		"torrent_url_present", torrentURL != "",
 		"submission_mode", submissionMode,
-		// The native /api/add docs don't define category or paused fields.
 		"category_ignored", category != "",
 	)
 	raw, status, err := c.do(req)
@@ -178,8 +178,7 @@ func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle s
 	if resp.ContentLength > maxTorrentFileSize {
 		return nil, "", fmt.Errorf("torrent file is too large: %d bytes", resp.ContentLength)
 	}
-	limited := io.LimitReader(resp.Body, maxTorrentFileSize+1)
-	data, err := io.ReadAll(limited)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTorrentFileSize+1))
 	if err != nil {
 		return nil, "", err
 	}

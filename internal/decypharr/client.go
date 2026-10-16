@@ -192,10 +192,20 @@ func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle s
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.Error("fetch torrent HTTP request failed",
+			"request_url", req.URL.String(),
+			"request_scheme", req.URL.Scheme,
+			"error", err,
+		)
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if err := httpx.CheckStatus(resp); err != nil {
+		slog.Error("fetch torrent HTTP request failed",
+			"request_url", req.URL.String(),
+			"request_scheme", req.URL.Scheme,
+			"error", err,
+		)
 		return nil, "", fmt.Errorf("download URL returned %w", err)
 	}
 	if resp.ContentLength > maxTorrentFileSize {

@@ -87,6 +87,18 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 	torrentURL := strings.TrimSpace(torrent.TorrentURL)
 	magnet := strings.TrimSpace(torrent.Magnet)
 
+	slog.Info("decypharr torrent source diagnostic",
+		"torrent_url_scheme", func() string {
+			if i := strings.Index(torrentURL, ":"); i >= 0 {
+				return strings.ToLower(torrentURL[:i])
+			}
+			return ""
+		}(),
+		"torrent_url_is_magnet", strings.HasPrefix(strings.ToLower(torrentURL), "magnet:"),
+		"magnet_present", magnet != "",
+		"infohash_present", strings.TrimSpace(torrent.InfoHash) != "",
+	)
+
 	// Some Arr history entries put the magnet URI in TorrentURL rather
 	// than Magnet. Normalize that case before choosing the submission mode.
 	if strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {

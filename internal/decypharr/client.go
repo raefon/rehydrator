@@ -84,11 +84,22 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 	writer := multipart.NewWriter(&body)
 	submissionMode := "magnet"
 
-	if torrentURL := strings.TrimSpace(torrent.TorrentURL); torrentURL != "" && !strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
+	torrentURL := strings.TrimSpace(torrent.TorrentURL)
+	magnet := strings.TrimSpace(torrent.Magnet)
+
+	// Some Arr history entries put the magnet URI in TorrentURL rather
+	// than Magnet. Normalize that case before choosing the submission mode.
+	if strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
+		magnet = torrentURL
+		torrentURL = ""
+	}
+
+	if torrentURL != "" {
 		torrentBytes, filename, err := c.fetchTorrentFile(ctx, torrentURL, torrent.SourceTitle)
 		if err != nil {
 			return model.DownloadClientAddResult{}, fmt.Errorf("fetch torrent file: %w", err)
 		}
+
 		part, err := writer.CreateFormFile("torrents", filename)
 		if err != nil {
 			return model.DownloadClientAddResult{}, err
@@ -98,7 +109,6 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 		}
 		submissionMode = "torrent_file"
 	} else {
-		magnet := strings.TrimSpace(torrent.Magnet)
 		if magnet == "" && torrent.InfoHash != "" {
 			magnet = "magnet:?xt=urn:btih:" + strings.ToLower(strings.TrimSpace(torrent.InfoHash))
 		}

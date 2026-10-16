@@ -174,6 +174,17 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 const maxTorrentFileSize = 50 << 20
 
 func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle string) ([]byte, string, error) {
+	slog.Info("fetch torrent file diagnostic",
+		"url_scheme", func() string {
+			if i := strings.Index(torrentURL, ":"); i >= 0 {
+				return strings.ToLower(torrentURL[:i])
+			}
+			return ""
+		}(),
+		"url_is_magnet", strings.HasPrefix(strings.ToLower(strings.TrimSpace(torrentURL)), "magnet:"),
+		"source_title", sourceTitle,
+	)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, torrentURL, nil)
 	if err != nil {
 		return nil, "", err

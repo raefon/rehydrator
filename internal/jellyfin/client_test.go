@@ -30,6 +30,9 @@ func TestClient(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		case "/jellyfin/Items/abc":
+			if r.URL.Query().Get("userId") != "user-123" {
+				t.Error("missing playback user context")
+			}
 			_, _ = w.Write([]byte(`{"Path":"/media/show/episode.mkv"}`))
 		default:
 			w.WriteHeader(http.StatusUnauthorized)
@@ -40,10 +43,10 @@ func TestClient(t *testing.T) {
 	if err := c.RefreshPath(context.Background(), "/media/movie.mkv"); err != nil {
 		t.Fatal(err)
 	}
-	if path, err := c.ItemPath(context.Background(), "abc"); err != nil || path != "/media/show/episode.mkv" {
+	if path, err := c.ItemPath(context.Background(), "abc", "user-123"); err != nil || path != "/media/show/episode.mkv" {
 		t.Fatalf("path=%q err=%v", path, err)
 	}
-	if _, err := c.ItemPath(context.Background(), "missing"); err == nil {
+	if _, err := c.ItemPath(context.Background(), "missing", "user-123"); err == nil {
 		t.Fatal("expected HTTP error")
 	}
 	if err := c.RefreshPath(context.Background(), ""); err == nil {

@@ -1,3 +1,9 @@
+# Rehydrator v0.5.9 — Jellyfin playback user context (unreleased)
+
+## Fixed
+- Log incoming Jellyfin playback starts and lookup failures; ignored non-start notifications are logged at debug level.
+- Pass the playback webhook user ID into Jellyfin item lookups to avoid empty-user GUID errors with API-key authentication.
+
 # Rehydrator v0.5.8 — Jellyfin authentication header (unreleased)
 
 ## Fixed

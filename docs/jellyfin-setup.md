@@ -63,7 +63,7 @@ accepts `?token=YOUR_REHYDRATOR_API_TOKEN` in the webhook URL.
 
 The endpoint accepts the plugin's `NotificationType`, `ItemType`, `ItemId`,
 `Provider_tmdb`, `Name`, and username fields. Rehydrator resolves `ItemId` through
-Jellyfin's API to obtain the file path. Custom payloads can supply `Path` or
+Jellyfin's API to obtain the file path, passing the webhook `UserId` as the `userId` query parameter. Keep `UserId` in custom payloads that require item lookup. Custom payloads can supply `Path` or
 `ItemPath` directly. Movie payloads without a path or enabled Jellyfin client can
 match by TMDb ID. Episodes require a file path; Jellyfin item IDs are never treated
 as Sonarr episode-file IDs. Stop, progress, and unrelated notifications are ignored.

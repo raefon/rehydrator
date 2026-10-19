@@ -1,6 +1,8 @@
 package health
 
 import (
+	"context"
+	"errors"
 	"github.com/raefon/rehydrator/internal/model"
 	"net/http/httptest"
 	"strings"
@@ -41,5 +43,22 @@ func TestJellyfinWebhookGuards(t *testing.T) {
 		if w.Code != tc.status {
 			t.Errorf("%s %s: got %d want %d", tc.method, tc.body, w.Code, tc.status)
 		}
+	}
+}
+
+func TestJellyfinPlaybackPassesUserContext(t *testing.T) {
+	called := false
+	h := apiHandler{playbackEnabled: true, jellyfinItemPath: func(ctx context.Context, itemID, userID string) (string, error) {
+		called = true
+		if itemID != "item-123" || userID != "user-456" {
+			t.Fatalf("lookup context: item=%s user=%s", itemID, userID)
+		}
+		return "", errors.New("upstream failed")
+	}}
+	r := httptest.NewRequest("POST", "/api/playback/jellyfin", strings.NewReader(`{"NotificationType":"PlaybackStart","ItemType":"Episode","ItemId":"item-123","UserId":"user-456"}`))
+	w := httptest.NewRecorder()
+	h.handleJellyfinPlayback(w, r)
+	if !called || w.Code != 502 {
+		t.Fatalf("called=%v status=%d", called, w.Code)
 	}
 }

@@ -24,7 +24,7 @@ type Server struct {
 type APIOptions struct {
 	CaptureGrab                  func(context.Context, model.GrabSource) error
 	RecordGrabImport             func(context.Context, model.GrabSource, string) error
-	JellyfinItemPath             func(context.Context, string) (string, error)
+	JellyfinItemPath             func(context.Context, string, string) (string, error)
 	Addr                         string
 	Repo                         *db.Repo
 	Tenant                       string
@@ -158,7 +158,7 @@ func (s *Server) Run(ctx context.Context) {
 type apiHandler struct {
 	captureGrab                  func(context.Context, model.GrabSource) error
 	recordGrabImport             func(context.Context, model.GrabSource, string) error
-	jellyfinItemPath             func(context.Context, string) (string, error)
+	jellyfinItemPath             func(context.Context, string, string) (string, error)
 	repo                         *db.Repo
 	tenant                       string
 	token                        string
@@ -1486,12 +1486,15 @@ func (h *apiHandler) handleJellyfinPlayback(w http.ResponseWriter, r *http.Reque
 	intent := playbackIntentFromJellyfin(payload)
 	// PlaybackStop and PlaybackProgress must never trigger rearming.
 	if !strings.EqualFold(intent.Event, "PlaybackStart") {
+		slog.Debug("Jellyfin playback webhook ignored", "tenant", h.tenant, "event", intent.Event, "reason", "not_playback_start")
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "ignored": true, "event": intent.Event})
 		return
 	}
+	slog.Info("Jellyfin playback start received", "tenant", h.tenant, "item_id", firstString(payload, "ItemId"), "media_type", intent.MediaType, "title", intent.Title)
 	if intent.Path == "" && h.jellyfinItemPath != nil && (intent.MediaType == model.MediaMovie || intent.MediaType == model.MediaSeries) {
-		path, err := h.jellyfinItemPath(r.Context(), firstString(payload, "ItemId"))
+		path, err := h.jellyfinItemPath(r.Context(), firstString(payload, "ItemId"), firstString(payload, "UserId"))
 		if err != nil {
+			slog.Warn("Jellyfin playback item lookup failed", "tenant", h.tenant, "item_id", firstString(payload, "ItemId"), "user_id_present", firstString(payload, "UserId") != "", "error", err)
 			http.Error(w, "Jellyfin item lookup failed", http.StatusBadGateway)
 			return
 		}

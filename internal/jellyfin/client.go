@@ -54,13 +54,18 @@ func (c *Client) RefreshPath(ctx context.Context, path string) error {
 }
 
 // ItemPath resolves Jellyfin's opaque item ID to its library file path.
-func (c *Client) ItemPath(ctx context.Context, id string) (string, error) {
+func (c *Client) ItemPath(ctx context.Context, id, userID string) (string, error) {
 	if strings.TrimSpace(id) == "" {
 		return "", fmt.Errorf("missing Jellyfin item ID")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/Items/"+url.PathEscape(id), nil)
 	if err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(userID) != "" {
+		query := req.URL.Query()
+		query.Set("userId", userID)
+		req.URL.RawQuery = query.Encode()
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("MediaBrowser Token=%q", c.apiKey))
 	resp, err := c.httpClient.Do(req)

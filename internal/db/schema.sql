@@ -59,6 +59,26 @@ CREATE TABLE IF NOT EXISTS media_cache_state (
     UNIQUE (tenant, media_type, arr_id)
 );
 
+-- Existing tables retain their old CHECK constraint after CREATE IF NOT EXISTS.
+ALTER TABLE IF EXISTS media_cache_state
+    DROP CONSTRAINT IF EXISTS media_cache_state_state_check;
+
+ALTER TABLE IF EXISTS media_cache_state
+    ADD CONSTRAINT media_cache_state_state_check CHECK (
+        state IN (
+            'REQUESTED',
+            'AVAILABLE',
+            'HOT',
+            'COOLING',
+            'ARCHIVED',
+            'BROKEN',
+            'REARMING',
+            'WAITING_FOR_VISIBILITY',
+            'PRUNING',
+            'FAILED'
+        )
+    );
+
 -- Safe upgrade path for databases created by the TorBox-first prototype.
 ALTER TABLE IF EXISTS media_cache_state
     ADD COLUMN IF NOT EXISTS infohash TEXT;

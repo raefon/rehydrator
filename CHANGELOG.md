@@ -1,3 +1,8 @@
+# Rehydrator v0.5.10 — Legacy lifecycle constraint repair (unreleased)
+
+## Fixed
+- Repair existing database state constraints during schema initialization so successful rearm submissions can enter `WAITING_FOR_VISIBILITY`. Standalone migration: `024_repair_lifecycle_state_constraint.sql`.
+
 # Rehydrator v0.5.9 — Jellyfin playback user context (unreleased)
 
 ## Fixed

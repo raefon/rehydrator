@@ -961,6 +961,12 @@ func (h *apiHandler) handleSeerrPost(w http.ResponseWriter, r *http.Request, for
 		return
 	}
 
+	// Seerr requires a successful test delivery before saving the agent.
+	if strings.EqualFold(firstString(payload, "notification_type", "notificationType", "type"), "TEST_NOTIFICATION") {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "test": true})
+		return
+	}
+
 	mediaType := normalizeMediaType(firstString(payload, "mediaType", "type"))
 	media := firstMap(payload, "media", "mediaInfo")
 	if mediaType == "" {

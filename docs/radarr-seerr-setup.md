@@ -46,6 +46,8 @@ Recommended webhook URL:
 http://tenet-rehydrator:8080/api/seerr/webhook?token=<REHYDRATOR_API_TOKEN>
 ```
 
+Seerr test notifications return HTTP 200 after authentication without creating tracking rows or triggering rearming, so the webhook can be tested and saved. Include `"notification_type": "{{notification_type}}"` in the JSON payload. Real movie notifications still require a TMDB or Arr ID.
+
 Seerr sync config:
 
 ```yaml

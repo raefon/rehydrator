@@ -1,3 +1,8 @@
+# Rehydrator v0.5.7 — Seerr webhook test support (unreleased)
+
+## Fixed
+- Accept authenticated Seerr test notifications without requiring a media ID or triggering rearming, allowing webhook settings to be saved.
+
 # Rehydrator v0.5.6 — Jellyfin and durable Decypharr rearming (unreleased)
 
 ## Changed

@@ -17,17 +17,16 @@ import (
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/health"
+	"github.com/raefon/rehydrator/internal/jellyfin"
 	"github.com/raefon/rehydrator/internal/model"
-	"github.com/raefon/rehydrator/internal/plex"
 	"github.com/raefon/rehydrator/internal/rclone"
 	"github.com/raefon/rehydrator/internal/seerr"
 	"github.com/raefon/rehydrator/internal/syncer"
-	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.5.4"
+var version = "0.5.6"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
@@ -73,61 +72,51 @@ func main() {
 
 	radarrClient := arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey)
 	sonarrClient := arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey)
-	decypharrClient := decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword)
-	torboxClient := torbox.NewClient(cfg.TorBoxAPIKey)
+	decypharrClient := decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword, cfg.DecypharrAPIToken)
 	seerrClient := seerr.NewClient(cfg.SeerrURL, cfg.SeerrAPIKey)
 	var rcloneClient *rclone.Client
 	if cfg.RcloneRCEnabled {
 		rcloneClient = rclone.NewClient(cfg.RcloneRCURL, cfg.RcloneRCUsername, cfg.RcloneRCPassword, cfg.CSIPath, cfg.RcloneRCTimeout)
 	}
-	var plexClient *plex.Client
-	if cfg.PlexEnabled {
-		plexClient = plex.NewClient(cfg.PlexURL, cfg.PlexToken, cfg.PlexMovieSectionID, cfg.PlexTVSectionID, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
+	var jellyfinClient *jellyfin.Client
+	if cfg.Jellyfin.Enabled {
+		jellyfinClient = jellyfin.NewClient(cfg.Jellyfin.URL, cfg.Jellyfin.APIKey, time.Duration(cfg.Jellyfin.TimeoutSeconds)*time.Second)
 	}
 
 	ctrl := controller.New(controller.Options{
-		Tenant:                         cfg.Tenant,
-		Repo:                           repo,
-		Radarr:                         radarrClient,
-		Sonarr:                         sonarrClient,
-		Decypharr:                      decypharrClient,
-		TorBox:                         torboxClient,
-		CSI:                            csi.NewChecker(cfg.CSIPath),
-		Rclone:                         rcloneClient,
-		Plex:                           plexClient,
-		RadarrCategory:                 cfg.DecypharrRadarrCategory,
-		SonarrCategory:                 cfg.DecypharrSonarrCategory,
-		DeleteFilesOnPrune:             cfg.DecypharrDeleteFilesOnPrune,
-		PruneEnabled:                   cfg.PruneEnabled,
-		RearmEnabled:                   cfg.RearmEnabled,
-		MaxPrunesPerRun:                cfg.MaxPrunesPerRun,
-		MaxRearmsPerRun:                cfg.MaxRearmsPerRun,
-		PruneWaitForCSIGone:            cfg.PruneWaitForCSIGone,
-		RearmShortCircuitIfVisible:     cfg.RearmShortCircuitIfCSIVisible,
-		RcloneRefreshAfterRearm:        cfg.RcloneRCRefreshAfterRearm,
-		PlexEnabled:                    cfg.PlexEnabled,
-		PlexRefreshAfterRearm:          cfg.PlexRefreshAfterRearm,
-		PlexRefreshAfterVisibility:     cfg.PlexRefreshAfterVisibility,
-		PlexRefreshAfterImport:         cfg.PlexRefreshAfterImport,
-		PlexRefreshAfterPrune:          cfg.PlexRefreshAfterPrune,
-		PlexRefreshDelay:               time.Duration(cfg.PlexRefreshDelaySeconds) * time.Second,
-		PlexRefreshTimeout:             time.Duration(cfg.PlexRefreshTimeoutSeconds) * time.Second,
-		PlexRefreshDedupe:              cfg.PlexRefreshDedupe,
-		PlexMaxRefreshesPerRun:         cfg.PlexMaxRefreshesPerRun,
-		SelfHealEnabled:                cfg.SelfHealEnabled,
-		SelfHealInterval:               cfg.SelfHealInterval,
-		SelfHealPlexRefreshAvailable:   cfg.SelfHealPlexRefreshAvailable,
-		SelfHealPlexRecentHours:        cfg.SelfHealPlexRecentHours,
-		SelfHealMaxPlexRefreshesPerRun: cfg.SelfHealMaxPlexRefreshesPerRun,
-		Interval:                       cfg.ReconcileInterval,
-		CSIWait:                        cfg.CSIWait,
-		CSIVisibilityTimeout:           cfg.CSIVisibilityTimeout,
-		CSIVisibilityPoll:              cfg.CSIVisibilityPoll,
-		CSIVisibilityRetry:             cfg.CSIVisibilityRetry,
-		ProviderCooldown:               cfg.ProviderCooldown,
-		CacheGrace:                     cfg.CacheGrace,
-		MaxRetries:                     cfg.MaxRetries,
-		ConcurrentWorkers:              cfg.ConcurrentWorkers,
+		Tenant:                     cfg.Tenant,
+		Repo:                       repo,
+		Radarr:                     radarrClient,
+		Sonarr:                     sonarrClient,
+		Decypharr:                  decypharrClient,
+		CSI:                        csi.NewChecker(cfg.CSIPath),
+		Rclone:                     rcloneClient,
+		Jellyfin:                   jellyfinClient,
+		JellyfinConfig:             cfg.Jellyfin,
+		RadarrCategory:             cfg.DecypharrRadarrCategory,
+		SonarrCategory:             cfg.DecypharrSonarrCategory,
+		DeleteFilesOnPrune:         cfg.DecypharrDeleteFilesOnPrune,
+		PruneEnabled:               cfg.PruneEnabled,
+		RearmEnabled:               cfg.RearmEnabled,
+		MaxPrunesPerRun:            cfg.MaxPrunesPerRun,
+		MaxRearmsPerRun:            cfg.MaxRearmsPerRun,
+		PruneWaitForCSIGone:        cfg.PruneWaitForCSIGone,
+		RearmShortCircuitIfVisible: cfg.RearmShortCircuitIfCSIVisible,
+		RcloneRefreshAfterRearm:    cfg.RcloneRCRefreshAfterRearm,
+		SelfHealEnabled:            cfg.SelfHealEnabled,
+		SelfHealInterval:           cfg.SelfHealInterval,
+		SelfHealRefreshAvailable:   cfg.SelfHealRefreshAvailable,
+		SelfHealRecentHours:        cfg.SelfHealRecentHours,
+		SelfHealMaxRefreshesPerRun: cfg.SelfHealMaxRefreshesPerRun,
+		Interval:                   cfg.ReconcileInterval,
+		CSIWait:                    cfg.CSIWait,
+		CSIVisibilityTimeout:       cfg.CSIVisibilityTimeout,
+		CSIVisibilityPoll:          cfg.CSIVisibilityPoll,
+		CSIVisibilityRetry:         cfg.CSIVisibilityRetry,
+		ProviderCooldown:           cfg.ProviderCooldown,
+		CacheGrace:                 cfg.CacheGrace,
+		MaxRetries:                 cfg.MaxRetries,
+		ConcurrentWorkers:          cfg.ConcurrentWorkers,
 	})
 
 	slog.Info("rehydrator starting",
@@ -139,8 +128,8 @@ func main() {
 		"decypharr_url", cfg.DecypharrURL,
 		"radarr_category", cfg.DecypharrRadarrCategory,
 		"sonarr_category", cfg.DecypharrSonarrCategory,
-		"delete_path", "torbox_by_infohash",
-		"torbox_prune_enabled", cfg.TorBoxAPIKey != "",
+		"delete_path", "decypharr",
+		"rearm_backend", "decypharr",
 		"prune_enabled", cfg.PruneEnabled,
 		"rearm_enabled", cfg.RearmEnabled,
 		"max_prunes_per_run", cfg.MaxPrunesPerRun,
@@ -153,22 +142,13 @@ func main() {
 		"provider_cooldown", cfg.ProviderCooldown.String(),
 		"rclone_rc_enabled", cfg.RcloneRCEnabled,
 		"rclone_rc_refresh_after_rearm", cfg.RcloneRCRefreshAfterRearm,
-		"plex_enabled", cfg.PlexEnabled,
-		"plex_url", cfg.PlexURL,
-		"plex_movie_section_id", cfg.PlexMovieSectionID,
-		"plex_tv_section_id", cfg.PlexTVSectionID,
-		"plex_refresh_after_rearm", cfg.PlexRefreshAfterRearm,
-		"plex_refresh_after_visibility", cfg.PlexRefreshAfterVisibility,
-		"plex_refresh_after_import", cfg.PlexRefreshAfterImport,
-		"plex_refresh_after_prune", cfg.PlexRefreshAfterPrune,
-		"plex_refresh_delay", cfg.PlexRefreshDelaySeconds,
-		"plex_max_refreshes_per_run", cfg.PlexMaxRefreshesPerRun,
-		"plex_refresh_dedupe", cfg.PlexRefreshDedupe,
+		"jellyfin_enabled", cfg.Jellyfin.Enabled,
+		"jellyfin_url", cfg.Jellyfin.URL,
 		"self_heal_enabled", cfg.SelfHealEnabled,
 		"self_heal_interval", cfg.SelfHealInterval.String(),
-		"self_heal_plex_refresh_available", cfg.SelfHealPlexRefreshAvailable,
-		"self_heal_plex_recent_hours", cfg.SelfHealPlexRecentHours,
-		"self_heal_max_plex_refreshes_per_run", cfg.SelfHealMaxPlexRefreshesPerRun,
+		"self_heal_refresh_available", cfg.SelfHealRefreshAvailable,
+		"self_heal_recent_hours", cfg.SelfHealRecentHours,
+		"self_heal_max_refreshes_per_run", cfg.SelfHealMaxRefreshesPerRun,
 		"health_addr", cfg.HealthAddr,
 		"api_enabled", cfg.APIEnabled,
 		"api_require_token", cfg.APIRequireToken,
@@ -195,6 +175,7 @@ func main() {
 
 	if cfg.RadarrSyncEnabled {
 		radarrSyncer = syncer.NewRadarr(syncer.RadarrOptions{
+			Decypharr:  decypharrClient,
 			Repo:       repo,
 			Radarr:     radarrClient,
 			Tenant:     cfg.Tenant,
@@ -202,13 +183,14 @@ func main() {
 			Interval:   cfg.RadarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
 			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
-				ctrl.ScheduleInitialImportPlexRefresh(syncCtx, item, "radarr_"+reason)
+				ctrl.ScheduleInitialImportJellyfinRefresh(ctx, item, "radarr_"+reason)
 			},
 		})
 	}
 
 	if cfg.SonarrSyncEnabled {
 		sonarrSyncer = syncer.NewSonarr(syncer.SonarrOptions{
+			Decypharr:  decypharrClient,
 			Repo:       repo,
 			Sonarr:     sonarrClient,
 			Tenant:     cfg.Tenant,
@@ -216,7 +198,7 @@ func main() {
 			Interval:   cfg.SonarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
 			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
-				ctrl.ScheduleInitialImportPlexRefresh(syncCtx, item, "sonarr_"+reason)
+				ctrl.ScheduleInitialImportJellyfinRefresh(ctx, item, "sonarr_"+reason)
 			},
 		})
 	}
@@ -244,87 +226,43 @@ func main() {
 		refreshSeerr = seerrSyncer.SyncOnce
 	}
 
-	var plexRefreshMovie func(context.Context, int) error
-	var plexRefreshSeries func(context.Context, int) error
-	var plexRefreshMovies func(context.Context) error
-	var plexRefreshTV func(context.Context) error
-	if plexClient != nil && plexClient.Configured() {
-		plexRefreshMovie = func(ctx context.Context, arrID int) error {
-			item, found, err := repo.GetState(ctx, cfg.Tenant, model.MediaMovie, arrID)
-			if err != nil {
+	var jellyfinItemPath func(context.Context, string) (string, error)
+	if jellyfinClient != nil {
+		jellyfinItemPath = jellyfinClient.ItemPath
+	}
+
+	var jellyfinRefreshMovie, jellyfinRefreshSeries func(context.Context, int) error
+	var jellyfinRefreshLibrary func(context.Context) error
+	if jellyfinClient != nil {
+		refreshItem := func(mt model.MediaType) func(context.Context, int) error {
+			return func(ctx context.Context, id int) error {
+				item, found, err := repo.GetState(ctx, cfg.Tenant, mt, id)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return fmt.Errorf("tracked media not found")
+				}
+				err = jellyfinClient.RefreshPath(ctx, item.SymlinkPath)
+				status, message := "success", ""
+				if err != nil {
+					status = "failed"
+					message = err.Error()
+				}
+				_ = repo.RecordJellyfinRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_refresh", string(mt)+"_file", item.SymlinkPath, status, message)
 				return err
 			}
-			if !found {
-				return os.ErrNotExist
-			}
-			targetPath := plexClient.TargetScanPath(item.SymlinkPath, model.MediaMovie)
-			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
-			defer cancel()
-			slog.Info("manual Plex refresh starting", "arr_id", item.ArrID, "target_path", targetPath)
-			err = plexClient.RefreshPathForMedia(refreshCtx, targetPath, model.MediaMovie)
-			status := "success"
-			message := ""
-			if err != nil {
-				status = "failed"
-				message = err.Error()
-				slog.Warn("manual Plex refresh failed", "arr_id", item.ArrID, "target_path", targetPath, "error", err)
-			} else {
-				slog.Info("manual Plex refresh complete", "arr_id", item.ArrID, "target_path", targetPath)
-			}
-			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_movie_refresh", "movie_folder", targetPath, status, message)
-			return err
 		}
-		plexRefreshSeries = func(ctx context.Context, episodeFileID int) error {
-			item, found, err := repo.GetState(ctx, cfg.Tenant, model.MediaSeries, episodeFileID)
-			if err != nil {
-				return err
-			}
-			if !found {
-				return os.ErrNotExist
-			}
-			targetPath := plexClient.TargetScanPath(item.SymlinkPath, model.MediaSeries)
-			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
-			defer cancel()
-			slog.Info("manual Plex series refresh starting", "episode_file_id", item.ArrID, "target_path", targetPath)
-			err = plexClient.RefreshPathForMedia(refreshCtx, targetPath, model.MediaSeries)
-			status := "success"
-			message := ""
-			if err != nil {
-				status = "failed"
-				message = err.Error()
-				slog.Warn("manual Plex series refresh failed", "episode_file_id", item.ArrID, "target_path", targetPath, "error", err)
-			} else {
-				slog.Info("manual Plex series refresh complete", "episode_file_id", item.ArrID, "target_path", targetPath)
-			}
-			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_series_refresh", "series_folder", targetPath, status, message)
-			return err
-		}
-		plexRefreshMovies = func(ctx context.Context) error {
-			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
-			defer cancel()
-			slog.Warn("manual whole Plex movie section refresh requested")
-			err := plexClient.RefreshMovies(refreshCtx)
-			status := "success"
-			message := ""
+		jellyfinRefreshMovie = refreshItem(model.MediaMovie)
+		jellyfinRefreshSeries = refreshItem(model.MediaSeries)
+		jellyfinRefreshLibrary = func(ctx context.Context) error {
+			err := jellyfinClient.RefreshLibrary(ctx)
+			status, message := "success", ""
 			if err != nil {
 				status = "failed"
 				message = err.Error()
 			}
-			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, "", 0, "manual_movies_refresh", "movie_section", "", status, message)
-			return err
-		}
-		plexRefreshTV = func(ctx context.Context) error {
-			refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.PlexRefreshTimeoutSeconds)*time.Second)
-			defer cancel()
-			slog.Warn("manual whole Plex TV section refresh requested")
-			err := plexClient.RefreshTV(refreshCtx)
-			status := "success"
-			message := ""
-			if err != nil {
-				status = "failed"
-				message = err.Error()
-			}
-			_ = repo.RecordPlexRefresh(ctx, cfg.Tenant, "", 0, "manual_tv_refresh", "tv_section", "", status, message)
+			_ = repo.RecordJellyfinRefresh(ctx, cfg.Tenant, "", 0, "manual_library_refresh", "library", "", status, message)
 			return err
 		}
 	}
@@ -344,13 +282,16 @@ func main() {
 	if seerrClient != nil && seerrClient.Configured() {
 		dependencyChecks["seerr"] = func(ctx context.Context) error { _, err := seerrClient.Requests(ctx, 1); return err }
 	}
-	if plexClient != nil && plexClient.Configured() {
-		dependencyChecks["plex"] = plexClient.Ping
+
+	if jellyfinClient != nil {
+		dependencyChecks["jellyfin"] = jellyfinClient.Ping
 	}
 
 	var healthServer *health.Server
 	if cfg.APIEnabled {
 		healthServer = health.NewAPIServer(health.APIOptions{
+			CaptureGrab:                  ctrl.CaptureGrab,
+			RecordGrabImport:             ctrl.RecordGrabImport,
 			Addr:                         cfg.HealthAddr,
 			Repo:                         repo,
 			Tenant:                       cfg.Tenant,
@@ -358,6 +299,10 @@ func main() {
 			RequireToken:                 cfg.APIRequireToken,
 			MetricsEnabled:               cfg.MetricsEnabled,
 			PlaybackEnabled:              cfg.PlaybackEnabled,
+			JellyfinItemPath:             jellyfinItemPath,
+			JellyfinRefreshMovie:         jellyfinRefreshMovie,
+			JellyfinRefreshSeries:        jellyfinRefreshSeries,
+			JellyfinRefreshLibrary:       jellyfinRefreshLibrary,
 			PlaybackRearmOnPlay:          cfg.PlaybackRearmOnPlay,
 			PlaybackCooldown:             cfg.PlaybackCooldown,
 			PlaybackIgnoredTitles:        cfg.PlaybackIgnoredTitles,
@@ -365,12 +310,8 @@ func main() {
 			RefreshRadarr:                refreshRadarr,
 			RefreshSonarr:                refreshSonarr,
 			RefreshSeerr:                 refreshSeerr,
-			PlexRefreshMovie:             plexRefreshMovie,
-			PlexRefreshSeries:            plexRefreshSeries,
-			PlexRefreshMovies:            plexRefreshMovies,
-			PlexRefreshTV:                plexRefreshTV,
 			SelfHealRun: func(runCtx context.Context) error {
-				ctrl.RunSelfHealOnce(runCtx)
+				ctrl.RunSelfHealOnce(ctx)
 				return nil
 			},
 			DependencyChecks: dependencyChecks,

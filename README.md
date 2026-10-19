@@ -1,294 +1,105 @@
 # Rehydrator
 
-Rehydrator is an on-demand cache lifecycle manager for media stacks that use Radarr, Seerr, Decypharr, TorBox, CSI-rclone, and Plex.
+Rehydrator manages on-demand media cache lifecycles using Radarr/Sonarr,
+Decypharr, PostgreSQL, CSI-rclone, and **Jellyfin**. Seerr can provide request intent.
 
-It keeps Plex/Radarr library entries intact while allowing old TorBox cache entries to be pruned and re-armed later when someone tries to play the title again.
+It records imported releases, asks Decypharr to prune expired provider placements,
+and restores archived media when Jellyfin playback or an API request asks for it.
+Decypharr owns all TorBox communication.
 
-## Version information
+## Version
 
-The application prints its version at startup. To print the version and exit without loading configuration or connecting to dependencies, run:
+This draft is **v0.5.6**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.5.6`.
 
-```bash
-rehydrator --version
-# Rehydrator 0.4.8
-```
+## Workflow
 
-Release builds can set the embedded version with the Docker build argument `VERSION` (defaults to `0.4.8`).
+1. Radarr/Sonarr downloads normally through Prowlarr and Decypharr.
+2. Arr grab webhooks capture the exact original source before import, with durable retries.
+3. Import webhooks attach that source by download ID, media owner, and exact file path.
+4. After the grace period, Rehydrator preserves the source and asks Decypharr to prune.
+5. Jellyfin's Playback Start webhook or a rearm API request queues restoration.
+6. Rehydrator submits the saved source to Decypharr, waits for readiness and mount
+   visibility, and notifies Jellyfin of the changed file path.
 
-## What it does
+A saved source is explicitly a torrent file **or** a magnet, never both. The
+infohash identifies the release; it is not automatically converted into a magnet.
+Missing or ambiguous legacy sources require source recovery. Existing saved
+sources let routine rearm bypass Arr/Prowlarr.
 
-- Tracks imported Radarr movies in Postgres.
-- Prunes old TorBox cache entries after a configurable grace period.
-- Re-arms archived media through Decypharr when Plex playback is attempted.
-- Preserves Arr-provided `.torrent` download URLs for re-arms, allowing private-tracker torrent files to be submitted instead of reducing them to bare magnets.
-- Handles slow CSI-rclone visibility with `WAITING_FOR_VISIBILITY` instead of duplicate re-adds.
-- Refreshes only the restored movie folder in Plex after a movie becomes available again to clear stale unavailable/trash indicators.
-- Exposes health, API, admin, dependency-check, and Prometheus-style metrics endpoints.
-- Includes a self-heal worker for recently restored movies that missed a Plex refresh.
-- Reconciles tracked items against complete Radarr/Sonarr inventories and removes stale active rows when items are deleted from Arr, while retaining tombstone audit history.
+If Arr removes a completed queue entry, readiness can instead use the exact hash
+in Decypharr's retained library plus a successful read from the mounted media file.
+Keep **Remove Completed** enabled if that is your normal configuration.
 
-## Current scope
+## Setup
 
-Movie support is the stable path right now.
-
-Sonarr/series support is an MVP in `v0.4.1`. It tracks one lifecycle row per imported Sonarr episode file. Season-pack/group-aware pruning is still future work.
-
-## Architecture
-
-```text
-Plex / Seerr
-    ↓
-Radarr
-    ↓
-Decypharr qBittorrent-compatible API
-    ↓
-TorBox cache
-    ↓
-CSI-rclone mount
-    ↓
-Plex library
-
-Rehydrator watches and controls lifecycle state in Postgres.
-```
-
-## Lifecycle
-
-```text
-AVAILABLE
-  → prune grace expires
-  → TorBox torrent deleted by infohash
-  → ARCHIVED
-  → Plex playback webhook or API re-arm request
-  → REARMING
-  → Decypharr add succeeds
-  → WAITING_FOR_VISIBILITY
-  → CSI-rclone path appears
-  → AVAILABLE
-  → optional Plex refresh clears stale unavailable icon
-```
-
-## Quick start
-
-1. Create a Postgres database for the tenant.
-2. Copy `config/rehydrator.example.yaml` to `/config/rehydrator.yaml`.
-3. Fill in secrets using Kubernetes Secrets or your deployment mechanism.
-4. Run migrations or enable `db_auto_migrate`.
-5. Deploy Rehydrator.
-6. Configure Plex, Radarr, and Seerr webhooks.
-
-Example local start:
-
-```bash
-rehydrator --config /config/rehydrator.yaml
-```
-
-## Minimal required integrations
-
-| Integration | Purpose |
-|---|---|
-| Postgres | Stores media state, events, cooldowns, and audits |
-| Radarr | Source of imported movie metadata and history |
-| Decypharr | Re-arm/add path using qBittorrent-compatible API |
-| TorBox | Provider prune/delete path by infohash |
-| CSI-rclone | Mounted media visibility path |
-| Plex | Playback trigger and optional library refresh |
-| Seerr | Optional request/watchlist intent source |
-
-## Config
-
-Use this as the starting point:
-
-```text
-config/rehydrator.example.yaml
-```
-
-Do not commit live API keys, database passwords, or Plex tokens.
-
-See [`docs/configuration.md`](docs/configuration.md) for the full config guide.
-
-## Important Plex settings
-
-For this workflow, keep Plex from deleting missing/archived items:
-
-```text
-Empty trash automatically after every scan: Off
-Allow media deletion: Off
-Video preview thumbnails: Never
-Chapter thumbnails: Never
-Automatic/partial scans: Off or cautious
-```
-
-See [`docs/plex-setup.md`](docs/plex-setup.md).
-
-## API endpoints
-
-Common endpoints:
-
-```text
-GET  /healthz
-GET  /readyz
-GET  /metrics
-GET  /api/state
-POST /api/playback/plex
-POST /api/playback/event
-POST /api/radarr/webhook
-POST /api/sonarr/webhook
-POST /api/seerr/webhook
-POST /api/rearm/movie/{radarr_id}
-POST /api/rearm/movie/tmdb/{tmdb_id}
-POST /api/prune/movie/{radarr_id}
-POST /api/refresh/radarr
-POST /api/refresh/seerr
-POST /api/plex/refresh/movie/{radarr_id}
-POST /api/plex/refresh/movies
-GET  /api/state/summary
-GET  /api/health/dependencies
-GET  /api/admin/cooldowns
-POST /api/admin/retry-failed
-```
-
-See [`docs/api.md`](docs/api.md).
-
-## Docs
-
-- [`docs/configuration.md`](docs/configuration.md)
-- [`docs/lifecycle.md`](docs/lifecycle.md)
-- [`docs/plex-setup.md`](docs/plex-setup.md)
-- [`docs/radarr-seerr-setup.md`](docs/radarr-seerr-setup.md)
-- [`docs/torbox-decypharr.md`](docs/torbox-decypharr.md)
-- [`docs/troubleshooting.md`](docs/troubleshooting.md)
-- [`docs/api.md`](docs/api.md)
-- [`docs/migrations.md`](docs/migrations.md)
-
-## Safety defaults
-
-The bundled example config favors provider safety over speed:
-
-```text
-concurrent_workers: 2
-max_rearms_per_run: 3
-max_prunes_per_run: 5
-provider_cooldown_seconds: 900
-csi.visibility_timeout_seconds: 900
-```
-
-That is intentional for TorBox/WebDAV/CSI-rclone stacks.
-
-Plex refreshes are targeted by default: Rehydrator scans the restored movie folder path first, not the whole movie library. Whole-section scans are available only as a manual repair endpoint. v0.3.4 adds a dedupe/cooldown window so `rehydration_complete` and `self_heal_available` do not scan the same movie folder twice at the same time.
-
-## v0.3.4 Plex refresh dedupe
-
-This package adds duplicate suppression for automated Plex refreshes. If the same tenant/media/folder path is already queued or was successfully refreshed within `plex.refresh_dedupe_minutes`, later automated refresh attempts are recorded as `skipped` with a `deduped` message.
-
-New helper:
-
-- `GET /api/plex/refreshes/recent?limit=20`
-
-## v0.3.3 metadata guardrails
-
-This package prevents incomplete `REQUESTED`/placeholder rows from entering the re-arm loop. Rows without a real imported `symlink_path` stay pending until Radarr import/sync supplies the path and torrent metadata.
-
-New admin helpers:
-
-- `GET /api/admin/invalid-rows`
-- `POST /api/admin/self-heal/run`
-
-## v0.4.1 Sonarr / series MVP
-
-v0.4.1 includes Sonarr episode-file tracking. Series rows use `media_type=series` and `arr_id=<Sonarr episodeFileId>`, with `series_id`, `episode_id`, `season_number`, `episode_number`, `series_title`, and `episode_title` stored as metadata.
-
-Enable it with:
+1. Copy [the configuration example](config/rehydrator.example.yaml) and fill in
+   PostgreSQL, tenant, Arr, Decypharr, API authentication, and mount settings.
+2. Apply the applicable SQL migrations through **023**, or enable `db_auto_migrate`.
+3. Configure Arr webhooks for **On Grab** and **On Import**, including upgrades.
+4. Enable Jellyfin, provide its API key, and configure its Webhook plugin.
+5. Validate one movie and one episode against your running mount before broad pruning.
 
 ```yaml
-sonarr:
-  url: http://tenet-sonarr.tenet-nofear101.svc.cluster.local:8989
-  api_key: "<SONARR_API_KEY>"
-
-sonarr_sync:
+jellyfin:
   enabled: true
-  interval_seconds: 60
-
-decypharr:
-  sonarr_category: sonarr
-
-plex:
-  tv_section_id: 0
+  url: http://jellyfin:8096
+  api_key: YOUR_JELLYFIN_API_KEY
+  refresh_after_rearm: true
+  refresh_after_visibility: true
+  refresh_after_import: true
+  refresh_after_prune: false
+  refresh_delay_seconds: 45
+  timeout_seconds: 20
+  max_refreshes_per_run: 5
+  refresh_dedupe_minutes: 10
 ```
 
-New operational endpoints:
+Jellyfin is the sole media-server integration. It supports movie and episode
+playback, targeted automatic/manual refreshes, a manual library scan, dependency
+checks, refresh history, metrics, and periodic self-heal. Paths must match the
+Jellyfin filesystem view. A webhook arrives after playback starts, so the client
+may need to retry once restoration finishes.
 
-```text
-POST /api/refresh/sonarr
-POST /api/rearm/series/<episodeFileId>
-POST /api/prune/series/<episodeFileId>
-GET  /api/state/series/<episodeFileId>
-POST /api/sonarr/webhook
-POST /api/plex/refresh/series/<episodeFileId>
-POST /api/plex/refresh/tv
-```
+## Useful endpoints
 
-See `docs/sonarr-series-support.md` for the testing flow and current season-pack limitations.
+Authenticated API requests accept `Authorization: Bearer <API_TOKEN>` or
+`X-Rehydrator-Token: <API_TOKEN>`.
 
-## v0.4.1 Sonarr seed fix
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/playback/jellyfin` | Jellyfin Webhook plugin playback events |
+| `POST /api/radarr/webhook` | Movie grab/import/deletion notifications |
+| `POST /api/sonarr/webhook` | Episode grab/import and series-deletion notifications |
+| `POST /api/rearm/movie/{radarr_id}` | Request movie restoration |
+| `POST /api/rearm/series/{episode_file_id}` | Request episode-file restoration |
+| `POST /api/jellyfin/refresh/movie/{radarr_id}` | Notify the tracked movie path |
+| `POST /api/jellyfin/refresh/series/{episode_file_id}` | Notify the tracked episode path |
+| `POST /api/jellyfin/refresh/library` | Request a scan of all Jellyfin libraries |
+| `GET /api/jellyfin/refreshes/recent` | Refresh audit history |
+| `POST /api/self-heal/run` | Run a Jellyfin self-heal pass |
+| `GET /api/health/dependencies` | Check configured services |
+| `GET /metrics` | Prometheus metrics |
 
-v0.4.1 fixes the first Sonarr MVP seed behavior:
+## Documentation
 
-```text
-- Uses /api/v3/episodeFile?seriesId=<id> as the authoritative imported file source
-- Still reads /api/v3/episode for episode labels/season metadata where available
-- Adds a Sonarr sync mutex so overlapping syncs are skipped
-- Adds webhook debounce to prevent a Sonarr import burst from launching many full syncs
-- Adds debug endpoints for tracked Sonarr rows
-```
+- [Jellyfin setup](docs/jellyfin-setup.md)
+- [Decypharr lifecycle, source capture, and recovery](docs/decypharr-rearm.md)
+- [Configuration](docs/configuration.md)
+- [API](docs/api.md)
+- [Migrations](docs/migrations.md)
+- [Changelog](CHANGELOG.md)
 
-New debug endpoints:
+## Validation and limits
 
-```text
-GET /api/admin/sonarr/status
-GET /api/admin/sonarr/episode-files?limit=100
-```
+Run `go test -race ./...`. PostgreSQL integration tests additionally accept
+`REHYDRATOR_TEST_POSTGRES_URL` pointing to a disposable database.
 
+Provider deletion is asynchronous inside Decypharr: acceptance does not
+independently confirm TorBox deletion. Validate existing library links and STRM
+setups with your installed Decypharr version. Season-pack source capture supports
+multiple episode files, but group-aware provider pruning remains a limitation.
 
-## v0.4.3 initial import Plex refresh
-
-- Queues targeted Plex refreshes on initial Radarr/Sonarr import.
-- Queues refreshes when REQUESTED rows are promoted to AVAILABLE.
-- Queues refreshes when imported paths change because of upgrades/renames.
-- Uses existing Plex dedupe/cooldown so steady seed loops do not repeatedly scan Plex.
-- Adds `plex.refresh_after_import` / `PLEX_REFRESH_AFTER_IMPORT`.
-
-See `docs/initial-import-plex-refresh.md`.
-
-## v0.4.3 notes
-
-`v0.4.3` fixes the PostgreSQL Plex refresh dedupe warning seen during bulk Sonarr initial imports:
-
-```text
-ERROR: could not determine data type of parameter $2 (SQLSTATE 42P18)
-```
-
-No schema change is required. The database dedupe check now uses an explicit timestamp cutoff and no unused SQL parameters. See [`docs/plex-dedupe-sql-fix.md`](docs/plex-dedupe-sql-fix.md).
-
-## v0.4.4 torrent-file rearm support
-
-This release adds rehydrator-side support for Arr history records that contain a regular `.torrent` download URL. During re-arm, Rehydrator downloads the original torrent file from the Arr/Prowlarr-provided URL and submits it to Decypharr using the qBittorrent-compatible multipart `torrents` field.
-
-Magnets remain the default fallback when no torrent-file URL is available. The original `.torrent` is not reconstructed from the infohash, which preserves private-tracker metadata such as the announce list and private flag.
-
-**Important:** this changes Rehydrator's re-arm path. Initial Radarr/Sonarr grabs still go directly from the *Arr application to Decypharr, so Decypharr itself must also correctly implement multipart `.torrent` uploads for new IPT/private-tracker downloads.
-
-
-## v0.4.6 Arr deletion reconciliation
-
-- Radarr movie-delete and Sonarr series-delete webhooks remove active Rehydrator tracking immediately.
-- Periodic inventory sync catches missed delete webhooks and removes stale active rows only after a successful complete inventory.
-- Sonarr skips pruning if any episode or episode-file API call fails; transient API failures never look like a deleted library.
-- Tombstones preserve deletion history without keeping stale rows active or deleting provider torrents/files.
-- Re-added items are rediscovered by the normal Arr sync. Seerr/watchlist can continue to drive the existing request/re-arm workflow.
-
-See `docs/api.md` for webhook setup and safeguards.
-
-
-## v0.4.7 Webhook diagnostics
-
-Radarr and Sonarr webhook handlers now emit structured logs for received events, authorization/JSON/method rejections, refresh outcomes, debounce skips, and deletion reconciliation. Arr `Test` events are explicitly acknowledged with HTTP 202 and do not trigger a library refresh. Logs omit tokens, query strings, and complete webhook payloads. See `CHANGELOG-v0.4.7.md`.
+Source metainfo may contain private tracker credentials; include the source tables
+in protected backups. Historical migration files and media-server audit data are
+retained, while current Jellyfin scans use their own audit table.

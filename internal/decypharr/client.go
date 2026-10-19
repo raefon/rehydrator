@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,10 +23,12 @@ type Client struct {
 	base     string
 	username string
 	password string
+	apiToken string
 	http     *http.Client
 }
 
 type TorrentInfo struct {
+	MagnetURI   string  `json:"magnet_uri"`
 	Hash        string  `json:"hash"`
 	Name        string  `json:"name"`
 	State       string  `json:"state"`
@@ -35,7 +38,11 @@ type TorrentInfo struct {
 	Progress    float64 `json:"progress"`
 }
 
-func NewClient(base, username, password string) *Client {
+func NewClient(base, username, password string, apiToken ...string) *Client {
+	token := ""
+	if len(apiToken) > 0 {
+		token = strings.TrimSpace(apiToken[0])
+	}
 	jar, _ := cookiejar.New(nil)
 	httpClient := httpx.DefaultClient()
 	httpClient.Jar = jar
@@ -44,6 +51,7 @@ func NewClient(base, username, password string) *Client {
 		base:     strings.TrimRight(strings.TrimSpace(base), "/"),
 		username: strings.TrimSpace(username),
 		password: password,
+		apiToken: token,
 		http:     httpClient,
 	}
 }
@@ -63,6 +71,9 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if c.apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -76,60 +87,33 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 		return model.DownloadClientAddResult{}, fmt.Errorf("missing Decypharr URL")
 	}
 
+	prepared, err := torrent.ValidateSource()
+	if err != nil {
+		return model.DownloadClientAddResult{}, fmt.Errorf("invalid torrent source: %w", err)
+	}
 	if err := c.authenticate(ctx); err != nil {
 		return model.DownloadClientAddResult{}, err
 	}
+	torrent = prepared
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	submissionMode := "magnet"
-
-	torrentURL := strings.TrimSpace(torrent.TorrentURL)
-	magnet := strings.TrimSpace(torrent.Magnet)
-
-	slog.Info("decypharr torrent source diagnostic",
-		"torrent_url_scheme", func() string {
-			if i := strings.Index(torrentURL, ":"); i >= 0 {
-				return strings.ToLower(torrentURL[:i])
-			}
-			return ""
-		}(),
-		"torrent_url_is_magnet", strings.HasPrefix(strings.ToLower(torrentURL), "magnet:"),
-		"magnet_present", magnet != "",
-		"infohash_present", strings.TrimSpace(torrent.InfoHash) != "",
-	)
-
-	// Some Arr history entries put the magnet URI in TorrentURL rather
-	// than Magnet. Normalize that case before choosing the submission mode.
-	if strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
-		magnet = torrentURL
-		torrentURL = ""
-	}
-
-	if torrentURL != "" {
-		torrentBytes, filename, err := c.fetchTorrentFile(ctx, torrentURL, torrent.SourceTitle)
-		if err != nil {
-			return model.DownloadClientAddResult{}, fmt.Errorf("fetch torrent file: %w", err)
-		}
-
-		part, err := writer.CreateFormFile("torrents", filename)
+	submissionMode := string(torrent.Kind)
+	switch torrent.Kind {
+	case model.SourceTorrentFile:
+		part, err := writer.CreateFormFile("torrents", torrent.TorrentFilename)
 		if err != nil {
 			return model.DownloadClientAddResult{}, err
 		}
-		if _, err := part.Write(torrentBytes); err != nil {
+		if _, err := part.Write(torrent.TorrentFile); err != nil {
 			return model.DownloadClientAddResult{}, err
 		}
-		submissionMode = "torrent_file"
-	} else {
-		if magnet == "" && torrent.InfoHash != "" {
-			magnet = "magnet:?xt=urn:btih:" + strings.ToLower(strings.TrimSpace(torrent.InfoHash))
-		}
-		if magnet == "" {
-			return model.DownloadClientAddResult{}, fmt.Errorf("missing magnet/infohash for Decypharr add")
-		}
-		if err := writer.WriteField("urls", magnet); err != nil {
+	case model.SourceMagnet:
+		if err := writer.WriteField("urls", torrent.Magnet); err != nil {
 			return model.DownloadClientAddResult{}, err
 		}
+	default:
+		return model.DownloadClientAddResult{}, model.ErrSourceRecoveryRequired
 	}
 
 	if err := writer.WriteField("paused", "false"); err != nil {
@@ -173,6 +157,11 @@ func (c *Client) AddTorrent(ctx context.Context, torrent model.TorrentMetadata, 
 
 const maxTorrentFileSize = 50 << 20
 
+// magnetRedirect carries a download endpoint's magnet without sending it over HTTP.
+type magnetRedirect struct{ uri string }
+
+func (e *magnetRedirect) Error() string { return "torrent download redirected to a magnet" }
+
 func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle string) ([]byte, string, error) {
 	slog.Info("fetch torrent file diagnostic",
 		"url_scheme", func() string {
@@ -190,19 +179,38 @@ func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle s
 		return nil, "", err
 	}
 
-	resp, err := c.http.Do(req)
+	// Copy the client so concurrent API requests keep their redirect policy.
+	fetchClient := *c.http
+	previousRedirect := fetchClient.CheckRedirect
+	fetchClient.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if strings.EqualFold(next.URL.Scheme, "magnet") {
+			return &magnetRedirect{uri: next.URL.String()}
+		}
+		if previousRedirect != nil {
+			return previousRedirect(next, via)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	resp, err := fetchClient.Do(req)
 	if err != nil {
-		slog.Error("fetch torrent HTTP request failed",
-			"request_url", req.URL.String(),
-			"request_scheme", req.URL.Scheme,
-			"error", err,
-		)
+		var redirect *magnetRedirect
+		if errors.As(err, &redirect) {
+			return nil, "", redirect
+		}
+		// url.Error includes the full URL (and indexer API key); omit it from logs.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if err := httpx.CheckStatus(resp); err != nil {
 		slog.Error("fetch torrent HTTP request failed",
-			"request_url", req.URL.String(),
+			"request_host", req.URL.Host,
 			"request_scheme", req.URL.Scheme,
 			"error", err,
 		)
@@ -316,10 +324,18 @@ func (c *Client) TorrentInfo(ctx context.Context, infoHash string) (*TorrentInfo
 		return nil, nil
 	}
 
-	return &infos[0], nil
+	for i := range infos {
+		if strings.EqualFold(strings.TrimSpace(infos[i].Hash), infoHash) {
+			return &infos[i], nil
+		}
+	}
+	return nil, nil
 }
 
 func (c *Client) authenticate(ctx context.Context) error {
+	if c.apiToken != "" {
+		return nil
+	}
 	if c.username == "" && c.password == "" {
 		return nil
 	}
@@ -351,6 +367,9 @@ func (c *Client) authenticate(ctx context.Context) error {
 }
 
 func (c *Client) do(req *http.Request) ([]byte, int, error) {
+	if c.apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, 0, err

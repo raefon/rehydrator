@@ -40,7 +40,7 @@ type MediaCacheState struct {
 	// Provider-specific legacy/debug field. Current prune flow looks this up by InfoHash.
 	TorBoxTorrentID *string
 
-	// Decypharr/qBittorrent lifecycle identity.
+	// Stored release identity and selected download backend.
 	InfoHash         *string
 	Magnet           *string
 	DownloadClient   *string
@@ -73,12 +73,15 @@ type MediaCacheState struct {
 }
 
 type TorrentMetadata struct {
-	InfoHash    string
-	Magnet      string
-	TorrentURL  string
-	Source      string
-	SourceTitle string
-	DownloadID  string
+	Kind            SourceKind
+	TorrentFile     []byte
+	TorrentFilename string
+	InfoHash        string
+	Magnet          string
+	TorrentURL      string
+	Source          string
+	SourceTitle     string
+	DownloadID      string
 }
 
 type DownloadClientAddResult struct {

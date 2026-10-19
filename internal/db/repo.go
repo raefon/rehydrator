@@ -31,8 +31,8 @@ type MetricsSnapshot struct {
 	PlaybackIgnoredTotal    int64
 	WaitingVisibilityItems  int64
 	ProviderCooldownsActive int64
-	PlexRefreshTotal        int64
-	PlexRefreshFailures     int64
+	JellyfinRefreshTotal    int64
+	JellyfinRefreshFailures int64
 }
 
 type ProviderCooldown struct {
@@ -43,7 +43,7 @@ type ProviderCooldown struct {
 	UpdatedAt     time.Time
 }
 
-type PlexRefresh struct {
+type JellyfinRefresh struct {
 	ID        int64     `json:"id"`
 	Tenant    string    `json:"tenant"`
 	MediaID   string    `json:"media_id"`
@@ -917,7 +917,23 @@ func (r *Repo) MarkWaitingVisibility(ctx context.Context, id string, msg string,
 }
 
 func (r *Repo) SaveTorrentMetadata(ctx context.Context, id string, torrent model.TorrentMetadata, category string) error {
-	_, err := r.pool.Exec(ctx, `
+	var err error
+	torrent, err = torrent.ValidateSource()
+	if err != nil {
+		return err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO media_cache_torrent_sources(media_id,infohash,filename,torrent_file,source_kind,magnet) VALUES($1,$2,$3,$4,$5,$6)
+ ON CONFLICT(media_id) DO UPDATE SET infohash=EXCLUDED.infohash,filename=EXCLUDED.filename,torrent_file=EXCLUDED.torrent_file,source_kind=EXCLUDED.source_kind,magnet=EXCLUDED.magnet,updated_at=now()`, id, torrent.InfoHash, torrent.TorrentFilename, torrent.TorrentFile, torrent.Kind, torrent.Magnet)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
         UPDATE media_cache_state
         SET infohash = NULLIF($2, ''),
             magnet = NULLIF($3, ''),
@@ -927,7 +943,10 @@ func (r *Repo) SaveTorrentMetadata(ctx context.Context, id string, torrent model
             last_checked = now()
         WHERE id = $1
     `, id, torrent.InfoHash, torrent.Magnet, category, torrent.SourceTitle)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *Repo) MarkAvailable(ctx context.Context, id string, infoHash string, cachedUntil time.Time) error {
@@ -1215,9 +1234,9 @@ func (r *Repo) Event(ctx context.Context, mediaID string, eventType string, meta
 	return err
 }
 
-func (r *Repo) RecordPlexRefresh(ctx context.Context, tenant string, mediaID string, arrID int, action string, scope string, path string, status string, message string) error {
+func (r *Repo) RecordJellyfinRefresh(ctx context.Context, tenant string, mediaID string, arrID int, action string, scope string, path string, status string, message string) error {
 	_, err := r.pool.Exec(ctx, `
-        INSERT INTO media_cache_plex_refreshes (
+        INSERT INTO media_cache_jellyfin_refreshes (
             tenant, media_id, arr_id, action, scope, path, status, message, created_at
         ) VALUES (
             $1, NULLIF($2, '')::uuid, NULLIF($3, 0), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), now()
@@ -1226,12 +1245,12 @@ func (r *Repo) RecordPlexRefresh(ctx context.Context, tenant string, mediaID str
 	return err
 }
 
-func (r *Repo) RecentSuccessfulPlexRefresh(ctx context.Context, tenant string, path string, cutoff time.Time) (bool, error) {
+func (r *Repo) RecentSuccessfulJellyfinRefresh(ctx context.Context, tenant string, path string, cutoff time.Time) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1
-            FROM media_cache_plex_refreshes
+            FROM media_cache_jellyfin_refreshes
             WHERE tenant = $1
               AND path = NULLIF($2, '')
               AND status = 'success'
@@ -1241,7 +1260,7 @@ func (r *Repo) RecentSuccessfulPlexRefresh(ctx context.Context, tenant string, p
 	return exists, err
 }
 
-func (r *Repo) RecentPlexRefreshes(ctx context.Context, tenant string, limit int) ([]PlexRefresh, error) {
+func (r *Repo) RecentJellyfinRefreshes(ctx context.Context, tenant string, limit int) ([]JellyfinRefresh, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -1250,7 +1269,7 @@ func (r *Repo) RecentPlexRefreshes(ctx context.Context, tenant string, limit int
 	}
 	rows, err := r.pool.Query(ctx, `
         SELECT id, tenant, COALESCE(media_id::text, ''), COALESCE(arr_id, 0), COALESCE(action, ''), COALESCE(scope, ''), COALESCE(path, ''), status, COALESCE(message, ''), created_at
-        FROM media_cache_plex_refreshes
+        FROM media_cache_jellyfin_refreshes
         WHERE tenant = $1
         ORDER BY created_at DESC
         LIMIT $2
@@ -1259,9 +1278,9 @@ func (r *Repo) RecentPlexRefreshes(ctx context.Context, tenant string, limit int
 		return nil, err
 	}
 	defer rows.Close()
-	out := []PlexRefresh{}
+	out := []JellyfinRefresh{}
 	for rows.Next() {
-		var pr PlexRefresh
+		var pr JellyfinRefresh
 		if err := rows.Scan(&pr.ID, &pr.Tenant, &pr.MediaID, &pr.ArrID, &pr.Action, &pr.Scope, &pr.Path, &pr.Status, &pr.Message, &pr.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -1346,7 +1365,7 @@ func (r *Repo) RetryFailed(ctx context.Context, tenant string, limit int) (int64
 	return cmd.RowsAffected(), nil
 }
 
-func (r *Repo) PlexSelfHealWorkItems(ctx context.Context, tenant string, limit int, recentSeconds int) ([]model.MediaCacheState, error) {
+func (r *Repo) JellyfinSelfHealWorkItems(ctx context.Context, tenant string, limit int, recentSeconds int) ([]model.MediaCacheState, error) {
 	if limit <= 0 {
 		limit = 5
 	}
@@ -1370,7 +1389,7 @@ func (r *Repo) PlexSelfHealWorkItems(ctx context.Context, tenant string, limit i
           ) > now() - ($3::int * interval '1 second')
           AND NOT EXISTS (
               SELECT 1
-              FROM media_cache_plex_refreshes pr
+              FROM media_cache_jellyfin_refreshes pr
               WHERE pr.tenant = m.tenant
                 AND pr.media_id = m.id
                 AND pr.status = 'success'
@@ -1429,8 +1448,8 @@ func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, err
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_playback_ignored WHERE tenant = $1`, tenant).Scan(&s.PlaybackIgnoredTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state = 'WAITING_FOR_VISIBILITY'`, tenant).Scan(&s.WaitingVisibilityItems)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_provider_cooldowns WHERE tenant = $1 AND cooldown_until > now()`, tenant).Scan(&s.ProviderCooldownsActive)
-	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_plex_refreshes WHERE tenant = $1`, tenant).Scan(&s.PlexRefreshTotal)
-	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_plex_refreshes WHERE tenant = $1 AND status <> 'success'`, tenant).Scan(&s.PlexRefreshFailures)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_jellyfin_refreshes WHERE tenant = $1`, tenant).Scan(&s.JellyfinRefreshTotal)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_jellyfin_refreshes WHERE tenant = $1 AND status = 'failed'`, tenant).Scan(&s.JellyfinRefreshFailures)
 	return s, nil
 }
 
@@ -1478,4 +1497,19 @@ func (r *Repo) SeriesStateSummary(ctx context.Context, tenant string) (map[strin
 		out[state] = count
 	}
 	return out, rows.Err()
+}
+
+func (r *Repo) SavedTorrentSource(ctx context.Context, id string) (model.TorrentMetadata, bool, error) {
+	var t model.TorrentMetadata
+	err := r.pool.QueryRow(ctx, `SELECT source_kind,infohash,filename,torrent_file,magnet FROM media_cache_torrent_sources WHERE media_id=$1`, id).Scan(&t.Kind, &t.InfoHash, &t.TorrentFilename, &t.TorrentFile, &t.Magnet)
+	if err == pgx.ErrNoRows {
+		return t, false, nil
+	}
+	t.Source = "database_" + string(t.Kind)
+	return t, err == nil, err
+}
+
+func (r *Repo) MarkSourceRecoveryRequired(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE media_cache_state SET state='FAILED',rearm_requested=false,last_error=$2,next_retry_at=NULL,last_checked=now() WHERE id=$1`, id, model.ErrSourceRecoveryRequired.Error())
+	return err
 }

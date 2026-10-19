@@ -1,6 +1,6 @@
 # Provider throttle and CSI-rclone visibility tuning
 
-This Rehydrator version is conservative by default because TorBox/WebDAV and CSI-rclone can lag or throttle under heavy Plex/Radarr reads.
+This Rehydrator version is conservative by default because TorBox/WebDAV and CSI-rclone can lag or throttle under heavy Jellyfin/Radarr reads.
 
 ## Symptoms
 
@@ -73,9 +73,9 @@ For TorBox/WebDAV, prefer fewer concurrent reads over max throughput:
 --tpslimit-burst=4
 ```
 
-Avoid recursive `find`, `du`, Plex video preview thumbnails, chapter thumbnails, intro/credits analysis, and loudness analysis against the remote mount during heavy ingest.
+Avoid recursive `find`, `du`, Jellyfin video preview thumbnails, chapter thumbnails, intro/credits analysis, and loudness analysis against the remote mount during heavy ingest.
 
-## Plex settings
+## Jellyfin settings
 
 Keep these disabled for provider-friendly operation:
 

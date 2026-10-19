@@ -10,10 +10,12 @@ import (
 
 	"github.com/raefon/rehydrator/internal/arr"
 	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
 type SonarrSyncer struct {
+	decypharr  *decypharr.Client
 	repo       *db.Repo
 	sonarr     *arr.Client
 	tenant     string
@@ -31,6 +33,7 @@ type SonarrSyncer struct {
 }
 
 type SonarrOptions struct {
+	Decypharr  *decypharr.Client
 	Repo       *db.Repo
 	Sonarr     *arr.Client
 	Tenant     string
@@ -55,6 +58,7 @@ func NewSonarr(opt SonarrOptions) *SonarrSyncer {
 		opt.Debounce = 30 * time.Second
 	}
 	return &SonarrSyncer{
+		decypharr:  opt.Decypharr,
 		repo:       opt.Repo,
 		sonarr:     opt.Sonarr,
 		tenant:     opt.Tenant,
@@ -212,15 +216,30 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 			seeded++
 
 			if refreshReason != "" && s.onImported != nil {
-				slog.Info("sonarr imported episode file queued for Plex refresh", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "reason", refreshReason, "path", path)
+				slog.Info("sonarr imported episode file queued for Jellyfin refresh", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "reason", refreshReason, "path", path)
 				s.onImported(ctx, item, refreshReason)
 			}
 
+			if err := s.repo.LinkGrabSourceForItem(ctx, s.tenant, item.ID); err != nil {
+				slog.Warn("could not link captured grab source", "error", err)
+			} else {
+				if refreshed, found, err := s.repo.GetState(ctx, s.tenant, item.MediaType, item.ArrID); err == nil && found {
+					item = refreshed
+				}
+			}
 			if item.InfoHash == nil || *item.InfoHash == "" {
 				torrent, err := s.sonarr.LatestGrabbedTorrentForState(ctx, item)
 				if err != nil {
 					slog.Debug("sonarr seed sync could not resolve torrent metadata", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "error", err)
 					continue
+				}
+				if s.decypharr != nil {
+					prepared, err := s.decypharr.PrepareTorrent(ctx, torrent)
+					if err != nil {
+						slog.Warn("could not preserve original torrent source; metadata capture will retry", "error", err)
+						continue
+					}
+					torrent = prepared
 				}
 				if err := s.repo.SaveTorrentMetadata(ctx, item.ID, torrent, s.category); err != nil {
 					slog.Warn("sonarr seed sync failed to save torrent metadata", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "error", err)

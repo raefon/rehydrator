@@ -47,7 +47,7 @@ sonarr_sync:
 decypharr:
   sonarr_category: sonarr
 
-plex:
+jellyfin:
   tv_section_id: 0 # optional; leave 0 to auto-discover the first TV library
 ```
 
@@ -61,7 +61,7 @@ Sonarr /api/v3/episodeFile?seriesId=<id> imported episode file
 → prune removes the TorBox torrent by infohash after cache_grace
 → playback/manual rearm queues Decypharr with category=sonarr
 → CSI visibility marks AVAILABLE again
-→ Plex refresh targets the season folder / episode parent folder
+→ Jellyfin refresh targets the season folder / episode parent folder
 ```
 
 ## v0.4.1 seed behavior
@@ -78,15 +78,15 @@ POST /api/rearm/series/<episodeFileId>
 POST /api/prune/series/<episodeFileId>
 GET  /api/state/series/<episodeFileId>
 POST /api/sonarr/webhook
-POST /api/plex/refresh/series/<episodeFileId>
-POST /api/plex/refresh/tv
+POST /api/jellyfin/refresh/series/<episodeFileId>
+POST /api/jellyfin/refresh/library
 GET  /api/admin/sonarr/status
 GET  /api/admin/sonarr/episode-files?limit=100
 ```
 
-## Plex playback matching
+## Jellyfin playback matching
 
-Movie playback can still match by TMDb ID. Series playback primarily matches by exact file path from the Plex webhook payload. If Plex does not include the file path in the webhook payload, use the generic playback endpoint with `media_type=series` and `path` or `arr_id=<episodeFileId>`.
+Movie playback can still match by TMDb ID. Series playback primarily matches by exact file path from the Jellyfin webhook payload. If Jellyfin does not include the file path in the webhook payload, use the generic playback endpoint with `media_type=series` and `path` or `arr_id=<episodeFileId>`.
 
 Example:
 
@@ -110,4 +110,4 @@ This MVP uses one row per episode file. Multi-episode files and season packs are
 
 ## v0.4.3 first-import refresh
 
-Sonarr episode-file seed sync now queues a targeted Plex season-folder refresh when an episode file is first discovered, when a placeholder/requested row becomes available, or when an episode file path changes. Normal steady-state syncs do not queue refreshes.
+Sonarr episode-file seed sync now queues a targeted Jellyfin season-folder refresh when an episode file is first discovered, when a placeholder/requested row becomes available, or when an episode file path changes. Normal steady-state syncs do not queue refreshes.

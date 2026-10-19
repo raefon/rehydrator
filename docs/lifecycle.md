@@ -38,15 +38,15 @@ ARCHIVED
 
 If the CSI path is slow, Rehydrator retries visibility checks without duplicate Decypharr add calls.
 
-## Plex hygiene flow
+## Jellyfin hygiene flow
 
 ```text
 WAITING_FOR_VISIBILITY → AVAILABLE
-→ delayed Plex refresh
-→ Plex clears stale unavailable/trash icon
+→ delayed Jellyfin refresh
+→ Jellyfin clears stale unavailable/trash icon
 ```
 
-Do not enable Plex automatic trash emptying.
+Do not enable Jellyfin automatic trash emptying.
 
 ## Event-driven seeding
 
@@ -55,5 +55,5 @@ Seerr and Radarr events reduce the race where playback happens before Rehydrator
 ```text
 Seerr request → REQUESTED placeholder
 Radarr import/webhook → real Radarr arr_id/path/infohash
-Plex playback → tracked play intent and optional re-arm
+Jellyfin playback → tracked play intent and optional re-arm
 ```

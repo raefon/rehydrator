@@ -35,7 +35,7 @@ max_rearms_per_run: 3
 max_prunes_per_run: 5
 ```
 
-Keep Plex heavy analysis off:
+Keep Jellyfin heavy analysis off:
 
 ```text
 Video preview thumbnails: Never
@@ -43,16 +43,16 @@ Chapter thumbnails: Never
 Extensive analysis: Off
 ```
 
-## Plex shows trash/unavailable icon
+## Jellyfin shows trash/unavailable icon
 
-This means Plex has noticed the backing path is unavailable. Do not enable automatic trash emptying.
+This means Jellyfin has noticed the backing path is unavailable. Do not enable automatic trash emptying.
 
-After rehydration, Rehydrator can refresh Plex:
+After rehydration, Rehydrator can refresh Jellyfin:
 
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/plex/refresh/movie/4
+  http://localhost:8080/api/jellyfin/refresh/movie/4
 ```
 
 ## Pre-roll creates unmatched playback events
@@ -72,7 +72,7 @@ playback:
 
 Check:
 
-1. Plex webhook URL includes the correct token.
+1. Jellyfin webhook URL includes the correct token.
 2. Rehydrator has a row for the movie.
 3. TMDb ID is present.
 4. State is `ARCHIVED`.

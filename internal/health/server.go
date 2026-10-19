@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -23,6 +22,9 @@ type Server struct {
 }
 
 type APIOptions struct {
+	CaptureGrab                  func(context.Context, model.GrabSource) error
+	RecordGrabImport             func(context.Context, model.GrabSource, string) error
+	JellyfinItemPath             func(context.Context, string) (string, error)
 	Addr                         string
 	Repo                         *db.Repo
 	Tenant                       string
@@ -37,10 +39,9 @@ type APIOptions struct {
 	RefreshRadarr                func(context.Context) error
 	RefreshSonarr                func(context.Context) error
 	RefreshSeerr                 func(context.Context) error
-	PlexRefreshMovie             func(context.Context, int) error
-	PlexRefreshSeries            func(context.Context, int) error
-	PlexRefreshMovies            func(context.Context) error
-	PlexRefreshTV                func(context.Context) error
+	JellyfinRefreshMovie         func(context.Context, int) error
+	JellyfinRefreshSeries        func(context.Context, int) error
+	JellyfinRefreshLibrary       func(context.Context) error
 	SelfHealRun                  func(context.Context) error
 	DependencyChecks             map[string]func(context.Context) error
 }
@@ -75,12 +76,15 @@ func newServer(opt APIOptions) *Server {
 
 	if opt.Repo != nil {
 		api := &apiHandler{
+			captureGrab:                  opt.CaptureGrab,
+			recordGrabImport:             opt.RecordGrabImport,
 			repo:                         opt.Repo,
 			tenant:                       opt.Tenant,
 			token:                        opt.Token,
 			requireToken:                 opt.RequireToken,
 			metricsEnabled:               opt.MetricsEnabled,
 			playbackEnabled:              opt.PlaybackEnabled,
+			jellyfinItemPath:             opt.JellyfinItemPath,
 			playbackRearmOnPlay:          opt.PlaybackRearmOnPlay,
 			playbackCooldown:             opt.PlaybackCooldown,
 			playbackIgnoredTitles:        normalizeIgnoredList(opt.PlaybackIgnoredTitles),
@@ -88,10 +92,9 @@ func newServer(opt APIOptions) *Server {
 			refreshRadarr:                opt.RefreshRadarr,
 			refreshSonarr:                opt.RefreshSonarr,
 			refreshSeerr:                 opt.RefreshSeerr,
-			plexRefreshMovie:             opt.PlexRefreshMovie,
-			plexRefreshSeries:            opt.PlexRefreshSeries,
-			plexRefreshMovies:            opt.PlexRefreshMovies,
-			plexRefreshTV:                opt.PlexRefreshTV,
+			jellyfinRefreshMovie:         opt.JellyfinRefreshMovie,
+			jellyfinRefreshSeries:        opt.JellyfinRefreshSeries,
+			jellyfinRefreshLibrary:       opt.JellyfinRefreshLibrary,
 			selfHealRun:                  opt.SelfHealRun,
 			dependencyChecks:             opt.DependencyChecks,
 		}
@@ -113,16 +116,15 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/refresh/radarr", api.handleRefreshRadarr)
 		mux.HandleFunc("/api/refresh/sonarr", api.handleRefreshSonarr)
 		mux.HandleFunc("/api/refresh/seerr", api.handleRefreshSeerr)
-		mux.HandleFunc("/api/plex/refreshes/recent", api.handlePlexRefreshesRecent)
-		mux.HandleFunc("/api/plex/refresh/movie/", api.handlePlexRefreshMovie)
-		mux.HandleFunc("/api/plex/refresh/series/", api.handlePlexRefreshSeries)
-		mux.HandleFunc("/api/plex/refresh/movies", api.handlePlexRefreshMovies)
-		mux.HandleFunc("/api/plex/refresh/tv", api.handlePlexRefreshTV)
+		mux.HandleFunc("/api/jellyfin/refreshes/recent", api.handleJellyfinRefreshesRecent)
+		mux.HandleFunc("/api/jellyfin/refresh/movie/", api.handleJellyfinRefreshMovie)
+		mux.HandleFunc("/api/jellyfin/refresh/series/", api.handleJellyfinRefreshSeries)
+		mux.HandleFunc("/api/jellyfin/refresh/library", api.handleJellyfinRefreshLibrary)
 		mux.HandleFunc("/api/radarr/webhook", api.handleRadarrWebhook)
 		mux.HandleFunc("/api/sonarr/webhook", api.handleSonarrWebhook)
 		mux.HandleFunc("/api/seerr/webhook", api.handleSeerrWebhook)
 		mux.HandleFunc("/api/seerr/rearm", api.handleSeerrRearm)
-		mux.HandleFunc("/api/playback/plex", api.handlePlexPlayback)
+		mux.HandleFunc("/api/playback/jellyfin", api.handleJellyfinPlayback)
 		mux.HandleFunc("/api/playback/event", api.handleGenericPlayback)
 		mux.HandleFunc("/api/state", api.handleState)
 	}
@@ -154,6 +156,9 @@ func (s *Server) Run(ctx context.Context) {
 }
 
 type apiHandler struct {
+	captureGrab                  func(context.Context, model.GrabSource) error
+	recordGrabImport             func(context.Context, model.GrabSource, string) error
+	jellyfinItemPath             func(context.Context, string) (string, error)
 	repo                         *db.Repo
 	tenant                       string
 	token                        string
@@ -167,10 +172,9 @@ type apiHandler struct {
 	refreshRadarr                func(context.Context) error
 	refreshSonarr                func(context.Context) error
 	refreshSeerr                 func(context.Context) error
-	plexRefreshMovie             func(context.Context, int) error
-	plexRefreshSeries            func(context.Context, int) error
-	plexRefreshMovies            func(context.Context) error
-	plexRefreshTV                func(context.Context) error
+	jellyfinRefreshMovie         func(context.Context, int) error
+	jellyfinRefreshSeries        func(context.Context, int) error
+	jellyfinRefreshLibrary       func(context.Context) error
 	selfHealRun                  func(context.Context) error
 	dependencyChecks             map[string]func(context.Context) error
 	sonarrWebhookMu              sync.Mutex
@@ -206,8 +210,8 @@ func (h *apiHandler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "rehydrator_playback_ignored_total{tenant=%q} %d\n", h.tenant, snap.PlaybackIgnoredTotal)
 	_, _ = fmt.Fprintf(w, "rehydrator_waiting_visibility_items{tenant=%q} %d\n", h.tenant, snap.WaitingVisibilityItems)
 	_, _ = fmt.Fprintf(w, "rehydrator_provider_cooldowns_active{tenant=%q} %d\n", h.tenant, snap.ProviderCooldownsActive)
-	_, _ = fmt.Fprintf(w, "rehydrator_plex_refresh_total{tenant=%q} %d\n", h.tenant, snap.PlexRefreshTotal)
-	_, _ = fmt.Fprintf(w, "rehydrator_plex_refresh_failures_total{tenant=%q} %d\n", h.tenant, snap.PlexRefreshFailures)
+	_, _ = fmt.Fprintf(w, "rehydrator_jellyfin_refresh_total{tenant=%q} %d\n", h.tenant, snap.JellyfinRefreshTotal)
+	_, _ = fmt.Fprintf(w, "rehydrator_jellyfin_refresh_failures_total{tenant=%q} %d\n", h.tenant, snap.JellyfinRefreshFailures)
 	_, _ = fmt.Fprintf(w, "rehydrator_events_total{tenant=%q} %d\n", h.tenant, snap.EventsTotal)
 	states := make([]string, 0, len(snap.ItemsByState))
 	for state := range snap.ItemsByState {
@@ -622,7 +626,7 @@ func (h *apiHandler) handleRefreshSeerr(w http.ResponseWriter, r *http.Request) 
 	h.handleRefresh(w, r, "seerr", h.refreshSeerr)
 }
 
-func (h *apiHandler) handlePlexRefreshesRecent(w http.ResponseWriter, r *http.Request) {
+func (h *apiHandler) handleJellyfinRefreshesRecent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
 		return
@@ -637,7 +641,7 @@ func (h *apiHandler) handlePlexRefreshesRecent(w http.ResponseWriter, r *http.Re
 			limit = n
 		}
 	}
-	items, err := h.repo.RecentPlexRefreshes(r.Context(), h.tenant, limit)
+	items, err := h.repo.RecentJellyfinRefreshes(r.Context(), h.tenant, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -645,7 +649,7 @@ func (h *apiHandler) handlePlexRefreshesRecent(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": h.tenant, "count": len(items), "refreshes": items})
 }
 
-func (h *apiHandler) handlePlexRefreshMovie(w http.ResponseWriter, r *http.Request) {
+func (h *apiHandler) handleJellyfinRefreshMovie(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
 		return
@@ -654,22 +658,22 @@ func (h *apiHandler) handlePlexRefreshMovie(w http.ResponseWriter, r *http.Reque
 		unauthorized(w)
 		return
 	}
-	if h.plexRefreshMovie == nil {
-		http.Error(w, "plex refresh is not configured", http.StatusNotFound)
+	if h.jellyfinRefreshMovie == nil {
+		http.Error(w, "jellyfin refresh is not configured", http.StatusNotFound)
 		return
 	}
-	arrID, ok := idFromPath(w, r.URL.Path, "/api/plex/refresh/movie/")
+	arrID, ok := idFromPath(w, r.URL.Path, "/api/jellyfin/refresh/movie/")
 	if !ok {
 		return
 	}
-	if err := h.plexRefreshMovie(r.Context(), arrID); err != nil {
+	if err := h.jellyfinRefreshMovie(r.Context(), arrID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "plex_movie", "arr_id": arrID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "jellyfin_movie", "arr_id": arrID})
 }
 
-func (h *apiHandler) handlePlexRefreshSeries(w http.ResponseWriter, r *http.Request) {
+func (h *apiHandler) handleJellyfinRefreshSeries(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
 		return
@@ -678,22 +682,22 @@ func (h *apiHandler) handlePlexRefreshSeries(w http.ResponseWriter, r *http.Requ
 		unauthorized(w)
 		return
 	}
-	if h.plexRefreshSeries == nil {
-		http.Error(w, "plex series refresh is not configured", http.StatusNotFound)
+	if h.jellyfinRefreshSeries == nil {
+		http.Error(w, "jellyfin series refresh is not configured", http.StatusNotFound)
 		return
 	}
-	episodeFileID, ok := idFromPath(w, r.URL.Path, "/api/plex/refresh/series/")
+	episodeFileID, ok := idFromPath(w, r.URL.Path, "/api/jellyfin/refresh/series/")
 	if !ok {
 		return
 	}
-	if err := h.plexRefreshSeries(r.Context(), episodeFileID); err != nil {
+	if err := h.jellyfinRefreshSeries(r.Context(), episodeFileID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "plex_series", "episode_file_id": episodeFileID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "jellyfin_series", "episode_file_id": episodeFileID})
 }
 
-func (h *apiHandler) handlePlexRefreshTV(w http.ResponseWriter, r *http.Request) {
+func (h *apiHandler) handleJellyfinRefreshLibrary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
 		return
@@ -702,35 +706,15 @@ func (h *apiHandler) handlePlexRefreshTV(w http.ResponseWriter, r *http.Request)
 		unauthorized(w)
 		return
 	}
-	if h.plexRefreshTV == nil {
-		http.Error(w, "plex tv refresh is not configured", http.StatusNotFound)
+	if h.jellyfinRefreshLibrary == nil {
+		http.Error(w, "jellyfin refresh is not configured", http.StatusNotFound)
 		return
 	}
-	if err := h.plexRefreshTV(r.Context()); err != nil {
+	if err := h.jellyfinRefreshLibrary(r.Context()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "plex_tv"})
-}
-
-func (h *apiHandler) handlePlexRefreshMovies(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
-	if !h.authorized(r) {
-		unauthorized(w)
-		return
-	}
-	if h.plexRefreshMovies == nil {
-		http.Error(w, "plex refresh is not configured", http.StatusNotFound)
-		return
-	}
-	if err := h.plexRefreshMovies(r.Context()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "plex_movies"})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "refresh": "jellyfin_library"})
 }
 
 func (h *apiHandler) handleRefresh(w http.ResponseWriter, r *http.Request, name string, fn func(context.Context) error) {
@@ -791,6 +775,19 @@ func (h *apiHandler) handleRadarrWebhook(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "test_acknowledged", "event": eventType})
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(eventType), "Grab") {
+		h.handleGrabCapture(w, r, "radarr", payload)
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(eventType), "Download") && h.recordGrabImport != nil {
+		g := grabFromWebhook(h.tenant, "radarr", payload)
+		file := firstMap(payload, "movieFile")
+		if err := h.recordGrabImport(r.Context(), g, firstString(file, "path")); err != nil {
+			http.Error(w, "could not record import source association", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	if isDeleteEvent(eventType, "MovieDelete", "MovieDeleted") {
 		if arrID <= 0 {
 			http.Error(w, "movie delete webhook missing movie id", http.StatusBadRequest)
@@ -871,6 +868,19 @@ func (h *apiHandler) handleSonarrWebhook(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "action": "test_acknowledged", "event": eventType})
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(eventType), "Grab") {
+		h.handleGrabCapture(w, r, "sonarr", payload)
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(eventType), "Download") && h.recordGrabImport != nil {
+		g := grabFromWebhook(h.tenant, "sonarr", payload)
+		file := firstMap(payload, "episodeFile")
+		if err := h.recordGrabImport(r.Context(), g, firstString(file, "path")); err != nil {
+			http.Error(w, "could not record import source association", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	if isDeleteEvent(eventType, "SeriesDelete", "SeriesDeleted") {
 		if seriesID <= 0 {
 			http.Error(w, "series delete webhook missing series id", http.StatusBadRequest)
@@ -1064,29 +1074,6 @@ func (h *apiHandler) handleGenericPlayback(w http.ResponseWriter, r *http.Reques
 	h.handlePlaybackIntent(w, r, intent)
 }
 
-func (h *apiHandler) handlePlexPlayback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
-	if !h.authorized(r) {
-		unauthorized(w)
-		return
-	}
-	if !h.playbackEnabled {
-		http.Error(w, "playback rearm is disabled", http.StatusNotFound)
-		return
-	}
-
-	payload, raw, err := decodePlexWebhookPayload(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	intent := playbackIntentFromPlex(payload, raw)
-	h.handlePlaybackIntent(w, r, intent)
-}
-
 func (h *apiHandler) handlePlaybackIntent(w http.ResponseWriter, r *http.Request, intent playbackIntent) {
 	if intent.MediaType == "" {
 		intent.MediaType = model.MediaMovie
@@ -1225,35 +1212,6 @@ func (h *apiHandler) findPlaybackMatch(ctx context.Context, intent playbackInten
 	return model.MediaCacheState{}, false, nil
 }
 
-func decodePlexWebhookPayload(r *http.Request) (map[string]any, string, error) {
-	defer r.Body.Close()
-	ct := strings.ToLower(r.Header.Get("Content-Type"))
-	if strings.Contains(ct, "multipart/form-data") {
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			return nil, "", fmt.Errorf("invalid plex multipart payload: %w", err)
-		}
-		raw := r.FormValue("payload")
-		if strings.TrimSpace(raw) == "" {
-			return nil, "", fmt.Errorf("plex webhook missing payload field")
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			return nil, raw, fmt.Errorf("invalid plex payload json: %w", err)
-		}
-		return payload, raw, nil
-	}
-	rawBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, "", err
-	}
-	raw := string(rawBytes)
-	var payload map[string]any
-	if err := json.Unmarshal(rawBytes, &payload); err != nil {
-		return nil, raw, fmt.Errorf("invalid json payload: %w", err)
-	}
-	return payload, raw, nil
-}
-
 func playbackIntentFromGeneric(payload map[string]any) playbackIntent {
 	mediaType := normalizeMediaType(firstString(payload, "media_type", "mediaType", "type"))
 	media := firstMap(payload, "media", "metadata", "Metadata")
@@ -1274,18 +1232,6 @@ func playbackIntentFromGeneric(payload map[string]any) playbackIntent {
 	return playbackIntent{Source: firstNonEmptyString(firstString(payload, "source"), "generic"), Event: firstString(payload, "event", "type"), MediaType: mediaType, ArrID: arrID, TMDBID: tmdbID, Path: path, Title: title, User: firstString(payload, "user", "username"), RawJSON: string(raw)}
 }
 
-func playbackIntentFromPlex(payload map[string]any, raw string) playbackIntent {
-	meta := firstMap(payload, "Metadata", "metadata")
-	mediaType := normalizeMediaType(firstString(meta, "type", "mediaType"))
-	tmdbID := firstInt(meta, "tmdbId", "tmdbID")
-	if tmdbID == 0 {
-		tmdbID = extractExternalID(meta, "tmdb")
-	}
-	player := firstMap(payload, "Player", "player")
-	account := firstMap(payload, "Account", "account")
-	return playbackIntent{Source: "plex", Event: firstString(payload, "event"), MediaType: mediaType, TMDBID: tmdbID, Path: firstPlexFilePath(meta), Title: firstString(meta, "title"), User: firstNonEmptyString(firstString(account, "title", "username"), firstString(player, "title")), RawJSON: raw}
-}
-
 func (i playbackIntent) eventJSON() string {
 	payload := map[string]any{"source": i.Source, "event": i.Event, "media_type": i.MediaType, "arr_id": i.ArrID, "tmdb_id": i.TMDBID, "path": i.Path, "title": i.Title, "user": i.User}
 	if i.RawJSON != "" {
@@ -1301,93 +1247,6 @@ func isPlaybackStartLike(event string) bool {
 		return true
 	}
 	return strings.Contains(e, "play") || strings.Contains(e, "resume") || strings.Contains(e, "start")
-}
-
-func firstPlexFilePath(meta map[string]any) string {
-	for _, mediaKey := range []string{"Media", "media"} {
-		v, ok := meta[mediaKey]
-		if !ok || v == nil {
-			continue
-		}
-		items, ok := v.([]any)
-		if !ok {
-			continue
-		}
-		for _, mediaItem := range items {
-			mediaMap, ok := mediaItem.(map[string]any)
-			if !ok {
-				continue
-			}
-			for _, partKey := range []string{"Part", "part"} {
-				pv, ok := mediaMap[partKey]
-				if !ok || pv == nil {
-					continue
-				}
-				parts, ok := pv.([]any)
-				if !ok {
-					continue
-				}
-				for _, partItem := range parts {
-					partMap, ok := partItem.(map[string]any)
-					if !ok {
-						continue
-					}
-					if file := firstString(partMap, "file", "path"); file != "" {
-						return file
-					}
-				}
-			}
-		}
-	}
-	return firstString(meta, "file", "path")
-}
-
-func extractExternalID(m map[string]any, provider string) int {
-	provider = strings.ToLower(provider)
-	for _, key := range []string{"Guid", "guid", "guids", "GUID"} {
-		v, ok := m[key]
-		if !ok || v == nil {
-			continue
-		}
-		switch t := v.(type) {
-		case string:
-			if id := parseProviderID(t, provider); id > 0 {
-				return id
-			}
-		case []any:
-			for _, one := range t {
-				switch g := one.(type) {
-				case map[string]any:
-					if id := parseProviderID(firstString(g, "id", "guid"), provider); id > 0 {
-						return id
-					}
-				case string:
-					if id := parseProviderID(g, provider); id > 0 {
-						return id
-					}
-				}
-			}
-		}
-	}
-	return 0
-}
-
-func parseProviderID(s string, provider string) int {
-	s = strings.ToLower(strings.TrimSpace(s))
-	for _, prefix := range []string{provider + "://", provider + ":", "com.plexapp.agents.themoviedb://"} {
-		if strings.Contains(s, prefix) {
-			idx := strings.Index(s, prefix)
-			rest := s[idx+len(prefix):]
-			rest = strings.TrimLeft(rest, "/")
-			parts := strings.FieldsFunc(rest, func(r rune) bool { return r < '0' || r > '9' })
-			if len(parts) > 0 {
-				if id, err := strconv.Atoi(parts[0]); err == nil {
-					return id
-				}
-			}
-		}
-	}
-	return 0
 }
 
 func (h *apiHandler) handleState(w http.ResponseWriter, r *http.Request) {
@@ -1597,3 +1456,58 @@ func methodNotAllowed(w http.ResponseWriter) {
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 func unauthorized(w http.ResponseWriter) { http.Error(w, "unauthorized", http.StatusUnauthorized) }
+
+// handleJellyfinPlayback accepts the Webhook plugin's Send All Properties JSON.
+func (h *apiHandler) handleJellyfinPlayback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !h.authorized(r) {
+		unauthorized(w)
+		return
+	}
+	if !h.playbackEnabled {
+		http.Error(w, "playback rearm is disabled", http.StatusNotFound)
+		return
+	}
+	defer r.Body.Close()
+	var payload map[string]any
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&payload); err != nil {
+		http.Error(w, "invalid json payload", http.StatusBadRequest)
+		return
+	}
+	intent := playbackIntentFromJellyfin(payload)
+	// PlaybackStop and PlaybackProgress must never trigger rearming.
+	if !strings.EqualFold(intent.Event, "PlaybackStart") {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "ignored": true, "event": intent.Event})
+		return
+	}
+	if intent.Path == "" && h.jellyfinItemPath != nil && (intent.MediaType == model.MediaMovie || intent.MediaType == model.MediaSeries) {
+		path, err := h.jellyfinItemPath(r.Context(), firstString(payload, "ItemId"))
+		if err != nil {
+			http.Error(w, "Jellyfin item lookup failed", http.StatusBadGateway)
+			return
+		}
+		intent.Path = path
+	}
+	if intent.MediaType == model.MediaSeries && intent.Path == "" {
+		http.Error(w, "episode playback requires Path or ItemPath; Jellyfin item IDs are not Sonarr IDs", http.StatusBadRequest)
+		return
+	}
+	h.handlePlaybackIntent(w, r, intent)
+}
+
+func playbackIntentFromJellyfin(payload map[string]any) playbackIntent {
+	raw, _ := json.Marshal(payload)
+	mediaType := model.MediaType("unsupported")
+	switch strings.ToLower(firstString(payload, "ItemType")) {
+	case "movie":
+		mediaType = model.MediaMovie
+	case "episode":
+		mediaType = model.MediaSeries
+	}
+	return playbackIntent{Source: "jellyfin", Event: firstString(payload, "NotificationType"), MediaType: mediaType,
+		TMDBID: firstInt(payload, "Provider_tmdb"), Path: firstString(payload, "Path", "ItemPath"),
+		Title: firstString(payload, "Name"), User: firstString(payload, "NotificationUsername", "Username"), RawJSON: string(raw)}
+}

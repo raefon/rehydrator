@@ -1,6 +1,6 @@
 # Radarr webhook seeding
 
-Use Radarr Connect to notify Rehydrator as soon as Radarr adds or imports a movie. This avoids waiting for the periodic Radarr poller and makes Plex playback intent tracking more reliable.
+Use Radarr Connect to notify Rehydrator as soon as Radarr adds or imports a movie. This avoids waiting for the periodic Radarr poller and makes Jellyfin playback intent tracking more reliable.
 
 ## URL
 

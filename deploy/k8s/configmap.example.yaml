@@ -17,13 +17,13 @@ data:
         interval_seconds: 120
         limit: 100
     decypharr:
+      api_token: ""
       url: http://tenet-decypharr:8282
       radarr_category: radarr
       sonarr_category: sonarr
-      # Add/re-arm goes through Decypharr. Prune/delete goes directly to TorBox.
-      delete_files_on_prune: true
-    torbox:
-      api_key: ""
+      # Decypharr owns initial imports, rearm, and provider removal.
+      delete_files_on_prune: false
+    rearm_backend: decypharr
     csi_path: /storage/media
     health_addr: ":8080"
     api:
@@ -36,31 +36,27 @@ data:
       enabled: true
       rearm_on_play: true
       cooldown_seconds: 60
-      ignored_titles:
-        - rehydrator-preroll
-      ignored_title_contains:
-        - preroll
-        - pre-roll
-    plex:
+      ignored_titles: []
+      ignored_title_contains: []
+    jellyfin:
       enabled: false
-      url: http://tenet-plex:32400
-      token: ""
-      movie_section_id: 0
-      tv_section_id: 0
+      url: http://jellyfin:8096
+      api_key: ""
       refresh_after_rearm: true
       refresh_after_visibility: true
       refresh_after_import: true
       refresh_after_prune: false
       refresh_delay_seconds: 45
-      refresh_timeout_seconds: 20
+      timeout_seconds: 20
       max_refreshes_per_run: 5
       refresh_dedupe_minutes: 10
+
     self_heal:
       enabled: true
       interval_seconds: 300
-      plex_refresh_available: true
-      plex_recent_hours: 24
-      max_plex_refreshes_per_run: 5
+      refresh_available: true
+      recent_hours: 24
+      max_refreshes_per_run: 5
     radarr_sync:
       enabled: true
       interval_seconds: 60

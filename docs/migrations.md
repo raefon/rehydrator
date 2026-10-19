@@ -1,95 +1,17 @@
 # Migrations
 
-Migrations live in `migrations/` and can be run manually or applied automatically when `db_auto_migrate: true` is enabled.
+Use `db_auto_migrate: true` to initialize or update the current schema. For manual
+upgrades, apply the applicable SQL files in `migrations/` in order, including:
 
-## Manual run
+- `020_saved_torrent_sources.sql` — preserved original source payloads.
+- `020_arr_deletion_reconciliation.sql` — Arr inventory deletion audit.
+- `021_grab_source_capture.sql` — pre-import capture jobs and exact import associations.
+- `022_explicit_torrent_source_kinds.sql` — exclusive source kinds and legacy recovery.
+- `023_jellyfin_refresh_audit.sql` — independent Jellyfin refresh history, dedupe, metrics, and self-heal.
 
-```bash
-psql "$POSTGRES_URL" -f migrations/001_init.sql
-psql "$POSTGRES_URL" -f migrations/002_decypharr.sql
-psql "$POSTGRES_URL" -f migrations/003_torbox_prune.sql
-psql "$POSTGRES_URL" -f migrations/004_v9_behavior_notes.sql
-psql "$POSTGRES_URL" -f migrations/005_radarr_sync_api.sql
-psql "$POSTGRES_URL" -f migrations/006_seerr_sync.sql
-psql "$POSTGRES_URL" -f migrations/007_hardening_api_metrics.sql
-psql "$POSTGRES_URL" -f migrations/008_playback_intent.sql
-psql "$POSTGRES_URL" -f migrations/009_event_driven_seed.sql
-psql "$POSTGRES_URL" -f migrations/010_playback_ignore_preroll.sql
-psql "$POSTGRES_URL" -f migrations/011_visibility_provider_cooldown.sql
-psql "$POSTGRES_URL" -f migrations/012_plex_library_hygiene.sql
-psql "$POSTGRES_URL" -f migrations/013_ops_self_heal.sql
-psql "$POSTGRES_URL" -f migrations/014_metadata_guardrails.sql
-psql "$POSTGRES_URL" -f migrations/015_plex_refresh_dedupe.sql
-```
+Historical migrations remain unchanged for existing installations. Their old
+media-server audit tables are retained as historical data and are not queried by
+the current application. Jellyfin refresh history starts in its own table, so
+historical scans cannot suppress Jellyfin refreshes.
 
-## Migration summary
-
-| Migration | Purpose |
-|---|---|
-| `001_init.sql` | Initial media state/events schema |
-| `002_decypharr.sql` | Decypharr metadata support |
-| `003_torbox_prune.sql` | TorBox prune fields |
-| `004_v9_behavior_notes.sql` | Behavior compatibility notes |
-| `005_radarr_sync_api.sql` | Radarr sync/API fields |
-| `006_seerr_sync.sql` | Seerr request tracking |
-| `007_hardening_api_metrics.sql` | API and retry hardening |
-| `008_playback_intent.sql` | Playback intent counters |
-| `009_event_driven_seed.sql` | Placeholder and unmatched playback support |
-| `010_playback_ignore_preroll.sql` | Pre-roll ignore audit |
-| `011_visibility_provider_cooldown.sql` | WAITING_FOR_VISIBILITY and cooldowns |
-| `012_plex_library_hygiene.sql` | Plex refresh audit |
-| `013_ops_self_heal.sql` | Ops endpoints and self-heal indexes |
-| `014_metadata_guardrails.sql` | Guardrails for placeholders and empty-path rows |
-| `015_plex_refresh_dedupe.sql` | No-op notes for v0.3.4 refresh dedupe |
-
-## 013_ops_self_heal.sql
-
-Adds indexes for the v0.3.2 operational endpoints and the self-healing Plex refresh worker that was originally planned for v0.3.3.
-
-Run after upgrading to the combined v0.3.2 package:
-
-```bash
-psql "$POSTGRES_URL" -f migrations/013_ops_self_heal.sql
-```
-
-## 014_metadata_guardrails.sql
-
-Adds indexes and cleanup helpers for placeholder/empty-path safety. This prevents `REQUESTED` rows from entering re-arm, retry, or self-heal paths before Radarr import metadata exists.
-
-## 015_plex_refresh_dedupe.sql
-
-No schema change. v0.3.4 uses the existing `media_cache_plex_refreshes` table for dedupe/skipped audit rows and adds `GET /api/plex/refreshes/recent`.
-
-## 016_sonarr_episode_file_support.sql
-
-Adds Sonarr episode-file columns to `media_cache_state`:
-
-```text
-series_id, episode_id, episode_file_id, season_number, episode_number,
-series_title, episode_title, cache_group_key
-```
-
-Also adds indexes for series episode-file lookup, path playback matching, and future cache grouping.
-
-## 017_sonarr_seed_fix.sql
-
-No schema change. Documents the v0.4.1 Sonarr seed fix:
-
-- `/api/v3/episodeFile?seriesId=<id>` is now authoritative for imported Sonarr files.
-- `/api/v3/episode?seriesId=<id>` is used only to enrich labels/season/episode metadata.
-- Sonarr sync has a lock/debounce so webhook bursts do not create overlapping seed runs.
-
-
-- `018_initial_import_plex_refresh.sql` - no-op note for v0.4.3; targeted Plex refresh on first import/promote/path-change is a code change only.
-
-## 018_initial_import_plex_refresh.sql
-
-No schema change. Documents the v0.4.2 initial import refresh behavior:
-
-- Radarr seed sync queues targeted Plex refreshes on first import, REQUESTED -> AVAILABLE, path fill, rename, or upgrade.
-- Sonarr seed sync queues targeted Plex refreshes on first episode-file import, REQUESTED/incomplete -> AVAILABLE, path fill, rename, or upgrade.
-- Refreshes use existing Plex target-path dedupe.
-
-## 019_plex_dedupe_sql_fix.sql
-
-No schema change. Documents the v0.4.3 Plex refresh dedupe SQL fix. The dedupe DB query now passes a concrete `timestamptz` cutoff and avoids the PostgreSQL parameter type error from the previous query shape.
+No migration is applied to your running database by editing the repository.

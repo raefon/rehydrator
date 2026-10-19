@@ -15,16 +15,20 @@ cache_grace_hours: 24
 max_retries: 10
 concurrent_workers: 2
 
+# Decypharr owns rearm and provider deletion. Configure TorBox inside Decypharr.
+rearm_backend: decypharr
+
 # Re-arm / prune safety limits
 prune_enabled: true
 rearm_enabled: true
 max_prunes_per_run: 5
 max_rearms_per_run: 3
 
-# Provider delete is authoritative. CSI/rclone may show stale paths after prune.
+# Provider deletion runs asynchronously through Decypharr. CSI/rclone may show stale paths.
 prune_wait_for_csi_gone: false
 
-# ARCHIVED + rearm_requested should queue Decypharr even if CSI still shows the path.
+# Archived content must be restored even if CSI still shows a stale path.
+# Keep false to avoid treating stale mount entries as restored media.
 rearm_short_circuit_if_csi_visible: false
 
 # Compatibility alias. Keep aligned with csi.visibility_timeout_seconds.
@@ -46,16 +50,14 @@ sonarr_sync:
   enabled: false
   interval_seconds: 60
 
-torbox:
-  api_key: "<TORBOX_API_KEY>"
-
 decypharr:
   url: http://tenet-decypharr.tenet-nofear101.svc.cluster.local:8282
   username: ""
   password: ""
+  api_token: "" # Decypharr Settings > Auth; required for authenticated provider pruning
   radarr_category: radarr
   sonarr_category: sonarr
-  delete_files_on_prune: true
+  delete_files_on_prune: false # Legacy setting; prune always preserves local links.
 
 seerr:
   url: http://tenet-seerr.tenet-nofear101.svc.cluster.local:5055
@@ -77,11 +79,8 @@ playback:
   enabled: true
   rearm_on_play: true
   cooldown_seconds: 60
-  ignored_titles:
-    - rehydrator-preroll
-  ignored_title_contains:
-    - preroll
-    - pre-roll
+  ignored_titles: []
+  ignored_title_contains: []
 
 csi:
   visibility_timeout_seconds: 900
@@ -98,26 +97,22 @@ rclone_rc:
   refresh_after_rearm: false
   timeout_seconds: 10
 
-plex:
-  enabled: true
-  url: http://tenet-plex.tenet-nofear101.svc.cluster.local:32400
-  token: "<PLEX_TOKEN>"
-  # Set this to your Plex movie library section ID. Leave 0 to auto-discover first movie library.
-  movie_section_id: 0
-  # Set this to your Plex TV/show library section ID for Sonarr/series refreshes. Leave 0 to auto-discover first TV library.
-  tv_section_id: 0
+jellyfin:
+  enabled: false
+  url: http://jellyfin:8096
+  api_key: ""
   refresh_after_rearm: true
   refresh_after_visibility: true
   refresh_after_import: true
   refresh_after_prune: false
   refresh_delay_seconds: 45
-  refresh_timeout_seconds: 20
+  timeout_seconds: 20
   max_refreshes_per_run: 5
   refresh_dedupe_minutes: 10
 
 self_heal:
   enabled: true
   interval_seconds: 300
-  plex_refresh_available: true
-  plex_recent_hours: 24
-  max_plex_refreshes_per_run: 5
+  refresh_available: true
+  recent_hours: 24
+  max_refreshes_per_run: 5

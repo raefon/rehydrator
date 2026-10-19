@@ -35,13 +35,13 @@ decypharr:
   url: http://decypharr:8282
   username: ""
   password: ""
+  api_token: ""
   radarr_category: radarr
   sonarr_category: sonarr
-  delete_files_on_prune: true
+  delete_files_on_prune: false # Legacy option; provider pruning preserves local links.
 
-# Re-arm/add goes through Decypharr. Prune/delete goes directly to TorBox by infohash.
-torbox:
-  api_key: ""
+# Decypharr owns all provider add/delete operations.
+rearm_backend: decypharr
 
 csi_path: /storage/media
 health_addr: ":8080"
@@ -58,38 +58,29 @@ playback:
   enabled: true
   rearm_on_play: true
   cooldown_seconds: 60
-  # Plex pre-roll itself emits media.play webhooks. Ignore it so it does not
-  # create unmatched playback rows or trigger immediate Radarr refreshes.
-  ignored_titles:
-    - rehydrator-preroll
-  ignored_title_contains:
-    - preroll
-    - pre-roll
+  # Optional playback title exclusions.
+  ignored_titles: []
+  ignored_title_contains: []
 
-plex:
+jellyfin:
   enabled: false
-  url: http://plex:32400
-  token: ""
-  movie_section_id: 0
-  tv_section_id: 0
+  url: http://jellyfin:8096
+  api_key: ""
   refresh_after_rearm: true
   refresh_after_visibility: true
-  # Queue targeted Plex refreshes when Radarr/Sonarr first imports or promotes media.
   refresh_after_import: true
   refresh_after_prune: false
   refresh_delay_seconds: 45
-  refresh_timeout_seconds: 20
+  timeout_seconds: 20
   max_refreshes_per_run: 5
-  # Dedupe/cooldown for duplicate automated Plex folder refreshes.
-  # Prevents rehydration_complete and self_heal_available from refreshing the same folder at the same time.
   refresh_dedupe_minutes: 10
 
 self_heal:
   enabled: true
   interval_seconds: 300
-  plex_refresh_available: true
-  plex_recent_hours: 24
-  max_plex_refreshes_per_run: 5
+  refresh_available: true
+  recent_hours: 24
+  max_refreshes_per_run: 5
 
 radarr_sync:
   enabled: true
@@ -104,9 +95,9 @@ rearm_enabled: true
 max_prunes_per_run: 25
 max_rearms_per_run: 25
 
-# Prune success is provider-authoritative by default. CSI/rclone can show stale paths.
+# Prune records Decypharr acceptance; provider deletion is asynchronous. CSI/rclone can show stale paths.
 prune_wait_for_csi_gone: false
-# When false, ARCHIVED+rearm_requested always queues Decypharr even if CSI still shows the library path.
+# Leave false: stale mount entries must not bypass rearm.
 rearm_short_circuit_if_csi_visible: false
 
 reconcile_interval_seconds: 30
@@ -130,7 +121,24 @@ concurrent_workers: 2
 db_auto_migrate: false
 `
 
+type JellyfinConfig struct {
+	MaxRefreshesPerRun     int    `yaml:"max_refreshes_per_run"`
+	RefreshDedupeMinutes   int    `yaml:"refresh_dedupe_minutes"`
+	Enabled                bool   `yaml:"enabled"`
+	URL                    string `yaml:"url"`
+	APIKey                 string `yaml:"api_key"`
+	RefreshAfterRearm      bool   `yaml:"refresh_after_rearm"`
+	RefreshAfterVisibility bool   `yaml:"refresh_after_visibility"`
+	RefreshAfterImport     bool   `yaml:"refresh_after_import"`
+	RefreshAfterPrune      bool   `yaml:"refresh_after_prune"`
+	RefreshDelaySeconds    int    `yaml:"refresh_delay_seconds"`
+	TimeoutSeconds         int    `yaml:"timeout_seconds"`
+}
+
 type Config struct {
+	RearmBackend string
+	Jellyfin     JellyfinConfig
+
 	PostgresURL string
 	Tenant      string
 
@@ -150,13 +158,11 @@ type Config struct {
 
 	DecypharrURL                string
 	DecypharrUsername           string
+	DecypharrAPIToken           string
 	DecypharrPassword           string
 	DecypharrRadarrCategory     string
 	DecypharrSonarrCategory     string
 	DecypharrDeleteFilesOnPrune bool
-
-	// Used for prune/dehydrate. Re-arm/add still goes through Decypharr.
-	TorBoxAPIKey string
 
 	CSIPath    string
 	HealthAddr string
@@ -174,27 +180,12 @@ type Config struct {
 	PlaybackIgnoredTitles        []string
 	PlaybackIgnoredTitleContains []string
 
-	PlexEnabled                bool
-	PlexURL                    string
-	PlexToken                  string
-	PlexMovieSectionID         int
-	PlexTVSectionID            int
-	PlexRefreshAfterRearm      bool
-	PlexRefreshAfterVisibility bool
-	PlexRefreshAfterImport     bool
-	PlexRefreshAfterPrune      bool
-	PlexRefreshDelaySeconds    int
-	PlexRefreshTimeoutSeconds  int
-	PlexMaxRefreshesPerRun     int
-	PlexRefreshDedupeMinutes   int
-	PlexRefreshDedupe          time.Duration
-
-	SelfHealEnabled                bool
-	SelfHealIntervalSeconds        int
-	SelfHealPlexRefreshAvailable   bool
-	SelfHealPlexRecentHours        int
-	SelfHealMaxPlexRefreshesPerRun int
-	SelfHealInterval               time.Duration
+	SelfHealEnabled            bool
+	SelfHealIntervalSeconds    int
+	SelfHealRefreshAvailable   bool
+	SelfHealRecentHours        int
+	SelfHealMaxRefreshesPerRun int
+	SelfHealInterval           time.Duration
 
 	RadarrSyncEnabled         bool
 	RadarrSyncIntervalSeconds int
@@ -245,8 +236,10 @@ type Config struct {
 }
 
 type fileConfig struct {
-	PostgresURL string `yaml:"postgres_url"`
-	Tenant      string `yaml:"tenant"`
+	RearmBackend string         `yaml:"rearm_backend"`
+	Jellyfin     JellyfinConfig `yaml:"jellyfin"`
+	PostgresURL  string         `yaml:"postgres_url"`
+	Tenant       string         `yaml:"tenant"`
 
 	Radarr struct {
 		URL    string `yaml:"url"`
@@ -272,14 +265,11 @@ type fileConfig struct {
 		URL                string `yaml:"url"`
 		Username           string `yaml:"username"`
 		Password           string `yaml:"password"`
+		APIToken           string `yaml:"api_token"`
 		RadarrCategory     string `yaml:"radarr_category"`
 		SonarrCategory     string `yaml:"sonarr_category"`
 		DeleteFilesOnPrune *bool  `yaml:"delete_files_on_prune"`
 	} `yaml:"decypharr"`
-
-	TorBox struct {
-		APIKey string `yaml:"api_key"`
-	} `yaml:"torbox"`
 
 	CSIPath    string `yaml:"csi_path"`
 	HealthAddr string `yaml:"health_addr"`
@@ -302,28 +292,12 @@ type fileConfig struct {
 		IgnoredTitleContains []string `yaml:"ignored_title_contains"`
 	} `yaml:"playback"`
 
-	Plex struct {
-		Enabled                *bool  `yaml:"enabled"`
-		URL                    string `yaml:"url"`
-		Token                  string `yaml:"token"`
-		MovieSectionID         int    `yaml:"movie_section_id"`
-		TVSectionID            int    `yaml:"tv_section_id"`
-		RefreshAfterRearm      *bool  `yaml:"refresh_after_rearm"`
-		RefreshAfterVisibility *bool  `yaml:"refresh_after_visibility"`
-		RefreshAfterImport     *bool  `yaml:"refresh_after_import"`
-		RefreshAfterPrune      *bool  `yaml:"refresh_after_prune"`
-		RefreshDelaySeconds    int    `yaml:"refresh_delay_seconds"`
-		RefreshTimeoutSeconds  int    `yaml:"refresh_timeout_seconds"`
-		MaxRefreshesPerRun     int    `yaml:"max_refreshes_per_run"`
-		RefreshDedupeMinutes   int    `yaml:"refresh_dedupe_minutes"`
-	} `yaml:"plex"`
-
 	SelfHeal struct {
-		Enabled                *bool `yaml:"enabled"`
-		IntervalSeconds        int   `yaml:"interval_seconds"`
-		PlexRefreshAvailable   *bool `yaml:"plex_refresh_available"`
-		PlexRecentHours        int   `yaml:"plex_recent_hours"`
-		MaxPlexRefreshesPerRun int   `yaml:"max_plex_refreshes_per_run"`
+		Enabled            *bool `yaml:"enabled"`
+		IntervalSeconds    int   `yaml:"interval_seconds"`
+		RefreshAvailable   *bool `yaml:"refresh_available"`
+		RecentHours        int   `yaml:"recent_hours"`
+		MaxRefreshesPerRun int   `yaml:"max_refreshes_per_run"`
 	} `yaml:"self_heal"`
 
 	RadarrSync struct {
@@ -398,62 +372,55 @@ func Load(configPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
-		RadarrURL:                      "http://radarr:7878",
-		SonarrURL:                      "http://sonarr:8989",
-		DecypharrURL:                   "http://decypharr:8282",
-		DecypharrRadarrCategory:        "radarr",
-		DecypharrSonarrCategory:        "sonarr",
-		DecypharrDeleteFilesOnPrune:    true,
-		CSIPath:                        "/storage/media",
-		HealthAddr:                     ":8080",
-		APIEnabled:                     true,
-		APIRequireToken:                true,
-		MetricsEnabled:                 true,
-		PlaybackEnabled:                true,
-		PlaybackRearmOnPlay:            true,
-		PlaybackCooldownSeconds:        60,
-		PlaybackIgnoredTitles:          []string{"rehydrator-preroll"},
-		PlaybackIgnoredTitleContains:   []string{"preroll", "pre-roll"},
-		PlexURL:                        "http://plex:32400",
-		PlexRefreshAfterRearm:          true,
-		PlexRefreshAfterVisibility:     true,
-		PlexRefreshAfterImport:         true,
-		PlexRefreshAfterPrune:          false,
-		PlexRefreshDelaySeconds:        45,
-		PlexRefreshTimeoutSeconds:      20,
-		PlexMaxRefreshesPerRun:         5,
-		PlexRefreshDedupeMinutes:       10,
-		SelfHealEnabled:                true,
-		SelfHealIntervalSeconds:        300,
-		SelfHealPlexRefreshAvailable:   true,
-		SelfHealPlexRecentHours:        24,
-		SelfHealMaxPlexRefreshesPerRun: 5,
-		RadarrSyncEnabled:              true,
-		RadarrSyncIntervalSeconds:      60,
-		SonarrSyncEnabled:              false,
-		SonarrSyncIntervalSeconds:      60,
-		SeerrURL:                       "http://seerr:5055",
-		SeerrSyncEnabled:               false,
-		SeerrSyncIntervalSeconds:       120,
-		SeerrSyncLimit:                 100,
-		PruneEnabled:                   true,
-		RearmEnabled:                   true,
-		MaxPrunesPerRun:                5,
-		MaxRearmsPerRun:                3,
-		PruneWaitForCSIGone:            false,
-		RearmShortCircuitIfCSIVisible:  false,
-		ReconcileIntervalSeconds:       30,
-		CSIWaitSeconds:                 900,
-		CSIVisibilityTimeoutSeconds:    900,
-		CSIVisibilityPollSeconds:       10,
-		CSIVisibilityRetrySeconds:      60,
-		ProviderCooldownSeconds:        900,
-		RcloneRCURL:                    "http://localhost:5572",
-		RcloneRCTimeoutSeconds:         10,
-		CacheGraceHours:                24,
-		MaxRetries:                     10,
-		ConcurrentWorkers:              2,
-		DBAutoMigrate:                  false,
+		RearmBackend:                  "decypharr",
+		Jellyfin:                      JellyfinConfig{MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
+		RadarrURL:                     "http://radarr:7878",
+		SonarrURL:                     "http://sonarr:8989",
+		DecypharrURL:                  "http://decypharr:8282",
+		DecypharrRadarrCategory:       "radarr",
+		DecypharrSonarrCategory:       "sonarr",
+		DecypharrDeleteFilesOnPrune:   false,
+		CSIPath:                       "/storage/media",
+		HealthAddr:                    ":8080",
+		APIEnabled:                    true,
+		APIRequireToken:               true,
+		MetricsEnabled:                true,
+		PlaybackEnabled:               true,
+		PlaybackRearmOnPlay:           true,
+		PlaybackCooldownSeconds:       60,
+		PlaybackIgnoredTitles:         nil,
+		PlaybackIgnoredTitleContains:  nil,
+		SelfHealEnabled:               true,
+		SelfHealIntervalSeconds:       300,
+		SelfHealRefreshAvailable:      true,
+		SelfHealRecentHours:           24,
+		SelfHealMaxRefreshesPerRun:    5,
+		RadarrSyncEnabled:             true,
+		RadarrSyncIntervalSeconds:     60,
+		SonarrSyncEnabled:             false,
+		SonarrSyncIntervalSeconds:     60,
+		SeerrURL:                      "http://seerr:5055",
+		SeerrSyncEnabled:              false,
+		SeerrSyncIntervalSeconds:      120,
+		SeerrSyncLimit:                100,
+		PruneEnabled:                  true,
+		RearmEnabled:                  true,
+		MaxPrunesPerRun:               5,
+		MaxRearmsPerRun:               3,
+		PruneWaitForCSIGone:           false,
+		RearmShortCircuitIfCSIVisible: false,
+		ReconcileIntervalSeconds:      30,
+		CSIWaitSeconds:                900,
+		CSIVisibilityTimeoutSeconds:   900,
+		CSIVisibilityPollSeconds:      10,
+		CSIVisibilityRetrySeconds:     60,
+		ProviderCooldownSeconds:       900,
+		RcloneRCURL:                   "http://localhost:5572",
+		RcloneRCTimeoutSeconds:        10,
+		CacheGraceHours:               24,
+		MaxRetries:                    10,
+		ConcurrentWorkers:             2,
+		DBAutoMigrate:                 false,
 	}
 }
 
@@ -479,7 +446,7 @@ func ensureConfigFile(path string) (bool, error) {
 }
 
 func readFileConfig(path string) (fileConfig, error) {
-	var fc fileConfig
+	fc := fileConfig{Jellyfin: defaults().Jellyfin}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -494,6 +461,11 @@ func readFileConfig(path string) (fileConfig, error) {
 }
 
 func applyFileConfig(cfg *Config, fc fileConfig) {
+	cfg.DecypharrAPIToken = fc.Decypharr.APIToken
+	if fc.RearmBackend != "" {
+		cfg.RearmBackend = strings.ToLower(strings.TrimSpace(fc.RearmBackend))
+	}
+	cfg.Jellyfin = fc.Jellyfin
 	if fc.PostgresURL != "" {
 		cfg.PostgresURL = fc.PostgresURL
 	}
@@ -550,10 +522,6 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 		cfg.DecypharrDeleteFilesOnPrune = *fc.Decypharr.DeleteFilesOnPrune
 	}
 
-	if fc.TorBox.APIKey != "" {
-		cfg.TorBoxAPIKey = fc.TorBox.APIKey
-	}
-
 	if fc.CSIPath != "" {
 		cfg.CSIPath = fc.CSIPath
 	}
@@ -587,59 +555,20 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if len(fc.Playback.IgnoredTitleContains) > 0 {
 		cfg.PlaybackIgnoredTitleContains = normalizeStringList(fc.Playback.IgnoredTitleContains)
 	}
-	if fc.Plex.Enabled != nil {
-		cfg.PlexEnabled = *fc.Plex.Enabled
-	}
-	if fc.Plex.URL != "" {
-		cfg.PlexURL = fc.Plex.URL
-	}
-	if fc.Plex.Token != "" {
-		cfg.PlexToken = fc.Plex.Token
-	}
-	if fc.Plex.MovieSectionID > 0 {
-		cfg.PlexMovieSectionID = fc.Plex.MovieSectionID
-	}
-	if fc.Plex.TVSectionID > 0 {
-		cfg.PlexTVSectionID = fc.Plex.TVSectionID
-	}
-	if fc.Plex.RefreshAfterRearm != nil {
-		cfg.PlexRefreshAfterRearm = *fc.Plex.RefreshAfterRearm
-	}
-	if fc.Plex.RefreshAfterVisibility != nil {
-		cfg.PlexRefreshAfterVisibility = *fc.Plex.RefreshAfterVisibility
-	}
-	if fc.Plex.RefreshAfterImport != nil {
-		cfg.PlexRefreshAfterImport = *fc.Plex.RefreshAfterImport
-	}
-	if fc.Plex.RefreshAfterPrune != nil {
-		cfg.PlexRefreshAfterPrune = *fc.Plex.RefreshAfterPrune
-	}
-	if fc.Plex.RefreshDelaySeconds > 0 {
-		cfg.PlexRefreshDelaySeconds = fc.Plex.RefreshDelaySeconds
-	}
-	if fc.Plex.RefreshTimeoutSeconds > 0 {
-		cfg.PlexRefreshTimeoutSeconds = fc.Plex.RefreshTimeoutSeconds
-	}
-	if fc.Plex.MaxRefreshesPerRun > 0 {
-		cfg.PlexMaxRefreshesPerRun = fc.Plex.MaxRefreshesPerRun
-	}
-	if fc.Plex.RefreshDedupeMinutes > 0 {
-		cfg.PlexRefreshDedupeMinutes = fc.Plex.RefreshDedupeMinutes
-	}
 	if fc.SelfHeal.Enabled != nil {
 		cfg.SelfHealEnabled = *fc.SelfHeal.Enabled
 	}
 	if fc.SelfHeal.IntervalSeconds > 0 {
 		cfg.SelfHealIntervalSeconds = fc.SelfHeal.IntervalSeconds
 	}
-	if fc.SelfHeal.PlexRefreshAvailable != nil {
-		cfg.SelfHealPlexRefreshAvailable = *fc.SelfHeal.PlexRefreshAvailable
+	if fc.SelfHeal.RefreshAvailable != nil {
+		cfg.SelfHealRefreshAvailable = *fc.SelfHeal.RefreshAvailable
 	}
-	if fc.SelfHeal.PlexRecentHours > 0 {
-		cfg.SelfHealPlexRecentHours = fc.SelfHeal.PlexRecentHours
+	if fc.SelfHeal.RecentHours > 0 {
+		cfg.SelfHealRecentHours = fc.SelfHeal.RecentHours
 	}
-	if fc.SelfHeal.MaxPlexRefreshesPerRun > 0 {
-		cfg.SelfHealMaxPlexRefreshesPerRun = fc.SelfHeal.MaxPlexRefreshesPerRun
+	if fc.SelfHeal.MaxRefreshesPerRun > 0 {
+		cfg.SelfHealMaxRefreshesPerRun = fc.SelfHeal.MaxRefreshesPerRun
 	}
 	if fc.RadarrSync.Enabled != nil {
 		cfg.RadarrSyncEnabled = *fc.RadarrSync.Enabled
@@ -717,6 +646,19 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 }
 
 func applyEnvOverrides(cfg *Config) {
+	cfg.Jellyfin.MaxRefreshesPerRun = getenvInt("JELLYFIN_MAX_REFRESHES_PER_RUN", cfg.Jellyfin.MaxRefreshesPerRun)
+	cfg.Jellyfin.RefreshDedupeMinutes = getenvInt("JELLYFIN_REFRESH_DEDUPE_MINUTES", cfg.Jellyfin.RefreshDedupeMinutes)
+	cfg.RearmBackend = strings.ToLower(strings.TrimSpace(getenv("REARM_BACKEND", cfg.RearmBackend)))
+	cfg.Jellyfin.Enabled = getenvBool("JELLYFIN_ENABLED", cfg.Jellyfin.Enabled)
+	cfg.Jellyfin.URL = getenv("JELLYFIN_URL", cfg.Jellyfin.URL)
+	cfg.Jellyfin.APIKey = getenv("JELLYFIN_API_KEY", cfg.Jellyfin.APIKey)
+	cfg.Jellyfin.RefreshAfterRearm = getenvBool("JELLYFIN_REFRESH_AFTER_REARM", cfg.Jellyfin.RefreshAfterRearm)
+	cfg.Jellyfin.RefreshAfterVisibility = getenvBool("JELLYFIN_REFRESH_AFTER_VISIBILITY", cfg.Jellyfin.RefreshAfterVisibility)
+	cfg.Jellyfin.RefreshAfterImport = getenvBool("JELLYFIN_REFRESH_AFTER_IMPORT", cfg.Jellyfin.RefreshAfterImport)
+	cfg.Jellyfin.RefreshAfterPrune = getenvBool("JELLYFIN_REFRESH_AFTER_PRUNE", cfg.Jellyfin.RefreshAfterPrune)
+	cfg.Jellyfin.RefreshDelaySeconds = getenvInt("JELLYFIN_REFRESH_DELAY_SECONDS", cfg.Jellyfin.RefreshDelaySeconds)
+	cfg.Jellyfin.TimeoutSeconds = getenvInt("JELLYFIN_TIMEOUT_SECONDS", cfg.Jellyfin.TimeoutSeconds)
+
 	cfg.PostgresURL = getenv("POSTGRES_URL", cfg.PostgresURL)
 	cfg.Tenant = getenv("TENANT", getenv("TENANT_NAME", cfg.Tenant))
 
@@ -732,14 +674,13 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.SeerrSyncIntervalSeconds = getenvInt("SEERR_SYNC_INTERVAL_SECONDS", cfg.SeerrSyncIntervalSeconds)
 	cfg.SeerrSyncLimit = getenvInt("SEERR_SYNC_LIMIT", cfg.SeerrSyncLimit)
 
+	cfg.DecypharrAPIToken = getenv("DECYPHARR_API_TOKEN", cfg.DecypharrAPIToken)
 	cfg.DecypharrURL = getenv("DECYPHARR_URL", cfg.DecypharrURL)
 	cfg.DecypharrUsername = getenv("DECYPHARR_USERNAME", cfg.DecypharrUsername)
 	cfg.DecypharrPassword = getenv("DECYPHARR_PASSWORD", cfg.DecypharrPassword)
 	cfg.DecypharrRadarrCategory = getenv("DECYPHARR_RADARR_CATEGORY", cfg.DecypharrRadarrCategory)
 	cfg.DecypharrSonarrCategory = getenv("DECYPHARR_SONARR_CATEGORY", cfg.DecypharrSonarrCategory)
 	cfg.DecypharrDeleteFilesOnPrune = getenvBool("DECYPHARR_DELETE_FILES_ON_PRUNE", cfg.DecypharrDeleteFilesOnPrune)
-
-	cfg.TorBoxAPIKey = getenv("TORBOX_API_KEY", cfg.TorBoxAPIKey)
 
 	cfg.CSIPath = getenv("CSI_PATH", cfg.CSIPath)
 	cfg.HealthAddr = getenv("HEALTH_ADDR", cfg.HealthAddr)
@@ -752,24 +693,11 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.PlaybackCooldownSeconds = getenvInt("PLAYBACK_COOLDOWN_SECONDS", cfg.PlaybackCooldownSeconds)
 	cfg.PlaybackIgnoredTitles = getenvCSV("PLAYBACK_IGNORED_TITLES", cfg.PlaybackIgnoredTitles)
 	cfg.PlaybackIgnoredTitleContains = getenvCSV("PLAYBACK_IGNORED_TITLE_CONTAINS", cfg.PlaybackIgnoredTitleContains)
-	cfg.PlexEnabled = getenvBool("PLEX_ENABLED", cfg.PlexEnabled)
-	cfg.PlexURL = getenv("PLEX_URL", cfg.PlexURL)
-	cfg.PlexToken = getenv("PLEX_TOKEN", cfg.PlexToken)
-	cfg.PlexMovieSectionID = getenvInt("PLEX_MOVIE_SECTION_ID", cfg.PlexMovieSectionID)
-	cfg.PlexTVSectionID = getenvInt("PLEX_TV_SECTION_ID", cfg.PlexTVSectionID)
-	cfg.PlexRefreshAfterRearm = getenvBool("PLEX_REFRESH_AFTER_REARM", cfg.PlexRefreshAfterRearm)
-	cfg.PlexRefreshAfterVisibility = getenvBool("PLEX_REFRESH_AFTER_VISIBILITY", cfg.PlexRefreshAfterVisibility)
-	cfg.PlexRefreshAfterImport = getenvBool("PLEX_REFRESH_AFTER_IMPORT", cfg.PlexRefreshAfterImport)
-	cfg.PlexRefreshAfterPrune = getenvBool("PLEX_REFRESH_AFTER_PRUNE", cfg.PlexRefreshAfterPrune)
-	cfg.PlexRefreshDelaySeconds = getenvInt("PLEX_REFRESH_DELAY_SECONDS", cfg.PlexRefreshDelaySeconds)
-	cfg.PlexRefreshTimeoutSeconds = getenvInt("PLEX_REFRESH_TIMEOUT_SECONDS", cfg.PlexRefreshTimeoutSeconds)
-	cfg.PlexMaxRefreshesPerRun = getenvInt("PLEX_MAX_REFRESHES_PER_RUN", cfg.PlexMaxRefreshesPerRun)
-	cfg.PlexRefreshDedupeMinutes = getenvInt("PLEX_REFRESH_DEDUPE_MINUTES", cfg.PlexRefreshDedupeMinutes)
 	cfg.SelfHealEnabled = getenvBool("SELF_HEAL_ENABLED", cfg.SelfHealEnabled)
 	cfg.SelfHealIntervalSeconds = getenvInt("SELF_HEAL_INTERVAL_SECONDS", cfg.SelfHealIntervalSeconds)
-	cfg.SelfHealPlexRefreshAvailable = getenvBool("SELF_HEAL_PLEX_REFRESH_AVAILABLE", cfg.SelfHealPlexRefreshAvailable)
-	cfg.SelfHealPlexRecentHours = getenvInt("SELF_HEAL_PLEX_RECENT_HOURS", cfg.SelfHealPlexRecentHours)
-	cfg.SelfHealMaxPlexRefreshesPerRun = getenvInt("SELF_HEAL_MAX_PLEX_REFRESHES_PER_RUN", cfg.SelfHealMaxPlexRefreshesPerRun)
+	cfg.SelfHealRefreshAvailable = getenvBool("SELF_HEAL_REFRESH_AVAILABLE", cfg.SelfHealRefreshAvailable)
+	cfg.SelfHealRecentHours = getenvInt("SELF_HEAL_RECENT_HOURS", cfg.SelfHealRecentHours)
+	cfg.SelfHealMaxRefreshesPerRun = getenvInt("SELF_HEAL_MAX_REFRESHES_PER_RUN", cfg.SelfHealMaxRefreshesPerRun)
 	cfg.RadarrSyncEnabled = getenvBool("RADARR_SYNC_ENABLED", cfg.RadarrSyncEnabled)
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
 	cfg.SonarrSyncEnabled = getenvBool("SONARR_SYNC_ENABLED", cfg.SonarrSyncEnabled)
@@ -829,21 +757,27 @@ func hydrateDurations(cfg *Config) {
 	if cfg.SelfHealIntervalSeconds <= 0 {
 		cfg.SelfHealIntervalSeconds = 300
 	}
-	if cfg.SelfHealPlexRecentHours <= 0 {
-		cfg.SelfHealPlexRecentHours = 24
+	if cfg.SelfHealRecentHours <= 0 {
+		cfg.SelfHealRecentHours = 24
 	}
-	if cfg.SelfHealMaxPlexRefreshesPerRun <= 0 {
-		cfg.SelfHealMaxPlexRefreshesPerRun = 5
+	if cfg.SelfHealMaxRefreshesPerRun <= 0 {
+		cfg.SelfHealMaxRefreshesPerRun = 5
 	}
-	if cfg.PlexRefreshDedupeMinutes <= 0 {
-		cfg.PlexRefreshDedupeMinutes = 10
-	}
-	cfg.PlexRefreshDedupe = time.Duration(cfg.PlexRefreshDedupeMinutes) * time.Minute
 	cfg.PlaybackCooldown = time.Duration(cfg.PlaybackCooldownSeconds) * time.Second
 	cfg.SelfHealInterval = time.Duration(cfg.SelfHealIntervalSeconds) * time.Second
 }
 
 func validate(cfg Config) error {
+	if cfg.RearmBackend != "decypharr" {
+		return errors.New("rearm_backend must be decypharr; configure TorBox inside Decypharr")
+	}
+	if cfg.Jellyfin.Enabled && (strings.TrimSpace(cfg.Jellyfin.URL) == "" || strings.TrimSpace(cfg.Jellyfin.APIKey) == "") {
+		return errors.New("jellyfin.url and jellyfin.api_key are required when Jellyfin is enabled")
+	}
+	if cfg.Jellyfin.RefreshDelaySeconds < 0 || cfg.Jellyfin.TimeoutSeconds <= 0 {
+		return errors.New("jellyfin refresh_delay_seconds must be nonnegative and timeout_seconds must be positive")
+	}
+
 	if cfg.PostgresURL == "" {
 		return errors.New("POSTGRES_URL or postgres_url is required")
 	}
@@ -859,15 +793,13 @@ func validate(cfg Config) error {
 	if cfg.SeerrSyncEnabled && (cfg.SeerrURL == "" || cfg.SeerrAPIKey == "") {
 		return errors.New("SEERR_URL/SEERR_API_KEY or seerr.url/seerr.api_key are required when Seerr sync is enabled")
 	}
-	if cfg.DecypharrURL == "" {
+	if cfg.RearmBackend == "decypharr" && cfg.DecypharrURL == "" {
 		return errors.New("DECYPHARR_URL or decypharr.url is required")
 	}
-	if cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {
+	if cfg.RearmBackend == "decypharr" && cfg.DecypharrAPIToken == "" && cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {
 		return errors.New("DECYPHARR_PASSWORD is required when DECYPHARR_USERNAME is set")
 	}
-	if cfg.TorBoxAPIKey == "" {
-		return errors.New("TORBOX_API_KEY or torbox.api_key is required for prune/delete")
-	}
+
 	if cfg.CSIPath == "" {
 		return errors.New("CSI_PATH or csi_path is required")
 	}
@@ -879,9 +811,6 @@ func validate(cfg Config) error {
 	}
 	if cfg.RcloneRCEnabled && cfg.RcloneRCURL == "" {
 		return errors.New("RCLONE_RC_URL or rclone_rc.url is required when RCLONE_RC_ENABLED=true")
-	}
-	if cfg.PlexEnabled && (cfg.PlexURL == "" || cfg.PlexToken == "") {
-		return errors.New("PLEX_URL/PLEX_TOKEN or plex.url/plex.token are required when Plex hygiene is enabled")
 	}
 	return nil
 }

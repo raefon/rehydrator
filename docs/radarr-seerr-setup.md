@@ -34,7 +34,7 @@ Example file format:
 {Movie CleanTitle} ({Release Year}) [tmdb-{TmdbId}] - {Quality Full}-{Release Group}
 ```
 
-Avoid bulk-renaming a large existing library until the system is stable, because path churn can trigger Plex and CSI-rclone noise.
+Avoid bulk-renaming a large existing library until the system is stable, because path churn can trigger Jellyfin and CSI-rclone noise.
 
 ## Seerr
 

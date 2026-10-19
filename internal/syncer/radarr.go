@@ -10,10 +10,12 @@ import (
 
 	"github.com/raefon/rehydrator/internal/arr"
 	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
 type RadarrSyncer struct {
+	decypharr  *decypharr.Client
 	repo       *db.Repo
 	radarr     *arr.Client
 	tenant     string
@@ -24,6 +26,7 @@ type RadarrSyncer struct {
 }
 
 type RadarrOptions struct {
+	Decypharr  *decypharr.Client
 	Repo       *db.Repo
 	Radarr     *arr.Client
 	Tenant     string
@@ -44,6 +47,7 @@ func NewRadarr(opt RadarrOptions) *RadarrSyncer {
 		opt.Category = "radarr"
 	}
 	return &RadarrSyncer{
+		decypharr:  opt.Decypharr,
 		repo:       opt.Repo,
 		radarr:     opt.Radarr,
 		tenant:     opt.Tenant,
@@ -118,15 +122,30 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 		seeded++
 
 		if refreshReason != "" && s.onImported != nil {
-			slog.Info("radarr imported item queued for Plex refresh", "movie_id", movie.ID, "title", movie.Title, "reason", refreshReason, "path", path)
+			slog.Info("radarr imported item queued for Jellyfin refresh", "movie_id", movie.ID, "title", movie.Title, "reason", refreshReason, "path", path)
 			s.onImported(ctx, item, refreshReason)
 		}
 
+		if err := s.repo.LinkGrabSourceForItem(ctx, s.tenant, item.ID); err != nil {
+			slog.Warn("could not link captured grab source", "error", err)
+		} else {
+			if refreshed, found, err := s.repo.GetState(ctx, s.tenant, item.MediaType, item.ArrID); err == nil && found {
+				item = refreshed
+			}
+		}
 		if item.InfoHash == nil || *item.InfoHash == "" {
 			torrent, err := s.radarr.LatestGrabbedTorrent(ctx, movie.ID, model.MediaMovie)
 			if err != nil {
 				slog.Warn("radarr seed sync could not resolve torrent metadata", "movie_id", movie.ID, "title", movie.Title, "error", err)
 				continue
+			}
+			if s.decypharr != nil {
+				prepared, err := s.decypharr.PrepareTorrent(ctx, torrent)
+				if err != nil {
+					slog.Warn("could not preserve original torrent source; metadata capture will retry", "error", err)
+					continue
+				}
+				torrent = prepared
 			}
 			if err := s.repo.SaveTorrentMetadata(ctx, item.ID, torrent, s.category); err != nil {
 				slog.Warn("radarr seed sync failed to save torrent metadata", "movie_id", movie.ID, "title", movie.Title, "error", err)

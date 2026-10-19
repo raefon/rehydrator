@@ -309,36 +309,25 @@ func torrentMetadataFromGrabbed(arrName string, arrID int, mediaType model.Media
 		parseBTIH(rawDownloadURL),
 	))
 
-	magnet := ""
-	if infoHash != "" {
-		magnet = buildMinimalMagnet(infoHash)
-	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawGuid)), "magnet:") {
-		magnet = strings.TrimSpace(rawGuid)
-	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawDownloadURL)), "magnet:") {
-		magnet = strings.TrimSpace(rawDownloadURL)
-	}
-
-	if infoHash == "" && magnet == "" {
-		slog.Warn("grabbed arr history record has no usable torrent metadata",
-			"arr", arrName,
-			"media_type", mediaType,
-			"arr_id", arrID,
-			"history_id", r.ID,
-			"movie_id", r.MovieID,
-			"series_id", r.SeriesID,
-			"source_title", r.SourceTitle,
-			"download_id", r.DownloadID,
-			"data_keys", dataKeys(r.Data),
-		)
-		return model.TorrentMetadata{}, false
-	}
-
+	// A real download URL determines the source. A GUID magnet is used only
+	// when no download URL exists; a hash alone never becomes a magnet.
 	torrentURL := strings.TrimSpace(rawDownloadURL)
+	magnet := ""
+	kind := model.SourceUnresolved
 	if strings.HasPrefix(strings.ToLower(torrentURL), "magnet:") {
+		magnet = torrentURL
 		torrentURL = ""
+		kind = model.SourceMagnet
+	} else if torrentURL == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawGuid)), "magnet:") {
+		magnet = strings.TrimSpace(rawGuid)
+		kind = model.SourceMagnet
+	}
+	if torrentURL == "" && magnet == "" {
+		kind = model.SourceRecoveryRequired
 	}
 
 	return model.TorrentMetadata{
+		Kind:        kind,
 		InfoHash:    infoHash,
 		Magnet:      magnet,
 		TorrentURL:  torrentURL,
@@ -378,14 +367,6 @@ func cleanInfoHash(s string) string {
 		}
 	}
 	return s
-}
-
-func buildMinimalMagnet(infoHash string) string {
-	infoHash = cleanInfoHash(infoHash)
-	if infoHash == "" {
-		return ""
-	}
-	return "magnet:?xt=urn:btih:" + infoHash
 }
 
 func parseBTIH(magnet string) string {
@@ -667,4 +648,28 @@ func (c *Client) EpisodeFiles(ctx context.Context, seriesID int) ([]EpisodeFile,
 		return nil, err
 	}
 	return files, nil
+}
+
+// GrabbedTorrentByDownloadID resolves the exact grab, including when an older
+// imported release already exists for this movie or series.
+func (c *Client) GrabbedTorrentByDownloadID(ctx context.Context, ownerID int, mediaType model.MediaType, downloadID string) (model.TorrentMetadata, error) {
+	records, err := c.history(ctx, ownerID, mediaType)
+	if err != nil {
+		return model.TorrentMetadata{}, err
+	}
+	for _, r := range records {
+		if r.EventType != "grabbed" || !sameDownloadID(r.DownloadID, downloadID) {
+			continue
+		}
+		if mediaType == model.MediaMovie && r.MovieID != ownerID {
+			continue
+		}
+		if mediaType == model.MediaSeries && r.SeriesID != ownerID {
+			continue
+		}
+		if t, ok := torrentMetadataFromGrabbed(c.name, ownerID, mediaType, r); ok {
+			return t, nil
+		}
+	}
+	return model.TorrentMetadata{}, fmt.Errorf("matching grab history not yet available")
 }

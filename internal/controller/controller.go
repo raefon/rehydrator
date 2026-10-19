@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,71 +11,63 @@ import (
 	"time"
 
 	"github.com/raefon/rehydrator/internal/arr"
+	"github.com/raefon/rehydrator/internal/config"
 	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/decypharr"
+	"github.com/raefon/rehydrator/internal/jellyfin"
 	"github.com/raefon/rehydrator/internal/model"
-	"github.com/raefon/rehydrator/internal/plex"
 	"github.com/raefon/rehydrator/internal/rclone"
-	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 type Options struct {
-	Tenant    string
-	Repo      *db.Repo
-	Radarr    *arr.Client
-	Sonarr    *arr.Client
-	Decypharr *decypharr.Client
-	TorBox    *torbox.Client
-	CSI       *csi.Checker
-	Rclone    *rclone.Client
-	Plex      *plex.Client
+	Jellyfin       *jellyfin.Client
+	JellyfinConfig config.JellyfinConfig
+	Tenant         string
+	Repo           *db.Repo
+	Radarr         *arr.Client
+	Sonarr         *arr.Client
+	Decypharr      *decypharr.Client
+	CSI            *csi.Checker
+	Rclone         *rclone.Client
 
-	RadarrCategory                 string
-	SonarrCategory                 string
-	DeleteFilesOnPrune             bool
-	PruneEnabled                   bool
-	RearmEnabled                   bool
-	MaxPrunesPerRun                int
-	MaxRearmsPerRun                int
-	PruneWaitForCSIGone            bool
-	RearmShortCircuitIfVisible     bool
-	RcloneRefreshAfterRearm        bool
-	PlexEnabled                    bool
-	PlexRefreshAfterRearm          bool
-	PlexRefreshAfterVisibility     bool
-	PlexRefreshAfterPrune          bool
-	PlexRefreshAfterImport         bool
-	PlexRefreshDelay               time.Duration
-	PlexRefreshTimeout             time.Duration
-	PlexMaxRefreshesPerRun         int
-	PlexRefreshDedupe              time.Duration
-	SelfHealEnabled                bool
-	SelfHealInterval               time.Duration
-	SelfHealPlexRefreshAvailable   bool
-	SelfHealPlexRecentHours        int
-	SelfHealMaxPlexRefreshesPerRun int
-	Interval                       time.Duration
-	CSIWait                        time.Duration
-	CSIVisibilityTimeout           time.Duration
-	CSIVisibilityPoll              time.Duration
-	CSIVisibilityRetry             time.Duration
-	ProviderCooldown               time.Duration
-	CacheGrace                     time.Duration
-	MaxRetries                     int
-	ConcurrentWorkers              int
+	RadarrCategory             string
+	SonarrCategory             string
+	DeleteFilesOnPrune         bool
+	PruneEnabled               bool
+	RearmEnabled               bool
+	MaxPrunesPerRun            int
+	MaxRearmsPerRun            int
+	PruneWaitForCSIGone        bool
+	RearmShortCircuitIfVisible bool
+	RcloneRefreshAfterRearm    bool
+	SelfHealEnabled            bool
+	SelfHealInterval           time.Duration
+	SelfHealRefreshAvailable   bool
+	SelfHealRecentHours        int
+	SelfHealMaxRefreshesPerRun int
+	Interval                   time.Duration
+	CSIWait                    time.Duration
+	CSIVisibilityTimeout       time.Duration
+	CSIVisibilityPoll          time.Duration
+	CSIVisibilityRetry         time.Duration
+	ProviderCooldown           time.Duration
+	CacheGrace                 time.Duration
+	MaxRetries                 int
+	ConcurrentWorkers          int
 }
 
 type Controller struct {
-	opt                 Options
-	plexRefreshSem      chan struct{}
-	plexRefreshDedupeMu sync.Mutex
-	plexRefreshDedupe   map[string]time.Time
-	selfHealMu          sync.Mutex
-	lastSelfHeal        time.Time
+	opt                     Options
+	jellyfinRefreshSem      chan struct{}
+	jellyfinRefreshDedupeMu sync.Mutex
+	jellyfinRefreshDedupe   map[string]time.Time
+	selfHealMu              sync.Mutex
+	lastSelfHeal            time.Time
 }
 
 func New(opt Options) *Controller {
+
 	if opt.ConcurrentWorkers <= 0 {
 		opt.ConcurrentWorkers = 4
 	}
@@ -102,26 +95,26 @@ func New(opt Options) *Controller {
 	if opt.ProviderCooldown <= 0 {
 		opt.ProviderCooldown = 15 * time.Minute
 	}
-	if opt.PlexRefreshDelay <= 0 {
-		opt.PlexRefreshDelay = 45 * time.Second
+	if opt.JellyfinConfig.RefreshDelaySeconds < 0 {
+		opt.JellyfinConfig.RefreshDelaySeconds = 45
 	}
-	if opt.PlexRefreshTimeout <= 0 {
-		opt.PlexRefreshTimeout = 20 * time.Second
+	if opt.JellyfinConfig.TimeoutSeconds <= 0 {
+		opt.JellyfinConfig.TimeoutSeconds = 20
 	}
-	if opt.PlexMaxRefreshesPerRun <= 0 {
-		opt.PlexMaxRefreshesPerRun = 5
+	if opt.JellyfinConfig.MaxRefreshesPerRun <= 0 {
+		opt.JellyfinConfig.MaxRefreshesPerRun = 5
 	}
-	if opt.PlexRefreshDedupe <= 0 {
-		opt.PlexRefreshDedupe = 10 * time.Minute
+	if opt.JellyfinConfig.RefreshDedupeMinutes <= 0 {
+		opt.JellyfinConfig.RefreshDedupeMinutes = 10
 	}
 	if opt.SelfHealInterval <= 0 {
 		opt.SelfHealInterval = 5 * time.Minute
 	}
-	if opt.SelfHealPlexRecentHours <= 0 {
-		opt.SelfHealPlexRecentHours = 24
+	if opt.SelfHealRecentHours <= 0 {
+		opt.SelfHealRecentHours = 24
 	}
-	if opt.SelfHealMaxPlexRefreshesPerRun <= 0 {
-		opt.SelfHealMaxPlexRefreshesPerRun = 5
+	if opt.SelfHealMaxRefreshesPerRun <= 0 {
+		opt.SelfHealMaxRefreshesPerRun = 5
 	}
 	if opt.CacheGrace <= 0 {
 		opt.CacheGrace = 24 * time.Hour
@@ -136,15 +129,15 @@ func New(opt Options) *Controller {
 		opt.SonarrCategory = "sonarr"
 	}
 	return &Controller{
-		opt:               opt,
-		plexRefreshSem:    make(chan struct{}, opt.PlexMaxRefreshesPerRun),
-		plexRefreshDedupe: map[string]time.Time{},
+		opt:                   opt,
+		jellyfinRefreshSem:    make(chan struct{}, opt.JellyfinConfig.MaxRefreshesPerRun),
+		jellyfinRefreshDedupe: map[string]time.Time{},
 	}
 }
 
 func (c *Controller) Run(ctx context.Context) error {
 	if c.opt.SelfHealEnabled {
-		slog.Info("self-heal worker starting", "interval", c.opt.SelfHealInterval, "plex_refresh_available", c.opt.SelfHealPlexRefreshAvailable, "recent_hours", c.opt.SelfHealPlexRecentHours, "max_plex_refreshes_per_run", c.opt.SelfHealMaxPlexRefreshesPerRun)
+		slog.Info("self-heal worker starting", "interval", c.opt.SelfHealInterval, "jellyfin_refresh_available", c.opt.SelfHealRefreshAvailable, "recent_hours", c.opt.SelfHealRecentHours, "max_jellyfin_refreshes_per_run", c.opt.SelfHealMaxRefreshesPerRun)
 	}
 	ticker := time.NewTicker(c.opt.Interval)
 	defer ticker.Stop()
@@ -162,6 +155,7 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 func (c *Controller) reconcile(ctx context.Context) {
+	c.reconcileGrabSources(ctx)
 	if c.opt.RearmEnabled {
 		c.reconcileVisibility(ctx)
 		c.reconcileRearms(ctx)
@@ -196,7 +190,7 @@ func (c *Controller) reconcileVisibility(ctx context.Context) {
 }
 
 func (c *Controller) reconcilePrunes(ctx context.Context) {
-	if c.providerCoolingDown(ctx, "torbox") {
+	if c.providerCoolingDown(ctx, "decypharr") {
 		return
 	}
 	items, err := c.opt.Repo.PruneWorkItems(ctx, c.opt.MaxPrunesPerRun)
@@ -222,39 +216,39 @@ func (c *Controller) RunSelfHealOnce(ctx context.Context) {
 	c.runSelfHealPass(ctx, "manual")
 }
 
-// ScheduleInitialImportPlexRefresh queues a targeted Plex refresh for newly imported
+// ScheduleInitialImportJellyfinRefresh queues a targeted Jellyfin refresh for newly imported
 // or newly promoted media. It uses the same dedupe/cooldown path as rehydration and
-// self-heal refreshes, so seed loops and webhook bursts do not repeatedly scan Plex.
-func (c *Controller) ScheduleInitialImportPlexRefresh(ctx context.Context, item model.MediaCacheState, action string) {
+// self-heal refreshes, so seed loops and webhook bursts do not repeatedly scan Jellyfin.
+func (c *Controller) ScheduleInitialImportJellyfinRefresh(ctx context.Context, item model.MediaCacheState, action string) {
 	if strings.TrimSpace(action) == "" {
 		action = "initial_import_available"
 	}
-	c.schedulePlexRefresh(ctx, item, action, c.opt.PlexRefreshAfterImport)
+	c.scheduleJellyfinRefresh(ctx, item, action, c.opt.JellyfinConfig.RefreshAfterImport)
 }
 
 func (c *Controller) runSelfHealPass(ctx context.Context, source string) {
-	if !c.opt.SelfHealPlexRefreshAvailable {
-		slog.Info("self-heal skipped", "source", source, "reason", "plex_refresh_available_disabled")
+	if !c.opt.SelfHealRefreshAvailable {
+		slog.Info("self-heal skipped", "source", source, "reason", "jellyfin_refresh_available_disabled")
 		return
 	}
-	if !c.opt.PlexEnabled || c.opt.Plex == nil || !c.opt.Plex.Configured() || c.opt.Repo == nil {
-		slog.Info("self-heal skipped", "source", source, "reason", "plex_not_configured_or_repo_missing")
+	if !c.opt.JellyfinConfig.Enabled || c.opt.Jellyfin == nil || !c.opt.Jellyfin.Configured() || c.opt.Repo == nil {
+		slog.Info("self-heal skipped", "source", source, "reason", "jellyfin_not_configured_or_repo_missing")
 		return
 	}
 
-	recentSeconds := c.opt.SelfHealPlexRecentHours * 3600
-	items, err := c.opt.Repo.PlexSelfHealWorkItems(ctx, c.opt.Tenant, c.opt.SelfHealMaxPlexRefreshesPerRun, recentSeconds)
+	recentSeconds := c.opt.SelfHealRecentHours * 3600
+	items, err := c.opt.Repo.JellyfinSelfHealWorkItems(ctx, c.opt.Tenant, c.opt.SelfHealMaxRefreshesPerRun, recentSeconds)
 	if err != nil {
-		slog.Warn("self-heal Plex refresh lookup failed", "source", source, "error", err)
+		slog.Warn("self-heal Jellyfin refresh lookup failed", "source", source, "error", err)
 		return
 	}
 	if len(items) == 0 {
-		slog.Info("self-heal pass complete", "source", source, "scanned_recent_hours", c.opt.SelfHealPlexRecentHours, "plex_refresh_candidates", 0)
+		slog.Info("self-heal pass complete", "source", source, "scanned_recent_hours", c.opt.SelfHealRecentHours, "jellyfin_refresh_candidates", 0)
 		return
 	}
-	slog.Info("self-heal queued Plex refresh candidates", "source", source, "count", len(items), "recent_hours", c.opt.SelfHealPlexRecentHours)
+	slog.Info("self-heal queued Jellyfin refresh candidates", "source", source, "count", len(items), "recent_hours", c.opt.SelfHealRecentHours)
 	for _, item := range items {
-		c.schedulePlexRefresh(ctx, item, "self_heal_available", true)
+		c.scheduleJellyfinRefresh(ctx, item, "self_heal_available", true)
 	}
 }
 
@@ -308,23 +302,24 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	if pathVisible {
 		log.Info("CSI path is visible but rearm will still be queued because CSI visibility is not authoritative for archived cache state")
 	} else {
-		log.Info("file missing; rearming through Decypharr")
+		log.Info("file missing; rearming", "backend", "decypharr")
 	}
 	if err := c.opt.Repo.MarkRearming(ctx, item.ID); err != nil {
 		log.Error("failed to mark rearming", "error", err)
 		return
 	}
 
-	arrClient, err := c.arrClientFor(item.MediaType)
+	torrent, err := c.resolveRearmTorrent(ctx, item)
 	if err != nil {
-		c.fail(ctx, item, err)
-		return
-	}
+		if errors.Is(err, model.ErrSourceRecoveryRequired) {
+			_ = c.opt.Repo.MarkSourceRecoveryRequired(ctx, item.ID)
+			_ = c.opt.Repo.Event(ctx, item.ID, "source_recovery_required", `{}`)
+			log.Warn("rearm blocked; original source must be recovered", "error", err)
+			return
+		}
 
-	torrent, err := arrClient.LatestGrabbedTorrentForState(ctx, item)
-	if err != nil {
 		if isMissingHistoryError(err) {
-			reason := "missing Radarr grabbed/import history; keeping item REQUESTED until metadata is available"
+			reason := "missing stored metadata and Arr grabbed/import history; keeping item REQUESTED until metadata is available"
 			log.Info("rearm skipped; missing Arr history metadata", "reason", reason, "error", err)
 			_ = c.opt.Repo.MarkRequestedMetadataPending(ctx, item.ID, reason)
 			payload, _ := json.Marshal(map[string]string{"reason": reason, "error": err.Error()})
@@ -341,34 +336,29 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		return
 	}
 
-	submissionMode := "magnet"
-	if strings.TrimSpace(torrent.TorrentURL) != "" {
-		submissionMode = "torrent_file"
-	}
-	metaJSON, _ := json.Marshal(map[string]string{
-		"infohash":        torrent.InfoHash,
-		"source":          torrent.Source,
-		"source_title":    torrent.SourceTitle,
-		"download_id":     torrent.DownloadID,
-		"category":        category,
-		"client":          "decypharr",
-		"submission_mode": submissionMode,
-	})
+	metaJSON, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "source": torrent.Source, "source_kind": string(torrent.Kind), "source_title": torrent.SourceTitle, "client": "decypharr", "category": category})
 	_ = c.opt.Repo.Event(ctx, item.ID, "torrent_metadata_resolved", string(metaJSON))
-
+	hash := torrent.InfoHash
 	addResult, err := c.opt.Decypharr.AddTorrent(ctx, torrent, category)
 	if err != nil {
 		c.failProvider(ctx, item, "decypharr", err)
 		return
 	}
+	hash = firstNonEmpty(addResult.Hash, hash)
+	payload, _ := json.Marshal(map[string]string{"infohash": hash, "source_kind": string(torrent.Kind), "category": category, "client": "decypharr"})
+	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_readd_requested", string(payload))
 
-	addJSON, _ := json.Marshal(map[string]string{
-		"infohash":        addResult.Hash,
-		"category":        category,
-		"client":          "decypharr",
-		"submission_mode": submissionMode,
-	})
-	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_readd_requested", string(addJSON))
+	ready, err := c.rearmReady(ctx, item, hash)
+	if err != nil {
+		c.waitAfterStatusError(ctx, item, hash, err)
+		return
+	}
+
+	if !ready {
+		c.markWaitingVisibility(ctx, item, hash, "waiting for Decypharr download completion before mount visibility")
+		return
+	}
+
 	if ok, reason := itemHasUsablePath(item); !ok {
 		log.Info("visibility check skipped; metadata incomplete", "reason", reason)
 		_ = c.opt.Repo.MarkRequestedMetadataPending(ctx, item.ID, reason)
@@ -379,24 +369,24 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	c.refreshRclone(ctx, item.SymlinkPath)
 
 	if ok := c.waitForCSI(ctx, item.SymlinkPath); !ok {
-		c.markWaitingVisibility(ctx, item, firstNonEmpty(addResult.Hash, torrent.InfoHash), fmt.Sprintf("CSI path did not appear within %s after Decypharr add; waiting for mount visibility", c.opt.CSIVisibilityTimeout))
+		c.markWaitingVisibility(ctx, item, hash, fmt.Sprintf("CSI path did not appear within %s after provider add; waiting for mount visibility", c.opt.CSIVisibilityTimeout))
 		return
 	}
 
 	cachedUntil := time.Now().Add(c.opt.CacheGrace)
-	if err := c.opt.Repo.MarkAvailable(ctx, item.ID, firstNonEmpty(addResult.Hash, torrent.InfoHash), cachedUntil); err != nil {
+	if err := c.opt.Repo.MarkAvailable(ctx, item.ID, hash, cachedUntil); err != nil {
 		log.Error("failed to mark available", "error", err)
 		return
 	}
-	c.schedulePlexRefresh(ctx, item, "rehydration_complete", c.opt.PlexRefreshAfterRearm)
+	c.scheduleJellyfinRefresh(ctx, item, "rehydration_complete", c.opt.JellyfinConfig.RefreshAfterRearm)
 
 	finalJSON, _ := json.Marshal(map[string]string{
 		"cached_until": cachedUntil.Format(time.RFC3339),
-		"infohash":     firstNonEmpty(addResult.Hash, torrent.InfoHash),
+		"infohash":     hash,
 		"client":       "decypharr",
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "available", string(finalJSON))
-	log.Info("rehydration complete", "cached_until", cachedUntil, "infohash", firstNonEmpty(addResult.Hash, torrent.InfoHash))
+	log.Info("rehydration complete", "cached_until", cachedUntil, "infohash", hash)
 }
 
 func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState) {
@@ -409,72 +399,52 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 	)
 
 	infoHash := valueOrEmpty(item.InfoHash)
-	if infoHash == "" {
-		c.fail(ctx, item, fmt.Errorf("cannot prune: missing infohash"))
+
+	if c.opt.Decypharr == nil || !c.opt.Decypharr.Configured() {
+		c.fail(ctx, item, fmt.Errorf("cannot prune: missing Decypharr client"))
 		return
 	}
+	// Persist full metadata before clearing the queue or provider placement.
+	if err := c.captureRearmMetadata(ctx, item); err != nil {
+		if errors.Is(err, model.ErrSourceRecoveryRequired) {
+			_ = c.opt.Repo.MarkSourceRecoveryRequired(ctx, item.ID)
+			log.Warn("prune blocked; original source must be recovered", "error", err)
+			return
+		}
 
-	if c.opt.TorBox == nil || !c.opt.TorBox.Configured() {
-		c.fail(ctx, item, fmt.Errorf("cannot prune: missing TorBox API key/client"))
+		c.fail(ctx, item, err)
 		return
 	}
+	refreshed, found, err := c.opt.Repo.GetState(ctx, item.Tenant, item.MediaType, item.ArrID)
+	if err != nil {
+		c.fail(ctx, item, err)
+		return
+	}
+	if !found || valueOrEmpty(refreshed.InfoHash) == "" {
+		c.fail(ctx, item, fmt.Errorf("cannot prune: missing current release identity"))
+		return
+	}
+	item = refreshed
+	infoHash = valueOrEmpty(item.InfoHash)
 
-	log.Info("pruning expired TorBox torrent by infohash")
 	if err := c.opt.Repo.MarkPruning(ctx, item.ID); err != nil {
 		log.Error("failed to mark pruning", "error", err)
 		return
 	}
-
-	torrent, found, err := c.opt.TorBox.FindTorrentByHash(ctx, infoHash)
-	if err != nil {
-		c.failProvider(ctx, item, "torbox", err)
+	if err := c.opt.Decypharr.PruneTorrent(ctx, infoHash); err != nil {
+		c.failProvider(ctx, item, "decypharr", err)
 		return
 	}
-
-	if !found {
-		if c.opt.CSI.Exists(item.SymlinkPath) {
-			log.Warn("TorBox torrent not found but CSI path is still visible; marking archived because provider absence is authoritative")
-			_ = c.opt.Repo.Event(ctx, item.ID, "torbox_missing_csi_visible_ignored", `{}`)
-		} else {
-			log.Warn("TorBox torrent not found and CSI path is already gone; marking archived")
-			_ = c.opt.Repo.Event(ctx, item.ID, "torbox_missing_path_absent", `{}`)
-		}
-
-		if err := c.opt.Repo.MarkArchived(ctx, item.ID); err != nil {
-			log.Error("failed to mark archived", "error", err)
-		}
-		return
-	}
-
-	if torrent.ID == "" {
-		c.fail(ctx, item, fmt.Errorf("TorBox torrent matched infohash %s but had no torrent ID", infoHash))
-		return
-	}
-
-	if err := c.opt.Repo.SaveTorBoxTorrentID(ctx, item.ID, torrent.ID); err != nil {
-		log.Warn("failed to save TorBox torrent ID", "error", err, "torbox_torrent_id", torrent.ID)
-	}
-
-	if err := c.opt.TorBox.DeleteTorrent(ctx, torrent.ID); err != nil {
-		c.failProvider(ctx, item, "torbox", err)
-		return
-	}
-
-	deleteJSON, _ := json.Marshal(map[string]string{
-		"infohash":          infoHash,
-		"client":            "torbox",
-		"torbox_torrent_id": torrent.ID,
-		"name":              torrent.Name,
-	})
-	_ = c.opt.Repo.Event(ctx, item.ID, "torbox_deleted", string(deleteJSON))
+	payload, _ := json.Marshal(map[string]string{"infohash": infoHash, "client": "decypharr"})
+	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_prune_requested", string(payload))
 
 	if c.opt.PruneWaitForCSIGone {
 		if ok := c.waitForCSIGone(ctx, item.SymlinkPath); !ok {
-			log.Warn("TorBox torrent deleted but CSI path still existed after wait; marking archived because provider delete is authoritative", "wait", c.opt.CSIWait)
+			log.Warn("Decypharr accepted prune but CSI path is still visible", "wait", c.opt.CSIWait)
 			_ = c.opt.Repo.Event(ctx, item.ID, "csi_path_still_visible_after_prune", `{}`)
 		}
 	} else if c.opt.CSI.Exists(item.SymlinkPath) {
-		log.Info("CSI path still visible after TorBox delete; marking archived because prune_wait_for_csi_gone=false")
+		log.Info("CSI path still visible after Decypharr prune request; prune_wait_for_csi_gone=false")
 		_ = c.opt.Repo.Event(ctx, item.ID, "csi_path_visible_ignored_after_prune", `{}`)
 	}
 
@@ -482,10 +452,10 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 		log.Error("failed to mark archived", "error", err)
 		return
 	}
-	c.schedulePlexRefresh(ctx, item, "prune_archived", c.opt.PlexRefreshAfterPrune)
+	c.scheduleJellyfinRefresh(ctx, item, "prune_archived", c.opt.JellyfinConfig.RefreshAfterPrune)
 
 	_ = c.opt.Repo.Event(ctx, item.ID, "archived", "{}")
-	log.Info("prune complete; TorBox torrent deleted and item archived", "torbox_torrent_id", torrent.ID)
+	log.Info("Decypharr accepted prune; item archived", "infohash", infoHash)
 }
 
 func (c *Controller) arrClientFor(mediaType model.MediaType) (*arr.Client, error) {
@@ -524,9 +494,24 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 		_ = c.opt.Repo.Event(ctx, item.ID, "visibility_skipped_incomplete_metadata", string(payload))
 		return
 	}
+
+	if c.providerCoolingDown(ctx, "decypharr") {
+		return
+	}
+	ready, err := c.rearmReady(ctx, item, valueOrEmpty(item.InfoHash))
+	if err != nil {
+		c.waitAfterStatusError(ctx, item, valueOrEmpty(item.InfoHash), err)
+		return
+	}
+
+	if !ready {
+		c.markWaitingVisibility(ctx, item, valueOrEmpty(item.InfoHash), "waiting for Decypharr download completion before mount visibility")
+		return
+	}
+
 	c.refreshRclone(ctx, item.SymlinkPath)
 	if !c.opt.CSI.Exists(item.SymlinkPath) {
-		msg := "waiting for CSI/rclone mount visibility after successful Decypharr add"
+		msg := "waiting for CSI/rclone mount visibility after successful provider add"
 		if valueOrEmpty(item.LastError) != "" {
 			msg = valueOrEmpty(item.LastError)
 		}
@@ -543,7 +528,7 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 		log.Error("failed to mark available after CSI visibility", "error", err)
 		return
 	}
-	c.schedulePlexRefresh(ctx, item, "visibility_available", c.opt.PlexRefreshAfterVisibility)
+	c.scheduleJellyfinRefresh(ctx, item, "visibility_available", c.opt.JellyfinConfig.RefreshAfterVisibility)
 	payload, _ := json.Marshal(map[string]string{"cached_until": cachedUntil.Format(time.RFC3339), "infohash": valueOrEmpty(item.InfoHash)})
 	_ = c.opt.Repo.Event(ctx, item.ID, "available_after_visibility_wait", string(payload))
 	log.Info("CSI path appeared; item marked available", "cached_until", cachedUntil)
@@ -558,38 +543,38 @@ func (c *Controller) markWaitingVisibility(ctx context.Context, item model.Media
 	}
 	payload, _ := json.Marshal(map[string]string{"error": msg, "infohash": infoHash, "next_retry_at": next.Format(time.RFC3339)})
 	_ = c.opt.Repo.Event(ctx, item.ID, "waiting_for_visibility", string(payload))
-	log.Warn("Decypharr add succeeded but CSI path is not visible yet; waiting instead of failing", "next_retry_at", next, "infohash", infoHash)
+	log.Warn("rearm accepted; waiting for provider readiness or mount visibility", "next_retry_at", next, "infohash", infoHash)
 }
 
-func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCacheState, action string, enabled bool) {
+func (c *Controller) scheduleJellyfinRefresh(ctx context.Context, item model.MediaCacheState, action string, enabled bool) {
 	if !enabled {
-		slog.Debug("Plex refresh skipped; action disabled", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+		slog.Debug("Jellyfin refresh skipped; action disabled", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
-	if !c.opt.PlexEnabled {
-		slog.Info("Plex refresh skipped; plex.enabled=false", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+	if !c.opt.JellyfinConfig.Enabled {
+		slog.Info("Jellyfin refresh skipped; jellyfin.enabled=false", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
-	if c.opt.Plex == nil || !c.opt.Plex.Configured() {
-		slog.Warn("Plex refresh skipped; Plex client is not configured", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+	if c.opt.Jellyfin == nil || !c.opt.Jellyfin.Configured() {
+		slog.Warn("Jellyfin refresh skipped; Jellyfin client is not configured", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
 	if strings.TrimSpace(item.SymlinkPath) == "" {
-		slog.Warn("Plex refresh skipped; missing symlink path", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
+		slog.Warn("Jellyfin refresh skipped; missing symlink path", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action)
 		return
 	}
-	targetPath := c.opt.Plex.TargetScanPath(item.SymlinkPath, item.MediaType)
-	reserved, reason := c.reservePlexRefresh(ctx, item, action, targetPath)
+	targetPath := item.SymlinkPath
+	reserved, reason := c.reserveJellyfinRefresh(ctx, item, action, targetPath)
 	if !reserved {
-		slog.Info("Plex refresh skipped by dedupe", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "reason", reason, "dedupe", c.opt.PlexRefreshDedupe)
+		slog.Info("Jellyfin refresh skipped by dedupe", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "reason", reason, "dedupe", c.opt.JellyfinConfig.RefreshDedupeMinutes)
 		if c.opt.Repo != nil {
-			_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, plexRefreshScope(item.MediaType), targetPath, "skipped", "deduped: "+reason)
+			_ = c.opt.Repo.RecordJellyfinRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, jellyfinRefreshScope(item.MediaType), targetPath, "skipped", "deduped: "+reason)
 		}
 		return
 	}
-	slog.Info("Plex refresh queued", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "delay", c.opt.PlexRefreshDelay, "dedupe", c.opt.PlexRefreshDedupe)
+	slog.Info("Jellyfin refresh queued", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "delay", c.opt.JellyfinConfig.RefreshDelaySeconds, "dedupe", c.opt.JellyfinConfig.RefreshDedupeMinutes)
 	go func() {
-		timer := time.NewTimer(c.opt.PlexRefreshDelay)
+		timer := time.NewTimer(time.Duration(c.opt.JellyfinConfig.RefreshDelaySeconds) * time.Second)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
@@ -597,65 +582,65 @@ func (c *Controller) schedulePlexRefresh(ctx context.Context, item model.MediaCa
 		case <-timer.C:
 		}
 		select {
-		case c.plexRefreshSem <- struct{}{}:
-			defer func() { <-c.plexRefreshSem }()
+		case c.jellyfinRefreshSem <- struct{}{}:
+			defer func() { <-c.jellyfinRefreshSem }()
 		default:
-			slog.Warn("Plex refresh skipped; refresh limit is full", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
+			slog.Warn("Jellyfin refresh skipped; refresh limit is full", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
 			if c.opt.Repo != nil {
-				_ = c.opt.Repo.RecordPlexRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, plexRefreshScope(item.MediaType), targetPath, "skipped", "plex refresh limit full")
+				_ = c.opt.Repo.RecordJellyfinRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, jellyfinRefreshScope(item.MediaType), targetPath, "skipped", "jellyfin refresh limit full")
 			}
 			return
 		}
-		refreshCtx, cancel := context.WithTimeout(context.Background(), c.opt.PlexRefreshTimeout)
+		refreshCtx, cancel := context.WithTimeout(ctx, time.Duration(c.opt.JellyfinConfig.TimeoutSeconds)*time.Second)
 		defer cancel()
-		slog.Info("Plex refresh starting", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
-		err := c.opt.Plex.RefreshPathForMedia(refreshCtx, targetPath, item.MediaType)
+		slog.Info("Jellyfin refresh starting", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
+		err := c.opt.Jellyfin.RefreshPath(refreshCtx, targetPath)
 		status := "success"
 		message := ""
 		if err != nil {
 			status = "failed"
 			message = err.Error()
-			slog.Warn("Plex refresh failed", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action, "error", err)
+			slog.Warn("Jellyfin refresh failed", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action, "error", err)
 		} else {
-			slog.Info("Plex refresh complete", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action)
+			slog.Info("Jellyfin refresh complete", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action)
 		}
 		if c.opt.Repo != nil {
-			_ = c.opt.Repo.RecordPlexRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, plexRefreshScope(item.MediaType), targetPath, status, message)
+			_ = c.opt.Repo.RecordJellyfinRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, jellyfinRefreshScope(item.MediaType), targetPath, status, message)
 		}
 	}()
 }
 
-func (c *Controller) reservePlexRefresh(ctx context.Context, item model.MediaCacheState, action string, targetPath string) (bool, string) {
-	if c.opt.PlexRefreshDedupe <= 0 {
+func (c *Controller) reserveJellyfinRefresh(ctx context.Context, item model.MediaCacheState, action string, targetPath string) (bool, string) {
+	if c.opt.JellyfinConfig.RefreshDedupeMinutes <= 0 {
 		return true, ""
 	}
 	now := time.Now()
 	key := strings.Join([]string{item.Tenant, string(item.MediaType), targetPath}, "|")
 
-	c.plexRefreshDedupeMu.Lock()
-	for k, until := range c.plexRefreshDedupe {
+	c.jellyfinRefreshDedupeMu.Lock()
+	for k, until := range c.jellyfinRefreshDedupe {
 		if now.After(until) {
-			delete(c.plexRefreshDedupe, k)
+			delete(c.jellyfinRefreshDedupe, k)
 		}
 	}
-	if until, ok := c.plexRefreshDedupe[key]; ok && now.Before(until) {
-		c.plexRefreshDedupeMu.Unlock()
+	if until, ok := c.jellyfinRefreshDedupe[key]; ok && now.Before(until) {
+		c.jellyfinRefreshDedupeMu.Unlock()
 		return false, "refresh already queued or recently attempted until " + until.Format(time.RFC3339)
 	}
-	c.plexRefreshDedupe[key] = now.Add(c.opt.PlexRefreshDedupe)
-	c.plexRefreshDedupeMu.Unlock()
+	c.jellyfinRefreshDedupe[key] = now.Add(time.Duration(c.opt.JellyfinConfig.RefreshDedupeMinutes) * time.Minute)
+	c.jellyfinRefreshDedupeMu.Unlock()
 
 	if c.opt.Repo != nil {
-		cutoff := now.Add(-c.opt.PlexRefreshDedupe)
-		recent, err := c.opt.Repo.RecentSuccessfulPlexRefresh(ctx, item.Tenant, targetPath, cutoff)
+		cutoff := now.Add(-time.Duration(c.opt.JellyfinConfig.RefreshDedupeMinutes) * time.Minute)
+		recent, err := c.opt.Repo.RecentSuccessfulJellyfinRefresh(ctx, item.Tenant, targetPath, cutoff)
 		if err != nil {
-			slog.Warn("Plex refresh dedupe DB check failed; continuing", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "cutoff", cutoff, "error", err)
+			slog.Warn("Jellyfin refresh dedupe DB check failed; continuing", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath, "cutoff", cutoff, "error", err)
 			return true, ""
 		}
 		if recent {
-			c.plexRefreshDedupeMu.Lock()
-			delete(c.plexRefreshDedupe, key)
-			c.plexRefreshDedupeMu.Unlock()
+			c.jellyfinRefreshDedupeMu.Lock()
+			delete(c.jellyfinRefreshDedupe, key)
+			c.jellyfinRefreshDedupeMu.Unlock()
 			return false, "successful refresh already recorded within dedupe window"
 		}
 	}
@@ -663,14 +648,14 @@ func (c *Controller) reservePlexRefresh(ctx context.Context, item model.MediaCac
 	return true, ""
 }
 
-func plexRefreshScope(mediaType model.MediaType) string {
+func jellyfinRefreshScope(mediaType model.MediaType) string {
 	switch mediaType {
 	case model.MediaSeries:
-		return "series_folder"
+		return "series_file"
 	case model.MediaMovie:
-		return "movie_folder"
+		return "movie_file"
 	default:
-		return "media_folder"
+		return "media_file"
 	}
 }
 
@@ -821,4 +806,11 @@ func firstNonEmpty(vs ...string) string {
 		}
 	}
 	return ""
+}
+
+func (c *Controller) waitAfterStatusError(ctx context.Context, item model.MediaCacheState, hash string, err error) {
+	if isRateLimited(err) {
+		_ = c.opt.Repo.SetProviderCooldown(ctx, item.Tenant, "decypharr", c.opt.ProviderCooldown, err.Error())
+	}
+	c.markWaitingVisibility(ctx, item, hash, "Decypharr status check failed; retrying without resubmission: "+err.Error())
 }

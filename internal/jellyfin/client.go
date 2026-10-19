@@ -40,7 +40,7 @@ func (c *Client) RefreshPath(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Emby-Token", c.apiKey)
+	req.Header.Set("Authorization", fmt.Sprintf("MediaBrowser Token=%q", c.apiKey))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -62,7 +62,7 @@ func (c *Client) ItemPath(ctx context.Context, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("X-Emby-Token", c.apiKey)
+	req.Header.Set("Authorization", fmt.Sprintf("MediaBrowser Token=%q", c.apiKey))
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", err
@@ -99,7 +99,7 @@ func (c *Client) request(ctx context.Context, method, path string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Emby-Token", c.apiKey)
+	req.Header.Set("Authorization", fmt.Sprintf("MediaBrowser Token=%q", c.apiKey))
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err

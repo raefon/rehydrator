@@ -23,6 +23,8 @@ jellyfin:
   refresh_dedupe_minutes: 10
 ```
 
+Rehydrator authenticates requests to Jellyfin using `Authorization: MediaBrowser Token="YOUR_JELLYFIN_API_KEY"`. This is separate from the Rehydrator token used by incoming webhooks.
+
 Every setting has a `JELLYFIN_` environment override, for example
 `JELLYFIN_ENABLED`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, and
 `JELLYFIN_REFRESH_AFTER_IMPORT`. Jellyfin is disabled by default.

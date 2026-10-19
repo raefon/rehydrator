@@ -1,3 +1,8 @@
+# Rehydrator v0.5.8 — Jellyfin authentication header (unreleased)
+
+## Fixed
+- Authenticate Jellyfin item lookup, health checks, and library refreshes using `Authorization: MediaBrowser Token="…"`.
+
 # Rehydrator v0.5.7 — Seerr webhook test support (unreleased)
 
 ## Fixed

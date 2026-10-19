@@ -11,7 +11,7 @@ import (
 
 func TestClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Emby-Token") != "secret" {
+		if r.Header.Get("Authorization") != `MediaBrowser Token="secret"` {
 			t.Error("missing authentication")
 		}
 		switch r.URL.Path {
@@ -54,7 +54,7 @@ func TestClient(t *testing.T) {
 func TestLibraryRefreshAndPing(t *testing.T) {
 	var methods []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Emby-Token") != "secret" {
+		if r.Header.Get("Authorization") != `MediaBrowser Token="secret"` {
 			t.Error("missing API key")
 		}
 		methods = append(methods, r.Method+" "+r.URL.Path)

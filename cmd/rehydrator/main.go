@@ -26,7 +26,7 @@ import (
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.5.10"
+var version = "0.5.11"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
@@ -80,7 +80,7 @@ func main() {
 	}
 	var jellyfinClient *jellyfin.Client
 	if cfg.Jellyfin.Enabled {
-		jellyfinClient = jellyfin.NewClient(cfg.Jellyfin.URL, cfg.Jellyfin.APIKey, time.Duration(cfg.Jellyfin.TimeoutSeconds)*time.Second)
+		jellyfinClient = jellyfin.NewClient(cfg.Jellyfin.URL, cfg.Jellyfin.APIKey, time.Duration(cfg.Jellyfin.TimeoutSeconds)*time.Second, cfg.Jellyfin.RefreshMode)
 	}
 
 	ctrl := controller.New(controller.Options{

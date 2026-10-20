@@ -122,6 +122,7 @@ db_auto_migrate: false
 `
 
 type JellyfinConfig struct {
+	RefreshMode            string `yaml:"refresh_mode"`
 	MaxRefreshesPerRun     int    `yaml:"max_refreshes_per_run"`
 	RefreshDedupeMinutes   int    `yaml:"refresh_dedupe_minutes"`
 	Enabled                bool   `yaml:"enabled"`
@@ -649,6 +650,7 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Jellyfin.MaxRefreshesPerRun = getenvInt("JELLYFIN_MAX_REFRESHES_PER_RUN", cfg.Jellyfin.MaxRefreshesPerRun)
 	cfg.Jellyfin.RefreshDedupeMinutes = getenvInt("JELLYFIN_REFRESH_DEDUPE_MINUTES", cfg.Jellyfin.RefreshDedupeMinutes)
 	cfg.RearmBackend = strings.ToLower(strings.TrimSpace(getenv("REARM_BACKEND", cfg.RearmBackend)))
+	cfg.Jellyfin.RefreshMode = getenv("JELLYFIN_REFRESH_MODE", cfg.Jellyfin.RefreshMode)
 	cfg.Jellyfin.Enabled = getenvBool("JELLYFIN_ENABLED", cfg.Jellyfin.Enabled)
 	cfg.Jellyfin.URL = getenv("JELLYFIN_URL", cfg.Jellyfin.URL)
 	cfg.Jellyfin.APIKey = getenv("JELLYFIN_API_KEY", cfg.Jellyfin.APIKey)
@@ -768,6 +770,9 @@ func hydrateDurations(cfg *Config) {
 }
 
 func validate(cfg Config) error {
+	if cfg.Jellyfin.RefreshMode != "" && cfg.Jellyfin.RefreshMode != "notification" && cfg.Jellyfin.RefreshMode != "targeted_scan" {
+		return errors.New("jellyfin.refresh_mode must be notification or targeted_scan")
+	}
 	if cfg.RearmBackend != "decypharr" {
 		return errors.New("rearm_backend must be decypharr; configure TorBox inside Decypharr")
 	}

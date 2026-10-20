@@ -602,7 +602,7 @@ func (c *Controller) scheduleJellyfinRefresh(ctx context.Context, item model.Med
 			message = err.Error()
 			slog.Warn("Jellyfin refresh failed", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action, "error", err)
 		} else {
-			slog.Info("Jellyfin refresh complete", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action)
+			slog.Info("Jellyfin refresh request accepted", "tenant", item.Tenant, "arr_id", item.ArrID, "target_path", targetPath, "action", action)
 		}
 		if c.opt.Repo != nil {
 			_ = c.opt.Repo.RecordJellyfinRefresh(refreshCtx, item.Tenant, item.ID, item.ArrID, action, jellyfinRefreshScope(item.MediaType), targetPath, status, message)

@@ -1,3 +1,11 @@
+# Rehydrator v0.5.11 — Jellyfin Targeted Scans support (unreleased)
+
+## Added
+- Optional `jellyfin.refresh_mode: targeted_scan` calls the Targeted Scans plugin directly and validates Created/Refreshed results. No full-library fallback.
+
+## Fixed
+- Describe successful refresh requests as accepted rather than completed scans.
+
 # Rehydrator v0.5.10 — Legacy lifecycle constraint repair (unreleased)
 
 ## Fixed

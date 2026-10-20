@@ -75,3 +75,29 @@ need to retry playback once rehydration completes.
 
 API references: [Jellyfin library controller](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/LibraryController.cs)
 and [official Webhook plugin](https://github.com/jellyfin/jellyfin-plugin-webhook).
+
+## Targeted Scans plugin (v0.5.11)
+
+Install [Targeted Scans](https://github.com/d3v1l1989/targeted-scans) in Jellyfin
+and restart the server, then enable direct integration:
+
+```yaml
+jellyfin:
+  refresh_mode: targeted_scan
+```
+
+Environment override: `JELLYFIN_REFRESH_MODE=targeted_scan`. Rebuild/deploy
+Rehydrator v0.5.11 and restart with the setting. No Autopulse service is needed.
+The default `notification` mode retains `/Library/Media/Updated` behavior.
+
+Targeted mode sends the tracked file path to `POST /Library/ScanPath`, using
+Jellyfin's API key. Existing import, rearm, self-heal and manual targeted refresh
+flows share this mode and retain their concurrency/dedupe limits. Global manual
+library refresh remains explicitly available.
+
+Only plugin statuses `Created` and `Refreshed` count as accepted requests.
+`PathNotFound`, `ParentNotFound`, `Failed`, malformed responses, and HTTP failures
+are reported as failures. A missing plugin does not trigger a full scan.
+Logs show the returned status/item ID; metadata processing is still asynchronous.
+Paths must match Jellyfin's library view, and mounted files must be readable.
+The integration does not repair WebDAV streaming errors or mount timeouts.

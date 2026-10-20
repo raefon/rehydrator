@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,16 +13,21 @@ import (
 )
 
 type Client struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
+	refreshMode string
+	baseURL     string
+	apiKey      string
+	httpClient  *http.Client
 }
 
-func NewClient(baseURL, apiKey string, timeout time.Duration) *Client {
+func NewClient(baseURL, apiKey string, timeout time.Duration, modes ...string) *Client {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
-	return &Client{strings.TrimRight(baseURL, "/"), apiKey, &http.Client{Timeout: timeout}}
+	mode := "notification"
+	if len(modes) > 0 && modes[0] != "" {
+		mode = modes[0]
+	}
+	return &Client{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, httpClient: &http.Client{Timeout: timeout}, refreshMode: mode}
 }
 
 // RefreshPath reports a changed file without scanning the entire library.
@@ -32,11 +38,21 @@ func (c *Client) RefreshPath(ctx context.Context, path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("jellyfin refresh requires a path")
 	}
-	body, err := json.Marshal(map[string]any{"Updates": []map[string]string{{"Path": path, "UpdateType": "Modified"}}})
+	endpoint := "/Library/Media/Updated"
+	var payload any = map[string]any{"Updates": []map[string]string{{"Path": path, "UpdateType": "Modified"}}}
+	switch c.refreshMode {
+	case "targeted_scan":
+		endpoint = "/Library/ScanPath"
+		payload = map[string]string{"Path": path}
+	case "notification", "":
+	default:
+		return fmt.Errorf("unsupported Jellyfin refresh mode: %s", c.refreshMode)
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/Library/Media/Updated", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -49,6 +65,19 @@ func (c *Client) RefreshPath(ctx context.Context, path string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("jellyfin refresh failed: %s", resp.Status)
+	}
+	if c.refreshMode == "targeted_scan" {
+		var result struct {
+			Status string
+			ItemId string
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return fmt.Errorf("invalid targeted scan response: %w", err)
+		}
+		if result.Status != "Created" && result.Status != "Refreshed" {
+			return fmt.Errorf("Jellyfin targeted scan rejected path: status=%q", result.Status)
+		}
+		slog.Info("Jellyfin targeted scan accepted", "path", path, "status", result.Status, "item_id", result.ItemId)
 	}
 	return nil
 }

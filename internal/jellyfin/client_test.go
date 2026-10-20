@@ -81,3 +81,37 @@ func TestLibraryRefreshAndPing(t *testing.T) {
 		t.Fatalf("requests=%v", methods)
 	}
 }
+
+func TestTargetedScanResults(t *testing.T) {
+	for _, status := range []string{"Created", "Refreshed", "PathNotFound", "ParentNotFound", "Failed", ""} {
+		t.Run(status, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "POST" || r.URL.Path != "/Library/ScanPath" || r.Header.Get("Authorization") != `MediaBrowser Token="secret"` {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				var body map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["Path"] != "/media/movie.mkv" || len(body) != 1 {
+					t.Errorf("invalid body: %v %v", body, err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]string{"Status": status, "ItemId": "item-123"})
+			}))
+			defer server.Close()
+			err := NewClient(server.URL, "secret", time.Second, "targeted_scan").RefreshPath(context.Background(), "/media/movie.mkv")
+			if (err == nil) != (status == "Created" || status == "Refreshed") {
+				t.Fatalf("status=%q err=%v", status, err)
+			}
+		})
+	}
+}
+
+func TestTargetedScanMissingPlugin(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(404) }))
+	defer server.Close()
+	if err := NewClient(server.URL, "secret", time.Second, "targeted_scan").RefreshPath(context.Background(), "/media/movie.mkv"); err == nil {
+		t.Fatal("missing plugin accepted")
+	}
+	if calls != 1 {
+		t.Fatal("unexpected fallback scan")
+	}
+}

@@ -98,6 +98,7 @@ rclone_rc:
   timeout_seconds: 10
 
 jellyfin:
+  refresh_mode: notification # Use targeted_scan with the Targeted Scans plugin installed.
   enabled: false
   url: http://jellyfin:8096
   api_key: ""

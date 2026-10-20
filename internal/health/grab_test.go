@@ -49,3 +49,10 @@ func TestGrabWebhookCapture(t *testing.T) {
 		}
 	}
 }
+
+func TestUsenetGrabProtocol(t *testing.T) {
+	g := grabFromWebhook("tenant", "sonarr", map[string]any{"series": map[string]any{"id": 55}, "downloadId": "opaque-Job-ID", "downloadClientType": "Sabnzbd", "release": map[string]any{"downloadProtocol": "Usenet", "downloadUrl": "https://indexer.example/release.nzb"}})
+	if g.Torrent.Protocol != model.ProtocolUsenet || g.Torrent.InfoHash != "" || g.DownloadID != "opaque-Job-ID" || g.OwnerID != 55 {
+		t.Fatalf("unexpected source: %+v", g)
+	}
+}

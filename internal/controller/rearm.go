@@ -29,7 +29,7 @@ func (c *Controller) resolveRearmTorrent(ctx context.Context, item model.MediaCa
 		if err != nil {
 			return saved, err
 		}
-		if found && saved.Kind != model.SourceRecoveryRequired && strings.EqualFold(saved.InfoHash, strings.TrimSpace(valueOrEmpty(item.InfoHash))) {
+		if found && saved.Kind != model.SourceRecoveryRequired && ((saved.Protocol == model.ProtocolUsenet && item.SourceProtocol == model.ProtocolUsenet) || (saved.Protocol != model.ProtocolUsenet && strings.EqualFold(saved.InfoHash, strings.TrimSpace(valueOrEmpty(item.InfoHash))))) {
 			saved.SourceTitle = valueOrEmpty(item.SourceTitle)
 			return saved.ValidateSource()
 		}
@@ -56,6 +56,9 @@ func (c *Controller) resolveRearmTorrent(ctx context.Context, item model.MediaCa
 	}
 	if known := strings.TrimSpace(valueOrEmpty(item.InfoHash)); known != "" && !strings.EqualFold(known, recovered.InfoHash) {
 		return recovered, fmt.Errorf("%w: Arr returned a different release identity", model.ErrSourceRecoveryRequired)
+	}
+	if recovered.Protocol == model.ProtocolUsenet && item.SourceDownloadID != "" && model.DownloadKey(recovered.DownloadID) != item.SourceDownloadID {
+		return recovered, fmt.Errorf("%w: Arr returned a different NZB import identity", model.ErrSourceRecoveryRequired)
 	}
 	return recovered, nil
 }

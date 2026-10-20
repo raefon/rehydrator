@@ -218,3 +218,12 @@ its row reports `FAILED` with `last_error` explaining that source recovery is
 required. Capture the original source, then explicitly request rearm again.
 
 The global scan endpoint is `POST /api/jellyfin/refresh/library`; it scans all libraries, rather than a movie/TV section. Targeted endpoints notify the tracked file path.
+
+## Usenet lifecycle (v0.6.0)
+
+Existing Arr Grab and Download/import webhook routes also accept explicit Usenet
+protocol/client metadata. No new public submission endpoint is introduced.
+The state inventory includes `SourceProtocol`, `SourceDownloadID`, and
+`DownloadJobID`; NZB sources do not have torrent infohashes. Existing rearm routes
+use saved NZB bytes and Decypharr's SAB-compatible job status automatically.
+See [Usenet setup](usenet-setup.md) for configuration and recovery limits.

@@ -1,0 +1,18 @@
+{
+  "usenet": {
+    "providers": [
+      {
+        "host": "YOUR_TORBOX_NEWS_HOST",
+        "port": 563,
+        "username": "YOUR_TORBOX_NEWS_USERNAME",
+        "password": "YOUR_TORBOX_NEWS_PASSWORD",
+        "ssl": true,
+        "max_connections": 6,
+        "priority": 1
+      }
+    ],
+    "max_connections": 6,
+    "processing_max_connections": 2,
+    "read_ahead": "8MB"
+  }
+}

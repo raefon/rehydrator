@@ -45,7 +45,7 @@ func (c *Controller) RecordGrabImport(ctx context.Context, g model.GrabSource, p
 
 func (c *Controller) captureGrabSource(ctx context.Context, g model.GrabSource) error {
 	t := g.Torrent
-	if t.Kind == model.SourceRecoveryRequired || (t.TorrentURL == "" && t.Magnet == "") {
+	if t.Kind == model.SourceRecoveryRequired || (t.TorrentURL == "" && t.Magnet == "" && len(t.NZBFile) == 0 && len(t.TorrentFile) == 0) {
 		mt := model.MediaMovie
 		if g.Arr == "sonarr" {
 			mt = model.MediaSeries
@@ -61,6 +61,9 @@ func (c *Controller) captureGrabSource(ctx context.Context, g model.GrabSource) 
 		if err != nil {
 			return err
 		}
+	}
+	if t.Protocol == model.ProtocolUsenet {
+		t.DownloadID = g.DownloadID
 	}
 	t, err := c.opt.Decypharr.PrepareTorrent(ctx, t)
 	if err != nil {

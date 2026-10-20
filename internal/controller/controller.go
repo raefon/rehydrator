@@ -292,7 +292,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	}
 
 	pathVisible := c.opt.CSI.Exists(item.SymlinkPath)
-	if pathVisible && c.opt.RearmShortCircuitIfVisible {
+	if pathVisible && c.opt.RearmShortCircuitIfVisible && (item.SourceProtocol != model.ProtocolUsenet || c.opt.CSI.Readable(item.SymlinkPath)) {
 		log.Info("file already visible through CSI; marking available", "rearm_short_circuit_if_visible", true)
 		cachedUntil := time.Now().Add(c.opt.CacheGrace)
 		_ = c.opt.Repo.MarkAvailable(ctx, item.ID, valueOrEmpty(item.InfoHash), cachedUntil)
@@ -336,16 +336,45 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		return
 	}
 
-	metaJSON, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "source": torrent.Source, "source_kind": string(torrent.Kind), "source_title": torrent.SourceTitle, "client": "decypharr", "category": category})
+	metaJSON, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "protocol": torrent.Protocol, "original_download_id": torrent.DownloadID, "source": torrent.Source, "source_kind": string(torrent.Kind), "source_title": torrent.SourceTitle, "client": "decypharr", "category": category})
 	_ = c.opt.Repo.Event(ctx, item.ID, "torrent_metadata_resolved", string(metaJSON))
+	item.SourceProtocol = torrent.Protocol
 	hash := torrent.InfoHash
-	addResult, err := c.opt.Decypharr.AddTorrent(ctx, torrent, category)
-	if err != nil {
-		c.failProvider(ctx, item, "decypharr", err)
-		return
+	if torrent.Protocol == model.ProtocolUsenet {
+		hash, err = c.opt.Repo.EnsureNZBJob(ctx, item.ID, func(job string) (string, error) {
+			_, found, statusErr := c.opt.Decypharr.NZBStatus(ctx, job, category)
+			if statusErr != nil {
+				return "", statusErr
+			}
+			if found {
+				return job, nil
+			}
+			exists, err := c.opt.Decypharr.LibraryHasDownload(ctx, job)
+			if err != nil {
+				return "", err
+			}
+			if exists {
+				return job, nil
+			}
+			return c.opt.Decypharr.AddNZB(ctx, torrent, category)
+		})
+		if err != nil {
+			c.waitAfterStatusError(ctx, item, torrent.DownloadID, err)
+			return
+		}
+
+		item.SourceProtocol = model.ProtocolUsenet
+		item.DownloadJobID = hash
+	} else {
+		addResult, err := c.opt.Decypharr.AddTorrent(ctx, torrent, category)
+		if err != nil {
+			c.failProvider(ctx, item, "decypharr", err)
+			return
+		}
+		hash = firstNonEmpty(addResult.Hash, hash)
 	}
-	hash = firstNonEmpty(addResult.Hash, hash)
-	payload, _ := json.Marshal(map[string]string{"infohash": hash, "source_kind": string(torrent.Kind), "category": category, "client": "decypharr"})
+
+	payload, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "protocol": torrent.Protocol, "download_job_id": item.DownloadJobID, "source_kind": string(torrent.Kind), "category": category, "client": "decypharr"})
 	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_readd_requested", string(payload))
 
 	ready, err := c.rearmReady(ctx, item, hash)
@@ -382,11 +411,12 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 
 	finalJSON, _ := json.Marshal(map[string]string{
 		"cached_until": cachedUntil.Format(time.RFC3339),
-		"infohash":     hash,
-		"client":       "decypharr",
+		"infohash":     torrent.InfoHash,
+		"protocol":     torrent.Protocol, "download_job_id": item.DownloadJobID,
+		"client": "decypharr",
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "available", string(finalJSON))
-	log.Info("rehydration complete", "cached_until", cachedUntil, "infohash", hash)
+	log.Info("rehydration complete", "cached_until", cachedUntil, "protocol", torrent.Protocol, "download_identity", hash)
 }
 
 func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState) {
@@ -398,6 +428,13 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 		"download_client", valueOrEmpty(item.DownloadClient),
 	)
 
+	if item.SourceProtocol == model.ProtocolUsenet {
+		log.Info("Usenet automatic pruning is disabled")
+		if c.opt.Repo != nil {
+			_ = c.opt.Repo.MarkAvailable(ctx, item.ID, "", time.Now().Add(c.opt.CacheGrace))
+		}
+		return
+	}
 	infoHash := valueOrEmpty(item.InfoHash)
 
 	if c.opt.Decypharr == nil || !c.opt.Decypharr.Configured() {
@@ -420,11 +457,18 @@ func (c *Controller) handlePrune(ctx context.Context, item model.MediaCacheState
 		c.fail(ctx, item, err)
 		return
 	}
-	if !found || valueOrEmpty(refreshed.InfoHash) == "" {
+	if !found || (refreshed.SourceProtocol != model.ProtocolUsenet && valueOrEmpty(refreshed.InfoHash) == "") {
 		c.fail(ctx, item, fmt.Errorf("cannot prune: missing current release identity"))
 		return
 	}
 	item = refreshed
+	if item.SourceProtocol == model.ProtocolUsenet {
+		log.Info("Usenet automatic pruning is disabled")
+		if c.opt.Repo != nil {
+			_ = c.opt.Repo.MarkAvailable(ctx, item.ID, "", time.Now().Add(c.opt.CacheGrace))
+		}
+		return
+	}
 	infoHash = valueOrEmpty(item.InfoHash)
 
 	if err := c.opt.Repo.MarkPruning(ctx, item.ID); err != nil {
@@ -510,7 +554,7 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 	}
 
 	c.refreshRclone(ctx, item.SymlinkPath)
-	if !c.opt.CSI.Exists(item.SymlinkPath) {
+	if !c.opt.CSI.Readable(item.SymlinkPath) {
 		msg := "waiting for CSI/rclone mount visibility after successful provider add"
 		if valueOrEmpty(item.LastError) != "" {
 			msg = valueOrEmpty(item.LastError)
@@ -588,6 +632,13 @@ func (c *Controller) scheduleJellyfinRefresh(ctx context.Context, item model.Med
 			slog.Warn("Jellyfin refresh skipped; refresh limit is full", "tenant", item.Tenant, "arr_id", item.ArrID, "action", action, "target_path", targetPath)
 			if c.opt.Repo != nil {
 				_ = c.opt.Repo.RecordJellyfinRefresh(context.Background(), item.Tenant, item.ID, item.ArrID, action, jellyfinRefreshScope(item.MediaType), targetPath, "skipped", "jellyfin refresh limit full")
+			}
+			return
+		}
+		if item.SourceProtocol == model.ProtocolUsenet && c.opt.CSI != nil && !c.opt.CSI.Readable(targetPath) {
+			slog.Warn("Jellyfin refresh skipped; Usenet file is not readable yet", "arr_id", item.ArrID, "target_path", targetPath)
+			if c.opt.Repo != nil {
+				_ = c.opt.Repo.RecordJellyfinRefresh(ctx, item.Tenant, item.ID, item.ArrID, action, jellyfinRefreshScope(item.MediaType), targetPath, "skipped", "Usenet file not readable; self-heal may retry")
 			}
 			return
 		}
@@ -809,6 +860,11 @@ func firstNonEmpty(vs ...string) string {
 }
 
 func (c *Controller) waitAfterStatusError(ctx context.Context, item model.MediaCacheState, hash string, err error) {
+	if errors.Is(err, model.ErrSourceRecoveryRequired) {
+		_ = c.opt.Repo.MarkSourceRecoveryRequired(ctx, item.ID, err.Error())
+		slog.Warn("download recovery required; automatic resubmission stopped", "arr_id", item.ArrID, "error", err)
+		return
+	}
 	if isRateLimited(err) {
 		_ = c.opt.Repo.SetProviderCooldown(ctx, item.Tenant, "decypharr", c.opt.ProviderCooldown, err.Error())
 	}

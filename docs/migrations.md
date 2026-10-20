@@ -15,3 +15,11 @@ the current application. Jellyfin refresh history starts in its own table, so
 historical scans cannot suppress Jellyfin refreshes.
 
 No migration is applied to your running database by editing the repository.
+
+## v0.6.0: Usenet sources
+
+Apply `025_usenet_sources.sql` after prior migrations (or use startup schema
+initialization). It adds explicit protocols, original NZB bytes/filenames, opaque
+runtime job IDs, and a shared season-pack job mapping. Existing torrent payloads
+remain separate. Usenet is excluded from automatic pruning. See
+[Usenet setup](usenet-setup.md).

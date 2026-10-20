@@ -14,7 +14,7 @@ func grabFromWebhook(tenant, arr string, payload map[string]any) model.GrabSourc
 	}
 	release := firstMap(payload, "release", "Release")
 	return model.GrabSource{Tenant: tenant, Arr: arr, OwnerID: firstInt(owner, "id"), DownloadID: firstString(payload, "downloadId", "downloadID"), Torrent: model.TorrentMetadata{
-		Source: arr, SourceTitle: firstString(release, "releaseTitle", "title"), TorrentURL: firstString(release, "downloadUrl", "downloadURL"), Magnet: firstString(release, "magnetUrl", "magnet"), InfoHash: firstString(release, "infoHash", "torrentInfoHash"),
+		Protocol: model.DownloadProtocol(firstString(release, "downloadProtocol", "protocol"), firstString(payload, "downloadClientType")), Source: arr, SourceTitle: firstString(release, "releaseTitle", "title"), TorrentURL: firstString(release, "downloadUrl", "downloadURL"), Magnet: firstString(release, "magnetUrl", "magnet"), InfoHash: firstString(release, "infoHash", "torrentInfoHash"),
 	}}
 }
 

@@ -27,12 +27,15 @@ const (
 )
 
 type MediaCacheState struct {
-	ID          string
-	Tenant      string
-	MediaType   MediaType
-	ArrID       int // movie: Radarr movie id; series: Sonarr episodeFileId.
-	SymlinkPath string
-	State       State
+	SourceDownloadID string
+	SourceProtocol   string
+	DownloadJobID    string
+	ID               string
+	Tenant           string
+	MediaType        MediaType
+	ArrID            int // movie: Radarr movie id; series: Sonarr episodeFileId.
+	SymlinkPath      string
+	State            State
 
 	RearmRequested bool
 	CachedUntil    *time.Time
@@ -72,7 +75,11 @@ type MediaCacheState struct {
 	LastError      *string
 }
 
+// TorrentMetadata is retained as the compatibility name for a download source.
 type TorrentMetadata struct {
+	Protocol        string
+	NZBFile         []byte
+	NZBFilename     string
 	Kind            SourceKind
 	TorrentFile     []byte
 	TorrentFilename string

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -163,6 +164,10 @@ type magnetRedirect struct{ uri string }
 func (e *magnetRedirect) Error() string { return "torrent download redirected to a magnet" }
 
 func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle string) ([]byte, string, error) {
+	return c.fetchSourceFile(ctx, torrentURL, sourceTitle, ".torrent")
+}
+
+func (c *Client) fetchSourceFile(ctx context.Context, torrentURL, sourceTitle, extension string) ([]byte, string, error) {
 	slog.Info("fetch torrent file diagnostic",
 		"url_scheme", func() string {
 			if i := strings.Index(torrentURL, ":"); i >= 0 {
@@ -232,18 +237,25 @@ func (c *Client) fetchTorrentFile(ctx context.Context, torrentURL, sourceTitle s
 		return nil, "", fmt.Errorf("torrent file is empty")
 	}
 
-	filename := "download.torrent"
-	if u, err := url.Parse(torrentURL); err == nil {
+	filename := "download" + extension
+	if extension == ".nzb" {
+		if _, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition")); err == nil && params["filename"] != "" {
+			filename = path.Base(params["filename"])
+		} else if strings.TrimSpace(sourceTitle) != "" {
+			filename = path.Base(strings.TrimSpace(sourceTitle))
+		}
+	} else if u, err := url.Parse(torrentURL); err == nil {
 		if base := path.Base(u.Path); base != "." && base != "/" && base != "" {
 			filename = base
 		}
 	}
-	if !strings.HasSuffix(strings.ToLower(filename), ".torrent") {
-		filename += ".torrent"
+	if !strings.HasSuffix(strings.ToLower(filename), extension) {
+		filename += extension
 	}
-	if strings.TrimSpace(sourceTitle) != "" && filename == "download.torrent" {
-		filename = strings.TrimSpace(sourceTitle) + ".torrent"
+	if strings.TrimSpace(sourceTitle) != "" && filename == "download"+extension {
+		filename = path.Base(strings.TrimSpace(sourceTitle)) + extension
 	}
+
 	return data, filename, nil
 }
 

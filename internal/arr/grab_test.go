@@ -54,3 +54,10 @@ func TestHistoryPreservesSourceType(t *testing.T) {
 		})
 	}
 }
+
+func TestGrabbedNZBHasOpaqueIdentity(t *testing.T) {
+	source, ok := torrentMetadataFromGrabbed("sonarr", 55, model.MediaSeries, HistoryRecord{EventType: "grabbed", SeriesID: 55, DownloadID: "SABnzbd_nzo_AbC", Data: map[string]any{"protocol": "1", "downloadUrl": "https://indexer.example/release.nzb"}})
+	if !ok || source.Protocol != model.ProtocolUsenet || source.InfoHash != "" || source.DownloadID != "SABnzbd_nzo_AbC" || source.Kind != model.SourceNZBFile {
+		t.Fatalf("NZB forced into torrent identity: %+v", source)
+	}
+}

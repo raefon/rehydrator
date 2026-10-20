@@ -298,6 +298,9 @@ func torrentMetadataFromGrabbed(arrName string, arrID int, mediaType model.Media
 		return model.TorrentMetadata{}, false
 	}
 
+	if model.DownloadProtocol(dataString(r.Data, "protocol"), dataString(r.Data, "downloadClientType")) == model.ProtocolUsenet {
+		return model.TorrentMetadata{Kind: model.SourceNZBFile, Protocol: model.ProtocolUsenet, TorrentURL: dataString(r.Data, "downloadUrl"), DownloadID: r.DownloadID, Source: arrName, SourceTitle: r.SourceTitle}, true
+	}
 	rawGuid := dataString(r.Data, "guid")
 	rawDownloadURL := dataString(r.Data, "downloadUrl")
 
@@ -397,8 +400,8 @@ func firstNonEmpty(vs ...string) string {
 }
 
 func sameDownloadID(a, b string) bool {
-	a = strings.ToLower(strings.TrimSpace(a))
-	b = strings.ToLower(strings.TrimSpace(b))
+	a = model.DownloadKey(a)
+	b = model.DownloadKey(b)
 	return a != "" && b != "" && a == b
 }
 

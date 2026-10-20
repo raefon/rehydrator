@@ -11,13 +11,14 @@ import (
 type SourceKind string
 
 const (
+	SourceNZBFile          SourceKind = "nzb_file"
 	SourceTorrentFile      SourceKind = "torrent_file"
 	SourceMagnet           SourceKind = "magnet"
 	SourceUnresolved       SourceKind = "unresolved"
 	SourceRecoveryRequired SourceKind = "recovery_required"
 )
 
-var ErrSourceRecoveryRequired = errors.New("source recovery required: original torrent file or magnet is missing")
+var ErrSourceRecoveryRequired = errors.New("source recovery required: original torrent file, magnet, or NZB is missing")
 
 func NormalizeInfoHash(hash string) (string, error) {
 	hash = strings.ToLower(strings.TrimSpace(hash))
@@ -31,6 +32,13 @@ func NormalizeInfoHash(hash string) (string, error) {
 // ValidateSource enforces a single saved submission source. Hashes are identity,
 // never an instruction to manufacture a magnet or reconstruct metainfo.
 func (t TorrentMetadata) ValidateSource() (TorrentMetadata, error) {
+	if t.Kind == SourceNZBFile {
+		return t.validateNZB()
+	}
+	if (t.Protocol != "" && t.Protocol != ProtocolTorrent) || len(t.NZBFile) > 0 || t.NZBFilename != "" {
+		return t, fmt.Errorf("torrent source conflicts with Usenet payload")
+	}
+	t.Protocol = "torrent"
 	if strings.TrimSpace(t.TorrentURL) != "" {
 		return t, fmt.Errorf("unresolved URL is not a saved submission source")
 	}

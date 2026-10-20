@@ -14,6 +14,9 @@ import (
 // PrepareTorrent resolves an indexer URL once so the exact torrent can be saved
 // before pruning. Redirects to magnets retain the full resolved URI.
 func (c *Client) PrepareTorrent(ctx context.Context, t model.TorrentMetadata) (model.TorrentMetadata, error) {
+	if t.Protocol == model.ProtocolUsenet || t.Kind == model.SourceNZBFile {
+		return c.prepareNZB(ctx, t)
+	}
 	// Capture may receive an external payload before its type is known. Mixed
 	// payloads are rejected instead of silently selecting one of them.
 	if t.TorrentURL != "" {
@@ -96,6 +99,13 @@ func (c *Client) LibraryHasTorrent(ctx context.Context, hash string) (bool, erro
 	hash, err := model.NormalizeInfoHash(hash)
 	if err != nil {
 		return false, err
+	}
+	return c.LibraryHasDownload(ctx, hash)
+}
+
+func (c *Client) LibraryHasDownload(ctx context.Context, hash string) (bool, error) {
+	if strings.TrimSpace(hash) == "" {
+		return false, fmt.Errorf("missing download identity")
 	}
 	if err := c.authenticate(ctx); err != nil {
 		return false, err

@@ -121,11 +121,6 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 		}
 		seeded++
 
-		if refreshReason != "" && s.onImported != nil {
-			slog.Info("radarr imported item queued for Jellyfin refresh", "movie_id", movie.ID, "title", movie.Title, "reason", refreshReason, "path", path)
-			s.onImported(ctx, item, refreshReason)
-		}
-
 		if err := s.repo.LinkGrabSourceForItem(ctx, s.tenant, item.ID); err != nil {
 			slog.Warn("could not link captured grab source", "error", err)
 		} else {
@@ -133,7 +128,12 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 				item = refreshed
 			}
 		}
-		if item.InfoHash == nil || *item.InfoHash == "" {
+		if refreshReason != "" && s.onImported != nil {
+			slog.Info("radarr imported item queued for Jellyfin refresh", "movie_id", movie.ID, "title", movie.Title, "reason", refreshReason, "path", path)
+			s.onImported(ctx, item, refreshReason)
+		}
+
+		if item.SourceProtocol != model.ProtocolUsenet && (item.InfoHash == nil || *item.InfoHash == "") {
 			torrent, err := s.radarr.LatestGrabbedTorrent(ctx, movie.ID, model.MediaMovie)
 			if err != nil {
 				slog.Warn("radarr seed sync could not resolve torrent metadata", "movie_id", movie.ID, "title", movie.Title, "error", err)

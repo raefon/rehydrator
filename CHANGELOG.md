@@ -1,3 +1,17 @@
+# Rehydrator v0.6.0 — Usenet support and TorBox Pro NNTP (unreleased)
+
+## Added
+- Decypharr provider configuration fragment for TorBox Pro's NNTP news server, with a conservative shared connection budget and setup instructions.
+- Document the selected routing: torrent cloud access and direct TorBox NNTP for NZBs, with credentials held in Decypharr and Usenet pruning disabled. Cloud Usenet cache/CDN routing is deferred.
+- Capture and retain original NZB bytes from explicit Arr Usenet grabs, with import associations for movies and season-pack episodes.
+- Rearm via Decypharr's SABnzbd-compatible API, preserving opaque runtime job IDs separately from torrent hashes and original import IDs.
+- Share current NZB job mappings across season-pack episodes with database serialization; poll existing jobs instead of repeatedly submitting.
+- Migration `025_usenet_sources.sql` adds protocol-aware source storage and runtime job mappings. Existing torrent sources remain valid.
+
+## Changed
+- Usenet is excluded from automatic pruning. Failed NZB jobs require recovery rather than automatic resubmission of missing articles.
+- Usenet readiness requires a completed job or retained catalog identity plus a readable mounted file. Targeted Jellyfin notifications for known Usenet imports are gated on readability.
+
 # Rehydrator v0.5.11 — Jellyfin Targeted Scans support (unreleased)
 
 ## Added

@@ -83,7 +83,7 @@ const itemSelectColumns = `
     infohash, magnet, download_client, download_category, arr_title, source_title,
     tmdb_id, tvdb_id,
     series_id, episode_id, episode_file_id, season_number, episode_number, series_title, episode_title, cache_group_key,
-    retry_count, next_retry_at, last_play_intent_at, play_intent_count, last_checked, last_rehydrated, last_pruned, last_error
+    retry_count, next_retry_at, last_play_intent_at, play_intent_count, last_checked, last_rehydrated, last_pruned, last_error, source_protocol, download_job_id, COALESCE(source_download_id,'')
 `
 
 type itemRows interface {
@@ -130,6 +130,7 @@ func scanItem(row itemRow) (model.MediaCacheState, error) {
 		&m.LastRehydrated,
 		&m.LastPruned,
 		&m.LastError,
+		&m.SourceProtocol, &m.DownloadJobID, &m.SourceDownloadID,
 	)
 	return m, err
 }
@@ -173,7 +174,7 @@ func (r *Repo) RearmWorkItems(ctx context.Context, limit int, maxRetries int) ([
         FROM candidates
         WHERE m.id = candidates.id
         RETURNING
-            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error, m.source_protocol, m.download_job_id, COALESCE(m.source_download_id,'')
     `, maxRetries, limit)
 	if err != nil {
 		return nil, err
@@ -234,6 +235,7 @@ func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCach
             SELECT id
             FROM media_cache_state
             WHERE state = 'AVAILABLE'
+              AND source_protocol='torrent'
               AND rearm_requested = false
               AND cached_until IS NOT NULL
               AND cached_until < now()
@@ -250,7 +252,7 @@ func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCach
         FROM candidates
         WHERE m.id = candidates.id
         RETURNING
-            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error, m.source_protocol, m.download_job_id, COALESCE(m.source_download_id,'')
     `, limit)
 	if err != nil {
 		return nil, err
@@ -283,7 +285,7 @@ func (r *Repo) VisibilityWorkItems(ctx context.Context, limit int) ([]model.Medi
         FROM candidates
         WHERE m.id = candidates.id
         RETURNING
-            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error
+            m.id::text, m.tenant, m.media_type, m.arr_id, m.symlink_path, m.state, m.rearm_requested, m.cached_until, m.torbox_torrent_id, m.infohash, m.magnet, m.download_client, m.download_category, m.arr_title, m.source_title, m.tmdb_id, m.tvdb_id, m.series_id, m.episode_id, m.episode_file_id, m.season_number, m.episode_number, m.series_title, m.episode_title, m.cache_group_key, m.retry_count, m.next_retry_at, m.last_play_intent_at, m.play_intent_count, m.last_checked, m.last_rehydrated, m.last_pruned, m.last_error, m.source_protocol, m.download_job_id, COALESCE(m.source_download_id,'')
     `, limit)
 	if err != nil {
 		return nil, err
@@ -927,8 +929,8 @@ func (r *Repo) SaveTorrentMetadata(ctx context.Context, id string, torrent model
 		return err
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO media_cache_torrent_sources(media_id,infohash,filename,torrent_file,source_kind,magnet) VALUES($1,$2,$3,$4,$5,$6)
- ON CONFLICT(media_id) DO UPDATE SET infohash=EXCLUDED.infohash,filename=EXCLUDED.filename,torrent_file=EXCLUDED.torrent_file,source_kind=EXCLUDED.source_kind,magnet=EXCLUDED.magnet,updated_at=now()`, id, torrent.InfoHash, torrent.TorrentFilename, torrent.TorrentFile, torrent.Kind, torrent.Magnet)
+	_, err = tx.Exec(ctx, `INSERT INTO media_cache_torrent_sources(media_id,infohash,filename,torrent_file,source_kind,magnet,protocol,download_id,nzb_file,nzb_filename) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ ON CONFLICT(media_id) DO UPDATE SET infohash=EXCLUDED.infohash,filename=EXCLUDED.filename,torrent_file=EXCLUDED.torrent_file,source_kind=EXCLUDED.source_kind,magnet=EXCLUDED.magnet,protocol=EXCLUDED.protocol,download_id=EXCLUDED.download_id,nzb_file=EXCLUDED.nzb_file,nzb_filename=EXCLUDED.nzb_filename,updated_at=now()`, id, torrent.InfoHash, torrent.TorrentFilename, torrent.TorrentFile, torrent.Kind, torrent.Magnet, torrent.Protocol, torrent.DownloadID, torrent.NZBFile, torrent.NZBFilename)
 	if err != nil {
 		return err
 	}
@@ -936,13 +938,15 @@ func (r *Repo) SaveTorrentMetadata(ctx context.Context, id string, torrent model
 	_, err = tx.Exec(ctx, `
         UPDATE media_cache_state
         SET infohash = NULLIF($2, ''),
+ source_protocol=$6, download_job_id=CASE WHEN $6='usenet' THEN CASE WHEN source_download_id=$7 AND download_job_id<>'' THEN download_job_id ELSE $7 END ELSE '' END,
+ source_download_id=CASE WHEN $6='usenet' THEN $7 ELSE source_download_id END,
             magnet = NULLIF($3, ''),
             download_client = 'decypharr',
             download_category = NULLIF($4, ''),
             source_title = NULLIF($5, ''),
             last_checked = now()
         WHERE id = $1
-    `, id, torrent.InfoHash, torrent.Magnet, category, torrent.SourceTitle)
+    `, id, torrent.InfoHash, torrent.Magnet, category, torrent.SourceTitle, torrent.Protocol, torrent.DownloadID)
 	if err != nil {
 		return err
 	}
@@ -955,7 +959,7 @@ func (r *Repo) MarkAvailable(ctx context.Context, id string, infoHash string, ca
         SET state = 'AVAILABLE',
             rearm_requested = false,
             cached_until = $2,
-            infohash = COALESCE(NULLIF($3, ''), infohash),
+            infohash = CASE WHEN source_protocol='torrent' THEN COALESCE(NULLIF($3, ''), infohash) ELSE NULL END,
             torbox_torrent_id = NULL,
             last_checked = now(),
             last_rehydrated = now(),
@@ -1063,7 +1067,7 @@ func (r *Repo) InvalidMediaRows(ctx context.Context, tenant string, limit int) (
             CASE
                 WHEN arr_id <= 0 THEN 'placeholder_arr_id'
                 WHEN state IN ('ARCHIVED', 'BROKEN', 'FAILED', 'REARMING', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(symlink_path), '') = '' THEN 'missing_symlink_path_for_rearmable_state'
-                WHEN state IN ('AVAILABLE', 'ARCHIVED', 'BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(infohash), '') = '' THEN 'missing_infohash'
+                WHEN state IN ('AVAILABLE', 'ARCHIVED', 'BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY') AND source_protocol='torrent' AND COALESCE(BTRIM(infohash), '') = '' THEN 'missing_infohash'
                 WHEN state = 'REQUESTED' AND COALESCE(BTRIM(symlink_path), '') <> '' THEN 'requested_row_has_path'
                 ELSE 'unknown'
             END AS reason,
@@ -1074,7 +1078,7 @@ func (r *Repo) InvalidMediaRows(ctx context.Context, tenant string, limit int) (
           AND (
               arr_id <= 0
               OR (state IN ('ARCHIVED', 'BROKEN', 'FAILED', 'REARMING', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(symlink_path), '') = '')
-              OR (state IN ('AVAILABLE', 'ARCHIVED', 'BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY') AND COALESCE(BTRIM(infohash), '') = '')
+              OR (state IN ('AVAILABLE', 'ARCHIVED', 'BROKEN', 'FAILED', 'WAITING_FOR_VISIBILITY') AND source_protocol='torrent' AND COALESCE(BTRIM(infohash), '') = '')
               OR (state = 'REQUESTED' AND COALESCE(BTRIM(symlink_path), '') <> '')
           )
         ORDER BY updated_at DESC
@@ -1440,7 +1444,7 @@ func (r *Repo) Metrics(ctx context.Context, tenant string) (MetricsSnapshot, err
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_events e JOIN media_cache_state m ON m.id = e.media_id WHERE m.tenant = $1`, tenant).Scan(&s.EventsTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state IN ('BROKEN','FAILED')`, tenant).Scan(&s.FailedItems)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND rearm_requested = true`, tenant).Scan(&s.RearmRequested)
-	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state = 'AVAILABLE' AND cached_until IS NOT NULL AND cached_until < now()`, tenant).Scan(&s.ExpiredPruneQueued)
+	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND state = 'AVAILABLE' AND source_protocol='torrent' AND infohash IS NOT NULL AND infohash<>'' AND cached_until IS NOT NULL AND cached_until < now()`, tenant).Scan(&s.ExpiredPruneQueued)
 	_ = r.pool.QueryRow(ctx, `SELECT count(*) FROM media_cache_state WHERE tenant = $1 AND last_play_intent_at IS NOT NULL`, tenant).Scan(&s.PlaybackIntentRows)
 	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(sum(play_intent_count), 0) FROM media_cache_state WHERE tenant = $1`, tenant).Scan(&s.PlaybackIntentTotal)
 	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(sum(seen_count), 0) FROM media_cache_playback_intents WHERE tenant = $1`, tenant).Scan(&s.UnmatchedPlaybackTotal)
@@ -1501,7 +1505,7 @@ func (r *Repo) SeriesStateSummary(ctx context.Context, tenant string) (map[strin
 
 func (r *Repo) SavedTorrentSource(ctx context.Context, id string) (model.TorrentMetadata, bool, error) {
 	var t model.TorrentMetadata
-	err := r.pool.QueryRow(ctx, `SELECT source_kind,infohash,filename,torrent_file,magnet FROM media_cache_torrent_sources WHERE media_id=$1`, id).Scan(&t.Kind, &t.InfoHash, &t.TorrentFilename, &t.TorrentFile, &t.Magnet)
+	err := r.pool.QueryRow(ctx, `SELECT source_kind,infohash,filename,torrent_file,magnet,protocol,download_id,nzb_file,nzb_filename FROM media_cache_torrent_sources WHERE media_id=$1`, id).Scan(&t.Kind, &t.InfoHash, &t.TorrentFilename, &t.TorrentFile, &t.Magnet, &t.Protocol, &t.DownloadID, &t.NZBFile, &t.NZBFilename)
 	if err == pgx.ErrNoRows {
 		return t, false, nil
 	}
@@ -1509,7 +1513,11 @@ func (r *Repo) SavedTorrentSource(ctx context.Context, id string) (model.Torrent
 	return t, err == nil, err
 }
 
-func (r *Repo) MarkSourceRecoveryRequired(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx, `UPDATE media_cache_state SET state='FAILED',rearm_requested=false,last_error=$2,next_retry_at=NULL,last_checked=now() WHERE id=$1`, id, model.ErrSourceRecoveryRequired.Error())
+func (r *Repo) MarkSourceRecoveryRequired(ctx context.Context, id string, reasons ...string) error {
+	reason := model.ErrSourceRecoveryRequired.Error()
+	if len(reasons) > 0 && reasons[0] != "" {
+		reason = reasons[0]
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE media_cache_state SET state='FAILED',rearm_requested=false,last_error=$2,next_retry_at=NULL,last_checked=now() WHERE id=$1`, id, reason)
 	return err
 }

@@ -215,11 +215,6 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 			}
 			seeded++
 
-			if refreshReason != "" && s.onImported != nil {
-				slog.Info("sonarr imported episode file queued for Jellyfin refresh", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "reason", refreshReason, "path", path)
-				s.onImported(ctx, item, refreshReason)
-			}
-
 			if err := s.repo.LinkGrabSourceForItem(ctx, s.tenant, item.ID); err != nil {
 				slog.Warn("could not link captured grab source", "error", err)
 			} else {
@@ -227,7 +222,12 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 					item = refreshed
 				}
 			}
-			if item.InfoHash == nil || *item.InfoHash == "" {
+			if refreshReason != "" && s.onImported != nil {
+				slog.Info("sonarr imported episode file queued for Jellyfin refresh", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "reason", refreshReason, "path", path)
+				s.onImported(ctx, item, refreshReason)
+			}
+
+			if item.SourceProtocol != model.ProtocolUsenet && (item.InfoHash == nil || *item.InfoHash == "") {
 				torrent, err := s.sonarr.LatestGrabbedTorrentForState(ctx, item)
 				if err != nil {
 					slog.Debug("sonarr seed sync could not resolve torrent metadata", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "error", err)

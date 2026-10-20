@@ -9,8 +9,8 @@ Decypharr owns all TorBox communication.
 
 ## Version
 
-This draft is **v0.5.11**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.5.11`.
+This draft is **v0.6.0**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.0`.
 
 ## Workflow
 
@@ -103,3 +103,11 @@ multiple episode files, but group-aware provider pruning remains a limitation.
 Source metainfo may contain private tracker credentials; include the source tables
 in protected backups. Historical migration files and media-server audit data are
 retained, while current Jellyfin scans use their own audit table.
+
+Usenet/NZB downloads through Decypharr are supported in v0.6.0; see
+[Usenet setup](docs/usenet-setup.md). Original NZBs are captured from Arr grabs;
+automatic Usenet pruning remains disabled.
+
+The selected Usenet setup uses TorBox Pro NNTP in Decypharr. See the
+[provider configuration fragment](config/decypharr-torbox-nntp.example.json);
+cloud Usenet cache/CDN integration is deferred.

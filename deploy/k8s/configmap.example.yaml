@@ -84,3 +84,13 @@ data:
     max_retries: 10
     concurrent_workers: 2
     db_auto_migrate: true
+
+    file_health:
+      enabled: true
+      interval_seconds: 300
+      batch_size: 20
+      failure_threshold: 3
+      max_rearms_per_run: 2
+      probe_timeout_seconds: 5
+      outage_failure_percent: 50
+      canary_path: "" # Optional known-readable file on the same remote mount.

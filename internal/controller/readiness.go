@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	"github.com/raefon/rehydrator/internal/model"
 )
@@ -17,14 +18,14 @@ func (c *Controller) rearmReady(ctx context.Context, item model.MediaCacheState,
 			return false, err
 		}
 		if found {
-			return ready && c.opt.CSI.Readable(item.SymlinkPath), nil
+			return ready && c.pathReadable(ctx, item.SymlinkPath), nil
 		}
 		exists, err := c.opt.Decypharr.LibraryHasDownload(ctx, job)
 		if err != nil || !exists {
 			return false, err
 		}
 		c.refreshRclone(ctx, item.SymlinkPath)
-		return c.opt.CSI.Readable(item.SymlinkPath), nil
+		return c.pathReadable(ctx, item.SymlinkPath), nil
 	}
 	info, err := c.opt.Decypharr.TorrentInfo(ctx, hash)
 	if err != nil {
@@ -40,5 +41,16 @@ func (c *Controller) rearmReady(ctx context.Context, item model.MediaCacheState,
 		return false, err
 	}
 	c.refreshRclone(ctx, item.SymlinkPath)
-	return c.opt.CSI.Readable(item.SymlinkPath), nil
+	return c.pathReadable(ctx, item.SymlinkPath), nil
+}
+
+// Share the bounded read slot so a stuck mount cannot accumulate rearm probes.
+func (c *Controller) pathReadable(ctx context.Context, path string) bool {
+	if c.fileProbe == nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	readable, err := c.fileProbe.Check(probeCtx, path)
+	return err == nil && readable
 }

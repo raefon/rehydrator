@@ -9,8 +9,8 @@ Decypharr owns all TorBox communication.
 
 ## Version
 
-This draft is **v0.6.0**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.0`.
+This draft is **v0.6.1**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.1`.
 
 ## Workflow
 
@@ -111,3 +111,5 @@ automatic Usenet pruning remains disabled.
 The selected Usenet setup uses TorBox Pro NNTP in Decypharr. See the
 [provider configuration fragment](config/decypharr-torbox-nntp.example.json);
 cloud Usenet cache/CDN integration is deferred.
+
+Unexpected cache loss can be recovered by [periodic file health checks](docs/file-health.md).

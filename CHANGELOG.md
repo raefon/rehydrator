@@ -1,3 +1,12 @@
+# Rehydrator v0.6.1 — Automatic file-health recovery (unreleased)
+
+## Added
+- Rolling, bounded file-read probes for AVAILABLE media with saved sources: repeated unreadability queues the existing rearm flow without needing a Jellyfin playback event.
+- Durable confirmation counts, per-tenant sweep coordination, at most two automatic queues per default pass, and a 24-hour per-file/source automatic recovery cooldown.
+- Decypharr health checks, timeout protection, widespread-failure suppression, and an optional mount canary. Archived/in-flight items are excluded.
+- Rearm completion and the optional visible-path shortcut now require actual readable bytes using bounded probes, rather than stale file metadata.
+- Migration `026_file_health.sql`, configuration/env options, and availability-versus-retention guidance. Local pruning policy remains unchanged; no unconditional 30-day rearm timer.
+
 # Rehydrator v0.6.0 — Usenet support and TorBox Pro NNTP (unreleased)
 
 ## Added

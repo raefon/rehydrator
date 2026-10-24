@@ -115,6 +115,15 @@ rclone_rc:
   password: ""
   refresh_after_rearm: false
   timeout_seconds: 10
+file_health:
+  enabled: true
+  interval_seconds: 300
+  batch_size: 20
+  failure_threshold: 3
+  max_rearms_per_run: 2
+  probe_timeout_seconds: 5
+  outage_failure_percent: 50
+  canary_path: "" # Optional known-readable file on the same remote mount.
 cache_grace_hours: 24
 max_retries: 10
 concurrent_workers: 2
@@ -137,6 +146,7 @@ type JellyfinConfig struct {
 }
 
 type Config struct {
+	FileHealth   FileHealthConfig
 	RearmBackend string
 	Jellyfin     JellyfinConfig
 
@@ -237,10 +247,11 @@ type Config struct {
 }
 
 type fileConfig struct {
-	RearmBackend string         `yaml:"rearm_backend"`
-	Jellyfin     JellyfinConfig `yaml:"jellyfin"`
-	PostgresURL  string         `yaml:"postgres_url"`
-	Tenant       string         `yaml:"tenant"`
+	FileHealth   FileHealthConfig `yaml:"file_health"`
+	RearmBackend string           `yaml:"rearm_backend"`
+	Jellyfin     JellyfinConfig   `yaml:"jellyfin"`
+	PostgresURL  string           `yaml:"postgres_url"`
+	Tenant       string           `yaml:"tenant"`
 
 	Radarr struct {
 		URL    string `yaml:"url"`
@@ -373,6 +384,7 @@ func Load(configPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
+		FileHealth:                    DefaultFileHealth(),
 		RearmBackend:                  "decypharr",
 		Jellyfin:                      JellyfinConfig{MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
 		RadarrURL:                     "http://radarr:7878",
@@ -447,7 +459,7 @@ func ensureConfigFile(path string) (bool, error) {
 }
 
 func readFileConfig(path string) (fileConfig, error) {
-	fc := fileConfig{Jellyfin: defaults().Jellyfin}
+	fc := fileConfig{Jellyfin: defaults().Jellyfin, FileHealth: DefaultFileHealth()}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -462,6 +474,7 @@ func readFileConfig(path string) (fileConfig, error) {
 }
 
 func applyFileConfig(cfg *Config, fc fileConfig) {
+	cfg.FileHealth = fc.FileHealth
 	cfg.DecypharrAPIToken = fc.Decypharr.APIToken
 	if fc.RearmBackend != "" {
 		cfg.RearmBackend = strings.ToLower(strings.TrimSpace(fc.RearmBackend))
@@ -647,6 +660,14 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 }
 
 func applyEnvOverrides(cfg *Config) {
+	cfg.FileHealth.CanaryPath = getenv("FILE_HEALTH_CANARY_PATH", cfg.FileHealth.CanaryPath)
+	cfg.FileHealth.Enabled = getenvBool("FILE_HEALTH_ENABLED", cfg.FileHealth.Enabled)
+	cfg.FileHealth.IntervalSeconds = getenvInt("FILE_HEALTH_INTERVAL_SECONDS", cfg.FileHealth.IntervalSeconds)
+	cfg.FileHealth.BatchSize = getenvInt("FILE_HEALTH_BATCH_SIZE", cfg.FileHealth.BatchSize)
+	cfg.FileHealth.FailureThreshold = getenvInt("FILE_HEALTH_FAILURE_THRESHOLD", cfg.FileHealth.FailureThreshold)
+	cfg.FileHealth.MaxRearmsPerRun = getenvInt("FILE_HEALTH_MAX_REARMS_PER_RUN", cfg.FileHealth.MaxRearmsPerRun)
+	cfg.FileHealth.ProbeTimeoutSeconds = getenvInt("FILE_HEALTH_PROBE_TIMEOUT_SECONDS", cfg.FileHealth.ProbeTimeoutSeconds)
+	cfg.FileHealth.OutageFailurePercent = getenvInt("FILE_HEALTH_OUTAGE_FAILURE_PERCENT", cfg.FileHealth.OutageFailurePercent)
 	cfg.Jellyfin.MaxRefreshesPerRun = getenvInt("JELLYFIN_MAX_REFRESHES_PER_RUN", cfg.Jellyfin.MaxRefreshesPerRun)
 	cfg.Jellyfin.RefreshDedupeMinutes = getenvInt("JELLYFIN_REFRESH_DEDUPE_MINUTES", cfg.Jellyfin.RefreshDedupeMinutes)
 	cfg.RearmBackend = strings.ToLower(strings.TrimSpace(getenv("REARM_BACKEND", cfg.RearmBackend)))
@@ -770,6 +791,10 @@ func hydrateDurations(cfg *Config) {
 }
 
 func validate(cfg Config) error {
+	h := cfg.FileHealth
+	if h.Enabled && (h.IntervalSeconds < 30 || h.BatchSize < 1 || h.BatchSize > 1000 || h.FailureThreshold < 2 || h.MaxRearmsPerRun < 1 || h.MaxRearmsPerRun > h.BatchSize || h.ProbeTimeoutSeconds < 1 || h.ProbeTimeoutSeconds > 30 || h.OutageFailurePercent < 1 || h.OutageFailurePercent > 100) {
+		return errors.New("invalid file_health settings: interval >=30s, batch 1..1000, failures >=2, rearms 1..batch, timeout 1..30s, outage percent 1..100")
+	}
 	if cfg.Jellyfin.RefreshMode != "" && cfg.Jellyfin.RefreshMode != "notification" && cfg.Jellyfin.RefreshMode != "targeted_scan" {
 		return errors.New("jellyfin.refresh_mode must be notification or targeted_scan")
 	}

@@ -11,7 +11,7 @@ csi_path: /storage/media
 
 # Main reconcile loop
 reconcile_interval_seconds: 30
-cache_grace_hours: 24
+cache_grace_hours: 24 # Local pruning policy, not TorBox retention.
 max_retries: 10
 concurrent_workers: 2
 
@@ -117,3 +117,14 @@ self_heal:
   refresh_available: true
   recent_hours: 24
   max_refreshes_per_run: 5
+
+# Unexpected cache loss recovery; intentionally ARCHIVED items stay archived.
+file_health:
+  enabled: true
+  interval_seconds: 300
+  batch_size: 20
+  failure_threshold: 3
+  max_rearms_per_run: 2
+  probe_timeout_seconds: 5
+  outage_failure_percent: 50
+  canary_path: "" # Optional known-readable file on the same remote mount.

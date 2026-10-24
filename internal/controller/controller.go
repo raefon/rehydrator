@@ -21,6 +21,7 @@ import (
 )
 
 type Options struct {
+	FileHealth     config.FileHealthConfig
 	Jellyfin       *jellyfin.Client
 	JellyfinConfig config.JellyfinConfig
 	Tenant         string
@@ -58,6 +59,7 @@ type Options struct {
 }
 
 type Controller struct {
+	fileProbe               *csi.ReadProbe
 	opt                     Options
 	jellyfinRefreshSem      chan struct{}
 	jellyfinRefreshDedupeMu sync.Mutex
@@ -128,7 +130,12 @@ func New(opt Options) *Controller {
 	if opt.SonarrCategory == "" {
 		opt.SonarrCategory = "sonarr"
 	}
+	var probe *csi.ReadProbe
+	if opt.CSI != nil {
+		probe = csi.NewReadProbe(opt.CSI)
+	}
 	return &Controller{
+		fileProbe:             probe,
 		opt:                   opt,
 		jellyfinRefreshSem:    make(chan struct{}, opt.JellyfinConfig.MaxRefreshesPerRun),
 		jellyfinRefreshDedupe: map[string]time.Time{},
@@ -136,6 +143,9 @@ func New(opt Options) *Controller {
 }
 
 func (c *Controller) Run(ctx context.Context) error {
+	if c.opt.FileHealth.Enabled && c.opt.RearmEnabled {
+		go c.runFileHealth(ctx)
+	}
 	if c.opt.SelfHealEnabled {
 		slog.Info("self-heal worker starting", "interval", c.opt.SelfHealInterval, "jellyfin_refresh_available", c.opt.SelfHealRefreshAvailable, "recent_hours", c.opt.SelfHealRecentHours, "max_jellyfin_refreshes_per_run", c.opt.SelfHealMaxRefreshesPerRun)
 	}
@@ -292,7 +302,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	}
 
 	pathVisible := c.opt.CSI.Exists(item.SymlinkPath)
-	if pathVisible && c.opt.RearmShortCircuitIfVisible && (item.SourceProtocol != model.ProtocolUsenet || c.opt.CSI.Readable(item.SymlinkPath)) {
+	if pathVisible && c.opt.RearmShortCircuitIfVisible && c.pathReadable(ctx, item.SymlinkPath) {
 		log.Info("file already visible through CSI; marking available", "rearm_short_circuit_if_visible", true)
 		cachedUntil := time.Now().Add(c.opt.CacheGrace)
 		_ = c.opt.Repo.MarkAvailable(ctx, item.ID, valueOrEmpty(item.InfoHash), cachedUntil)
@@ -554,7 +564,7 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 	}
 
 	c.refreshRclone(ctx, item.SymlinkPath)
-	if !c.opt.CSI.Readable(item.SymlinkPath) {
+	if !c.pathReadable(ctx, item.SymlinkPath) {
 		msg := "waiting for CSI/rclone mount visibility after successful provider add"
 		if valueOrEmpty(item.LastError) != "" {
 			msg = valueOrEmpty(item.LastError)
@@ -766,7 +776,7 @@ func (c *Controller) waitForCSI(ctx context.Context, path string) bool {
 	}
 	deadline := time.Now().Add(c.opt.CSIVisibilityTimeout)
 	for time.Now().Before(deadline) {
-		if c.opt.CSI.Exists(path) {
+		if c.pathReadable(ctx, path) {
 			return true
 		}
 
@@ -776,7 +786,7 @@ func (c *Controller) waitForCSI(ctx context.Context, path string) bool {
 		case <-time.After(c.opt.CSIVisibilityPoll):
 		}
 	}
-	return c.opt.CSI.Exists(path)
+	return c.pathReadable(ctx, path)
 }
 
 func (c *Controller) waitForCSIGone(ctx context.Context, path string) bool {

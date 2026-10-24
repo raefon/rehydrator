@@ -208,3 +208,10 @@ or enable `db_auto_migrate`. Enable On Grab and On Import in Arr webhook connect
 Sources are explicitly `torrent_file` or `magnet` with exactly one payload.
 Hashes are identity only; missing/ambiguous sources require recovery from Arr
 history or a new source capture, never automatic hash-to-magnet conversion. See [Decypharr setup](decypharr-rearm.md).
+
+## Periodic file health (v0.6.1)
+
+`file_health` controls rolling readability checks and bounded automatic recovery
+of unexpectedly unreadable AVAILABLE media. See [file-health recovery](file-health.md)
+for defaults, outage protection, canary configuration, and the distinction between
+TorBox inactivity retention and Rehydrator's local prune policy.

@@ -23,3 +23,10 @@ initialization). It adds explicit protocols, original NZB bytes/filenames, opaqu
 runtime job IDs, and a shared season-pack job mapping. Existing torrent payloads
 remain separate. Usenet is excluded from automatic pruning. See
 [Usenet setup](usenet-setup.md).
+
+## v0.6.1: File-health observations
+
+Migration `026_file_health.sql` adds persistent per-file failure observations,
+automatic-recovery cooldown timestamps, and per-tenant sweep timestamps. It does
+not rearm or change existing lifecycle states when applied. Startup schema
+initialization includes it. See [file-health recovery](file-health.md).

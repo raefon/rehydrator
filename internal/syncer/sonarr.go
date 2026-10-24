@@ -23,6 +23,7 @@ type SonarrSyncer struct {
 	interval   time.Duration
 	cacheGrace time.Duration
 	onImported func(context.Context, model.MediaCacheState, string)
+	onObserved func(context.Context, model.MediaCacheState)
 
 	mu          sync.Mutex
 	running     bool
@@ -42,6 +43,7 @@ type SonarrOptions struct {
 	CacheGrace time.Duration
 	Debounce   time.Duration
 	OnImported func(context.Context, model.MediaCacheState, string)
+	OnObserved func(context.Context, model.MediaCacheState)
 }
 
 func NewSonarr(opt SonarrOptions) *SonarrSyncer {
@@ -66,6 +68,7 @@ func NewSonarr(opt SonarrOptions) *SonarrSyncer {
 		interval:   opt.Interval,
 		cacheGrace: opt.CacheGrace,
 		onImported: opt.OnImported,
+		onObserved: opt.OnObserved,
 		debounce:   opt.Debounce,
 	}
 }
@@ -221,6 +224,9 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 				if refreshed, found, err := s.repo.GetState(ctx, s.tenant, item.MediaType, item.ArrID); err == nil && found {
 					item = refreshed
 				}
+			}
+			if s.onObserved != nil {
+				s.onObserved(ctx, item)
 			}
 			if refreshReason != "" && s.onImported != nil {
 				slog.Info("sonarr imported episode file queued for Jellyfin refresh", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "reason", refreshReason, "path", path)

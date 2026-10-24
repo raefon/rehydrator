@@ -23,6 +23,7 @@ type RadarrSyncer struct {
 	interval   time.Duration
 	cacheGrace time.Duration
 	onImported func(context.Context, model.MediaCacheState, string)
+	onObserved func(context.Context, model.MediaCacheState)
 }
 
 type RadarrOptions struct {
@@ -34,6 +35,7 @@ type RadarrOptions struct {
 	Interval   time.Duration
 	CacheGrace time.Duration
 	OnImported func(context.Context, model.MediaCacheState, string)
+	OnObserved func(context.Context, model.MediaCacheState)
 }
 
 func NewRadarr(opt RadarrOptions) *RadarrSyncer {
@@ -55,6 +57,7 @@ func NewRadarr(opt RadarrOptions) *RadarrSyncer {
 		interval:   opt.Interval,
 		cacheGrace: opt.CacheGrace,
 		onImported: opt.OnImported,
+		onObserved: opt.OnObserved,
 	}
 }
 
@@ -127,6 +130,9 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 			if refreshed, found, err := s.repo.GetState(ctx, s.tenant, item.MediaType, item.ArrID); err == nil && found {
 				item = refreshed
 			}
+		}
+		if s.onObserved != nil {
+			s.onObserved(ctx, item)
 		}
 		if refreshReason != "" && s.onImported != nil {
 			slog.Info("radarr imported item queued for Jellyfin refresh", "movie_id", movie.ID, "title", movie.Title, "reason", refreshReason, "path", path)

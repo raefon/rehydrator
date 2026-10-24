@@ -1,3 +1,9 @@
+# Rehydrator v0.6.6 — Recover abandoned pruning (unreleased)
+
+## Fixed
+- With pruning disabled and rearm, file health and TorBox health enabled, current Arr inventory returns eligible PRUNING torrents to BROKEN after a durable 15-minute observation window. Matching saved sources are required; the bounded provider health worker handles recovery. Migration `028_stale_pruning.sql` adds the observation marker.
+- Preserve archives, source-less files, recent operations and in-flight requests. No provider deletion, immediate add or blind AVAILABLE reset occurs.
+
 # Rehydrator v0.6.5 — Recover confirmed provider losses (unreleased)
 
 ## Fixed

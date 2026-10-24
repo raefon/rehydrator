@@ -144,3 +144,14 @@ Since v0.6.4, that mode also reconciles unrequested BROKEN torrents with matchin
 saved sources. Archived and in-flight rows stay excluded. Provider-present mount
 failures do not cause provider resubmission;
 unknown API results do not imply eviction. NZB handling is unchanged.
+
+## Recovering abandoned pruning (v0.6.6)
+
+When pruning is disabled, the Sonarr/Radarr inventory sync can return PRUNING
+torrents observed for 15 minutes with pruning disabled to BROKEN. Rearm, file health and TorBox health must
+be enabled. The current Arr inventory must contain the imported file, and its
+database row must have a matching saved torrent source and no pending rearm.
+The normal provider health sweep then confirms availability or queues bounded
+recovery. Migration `028_stale_pruning.sql` adds a durable grace-period marker; no new setting is needed. Keep inventory sync enabled.
+Source-less rows and archived files remain untouched. This assumes all replicas
+for the tenant use pruning disabled; drain older pruning-enabled replicas first.

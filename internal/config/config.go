@@ -124,6 +124,11 @@ file_health:
   probe_timeout_seconds: 5
   outage_failure_percent: 50
   canary_path: "" # Optional known-readable file on the same remote mount.
+torbox_health:
+  enabled: false # Opt-in read-only account checks; requires the same TorBox account as Decypharr.
+  api_key: "" # Prefer TORBOX_HEALTH_API_KEY from a Secret.
+  interval_seconds: 900
+  timeout_seconds: 20
 cache_grace_hours: 24
 max_retries: 10
 concurrent_workers: 2
@@ -146,6 +151,7 @@ type JellyfinConfig struct {
 }
 
 type Config struct {
+	TorBoxHealth TorBoxHealthConfig
 	FileHealth   FileHealthConfig
 	RearmBackend string
 	Jellyfin     JellyfinConfig
@@ -247,11 +253,12 @@ type Config struct {
 }
 
 type fileConfig struct {
-	FileHealth   FileHealthConfig `yaml:"file_health"`
-	RearmBackend string           `yaml:"rearm_backend"`
-	Jellyfin     JellyfinConfig   `yaml:"jellyfin"`
-	PostgresURL  string           `yaml:"postgres_url"`
-	Tenant       string           `yaml:"tenant"`
+	TorBoxHealth TorBoxHealthConfig `yaml:"torbox_health"`
+	FileHealth   FileHealthConfig   `yaml:"file_health"`
+	RearmBackend string             `yaml:"rearm_backend"`
+	Jellyfin     JellyfinConfig     `yaml:"jellyfin"`
+	PostgresURL  string             `yaml:"postgres_url"`
+	Tenant       string             `yaml:"tenant"`
 
 	Radarr struct {
 		URL    string `yaml:"url"`
@@ -384,6 +391,7 @@ func Load(configPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
+		TorBoxHealth:                  DefaultTorBoxHealth(),
 		FileHealth:                    DefaultFileHealth(),
 		RearmBackend:                  "decypharr",
 		Jellyfin:                      JellyfinConfig{MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
@@ -459,7 +467,7 @@ func ensureConfigFile(path string) (bool, error) {
 }
 
 func readFileConfig(path string) (fileConfig, error) {
-	fc := fileConfig{Jellyfin: defaults().Jellyfin, FileHealth: DefaultFileHealth()}
+	fc := fileConfig{TorBoxHealth: DefaultTorBoxHealth(), Jellyfin: defaults().Jellyfin, FileHealth: DefaultFileHealth()}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -474,6 +482,7 @@ func readFileConfig(path string) (fileConfig, error) {
 }
 
 func applyFileConfig(cfg *Config, fc fileConfig) {
+	cfg.TorBoxHealth = fc.TorBoxHealth
 	cfg.FileHealth = fc.FileHealth
 	cfg.DecypharrAPIToken = fc.Decypharr.APIToken
 	if fc.RearmBackend != "" {
@@ -660,6 +669,10 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 }
 
 func applyEnvOverrides(cfg *Config) {
+	cfg.TorBoxHealth.Enabled = getenvBool("TORBOX_HEALTH_ENABLED", cfg.TorBoxHealth.Enabled)
+	cfg.TorBoxHealth.APIKey = getenv("TORBOX_HEALTH_API_KEY", cfg.TorBoxHealth.APIKey)
+	cfg.TorBoxHealth.IntervalSeconds = getenvInt("TORBOX_HEALTH_INTERVAL_SECONDS", cfg.TorBoxHealth.IntervalSeconds)
+	cfg.TorBoxHealth.TimeoutSeconds = getenvInt("TORBOX_HEALTH_TIMEOUT_SECONDS", cfg.TorBoxHealth.TimeoutSeconds)
 	cfg.FileHealth.CanaryPath = getenv("FILE_HEALTH_CANARY_PATH", cfg.FileHealth.CanaryPath)
 	cfg.FileHealth.Enabled = getenvBool("FILE_HEALTH_ENABLED", cfg.FileHealth.Enabled)
 	cfg.FileHealth.IntervalSeconds = getenvInt("FILE_HEALTH_INTERVAL_SECONDS", cfg.FileHealth.IntervalSeconds)
@@ -791,6 +804,9 @@ func hydrateDurations(cfg *Config) {
 }
 
 func validate(cfg Config) error {
+	if cfg.TorBoxHealth.Enabled && (strings.TrimSpace(cfg.TorBoxHealth.APIKey) == "" || cfg.TorBoxHealth.IntervalSeconds < 300 || cfg.TorBoxHealth.TimeoutSeconds < 1 || cfg.TorBoxHealth.TimeoutSeconds > 120) {
+		return errors.New("torbox_health requires api_key, interval_seconds >=300 and timeout_seconds 1..120")
+	}
 	h := cfg.FileHealth
 	if h.Enabled && (h.IntervalSeconds < 30 || h.BatchSize < 1 || h.BatchSize > 1000 || h.FailureThreshold < 2 || h.MaxRearmsPerRun < 1 || h.MaxRearmsPerRun > h.BatchSize || h.ProbeTimeoutSeconds < 1 || h.ProbeTimeoutSeconds > 30 || h.OutageFailurePercent < 1 || h.OutageFailurePercent > 100) {
 		return errors.New("invalid file_health settings: interval >=30s, batch 1..1000, failures >=2, rearms 1..batch, timeout 1..30s, outage percent 1..100")

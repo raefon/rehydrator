@@ -2,8 +2,10 @@ package controller
 
 import (
 	"context"
+	"github.com/raefon/rehydrator/internal/config"
 	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/torbox"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,5 +73,44 @@ func TestHealthSampleContinuesAfterTimeout(t *testing.T) {
 	}
 	if fileHealthOutage(results, false, 50) {
 		t.Fatal("deferred reads treated as mount failures")
+	}
+}
+
+func TestProviderOutageCountsReleasesNotEpisodes(t *testing.T) {
+	states := map[string]db.ProviderHealth{"pack": {Status: "unavailable"}}
+	if providerSampleOutage(states, 50) {
+		t.Fatal("one pack treated as a mass outage")
+	}
+	states["other"] = db.ProviderHealth{Status: "unavailable"}
+	states["healthy"] = db.ProviderHealth{Status: "available"}
+	if !providerSampleOutage(states, 50) {
+		t.Fatal("mass outage not suppressed")
+	}
+}
+
+type readyHealthClient struct {
+	calls  int
+	status string
+}
+
+func (h *readyHealthClient) Availability(ctx context.Context, hashes []string) (map[string]torbox.Observation, error) {
+	h.calls++
+	return map[string]torbox.Observation{hashes[0]: {Status: torbox.Availability(h.status)}}, nil
+}
+func TestProviderReadinessSharedCache(t *testing.T) {
+	health := &readyHealthClient{status: "unavailable"}
+	c := New(Options{TorBoxHealth: config.TorBoxHealthConfig{Enabled: true, TimeoutSeconds: 1}, TorBoxHealthClient: health})
+	for i := 0; i < 3; i++ {
+		if ready, err := c.torboxReady(context.Background(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil || ready {
+			t.Fatal("missing provider data accepted", err)
+		}
+	}
+	if health.calls != 1 {
+		t.Fatal("same release was queried per episode", health.calls)
+	}
+	health.status = "available"
+	c.providerReadyCache = nil
+	if ready, err := c.torboxReady(context.Background(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil || !ready {
+		t.Fatal("provider availability ignored", err)
 	}
 }

@@ -127,6 +127,7 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/playback/jellyfin", api.handleJellyfinPlayback)
 		mux.HandleFunc("/api/playback/event", api.handleGenericPlayback)
 		mux.HandleFunc("/api/state", api.handleState)
+		mux.HandleFunc("/api/health/torbox", api.handleTorBoxHealth)
 	}
 
 	return &Server{

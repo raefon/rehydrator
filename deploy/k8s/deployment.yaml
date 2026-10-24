@@ -81,6 +81,12 @@ spec:
                 secretKeyRef:
                   name: rehydrator-secrets
                   key: decypharr-api-token
+            - name: TORBOX_HEALTH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rehydrator-secrets
+                  key: torbox-health-api-key
+                  optional: true
             - name: API_TOKEN
               valueFrom:
                 secretKeyRef:

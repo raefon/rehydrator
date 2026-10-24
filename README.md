@@ -5,12 +5,12 @@ Decypharr, PostgreSQL, CSI-rclone, and **Jellyfin**. Seerr can provide request i
 
 It records imported releases, asks Decypharr to prune expired provider placements,
 and restores archived media when Jellyfin playback or an API request asks for it.
-Decypharr owns all TorBox communication.
+Decypharr owns TorBox mutations. Optional read-only TorBox health checks compare tracked releases with the provider account inventory.
 
 ## Version
 
-This draft is **v0.6.2**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.2`.
+This draft is **v0.6.3**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.3`.
 
 ## Workflow
 
@@ -113,3 +113,7 @@ The selected Usenet setup uses TorBox Pro NNTP in Decypharr. See the
 cloud Usenet cache/CDN integration is deferred.
 
 Unexpected cache loss can be recovered by [periodic file health checks](docs/file-health.md).
+
+Optional [TorBox provider-first health checks](docs/torbox-health.md) compare stored
+torrent hashes with the account's reported availability; all provider mutations
+remain in Decypharr.

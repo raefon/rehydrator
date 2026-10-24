@@ -133,3 +133,10 @@ JOIN media_cache_file_health h ON h.media_id=m.id
 WHERE m.tenant='YOUR_TENANT'
 ORDER BY h.last_checked_at DESC;
 ```
+
+## Optional provider-first checks (v0.6.3)
+
+Enable [read-only TorBox health](torbox-health.md) to compare tracked torrent
+releases against the provider account inventory before making recovery decisions.
+In that mode provider-present mount failures do not cause provider resubmission;
+unknown API results do not imply eviction. NZB handling is unchanged.

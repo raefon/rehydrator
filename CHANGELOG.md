@@ -1,3 +1,13 @@
+# Rehydrator v0.6.3 — TorBox provider-first health (unreleased)
+
+## Added
+- Opt-in read-only TorBox account checks compare tracked torrent hashes with complete paginated account inventory and `download_present`. Missing entries, unavailable payloads, and unknown API results are stored separately from media/source records.
+- Migration `027_provider_health.sql` retains timestamped per-release observations, confirmation counts and shared recovery cooldowns. GET `/api/health/torbox` reports stored observations.
+- Group checks and recovery by torrent hash. One season-pack rearm is submitted through Decypharr; related AVAILABLE files wait for provider readiness and readable mount data.
+
+## Changed
+- With TorBox health enabled, mount-only failures do not resubmit provider-available torrents; unknown results do not imply eviction. All provider mutations still go through Decypharr. NNTP retains its existing health flow.
+
 # Rehydrator v0.6.2 — Health-scan progress past slow files (unreleased)
 
 ## Fixed

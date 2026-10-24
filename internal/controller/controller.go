@@ -18,9 +18,14 @@ import (
 	"github.com/raefon/rehydrator/internal/jellyfin"
 	"github.com/raefon/rehydrator/internal/model"
 	"github.com/raefon/rehydrator/internal/rclone"
+	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 type Options struct {
+	TorBoxHealth       config.TorBoxHealthConfig
+	TorBoxHealthClient interface {
+		Availability(context.Context, []string) (map[string]torbox.Observation, error)
+	}
 	FileHealth     config.FileHealthConfig
 	Jellyfin       *jellyfin.Client
 	JellyfinConfig config.JellyfinConfig
@@ -59,6 +64,8 @@ type Options struct {
 }
 
 type Controller struct {
+	providerReadyMu         sync.Mutex
+	providerReadyCache      map[string]providerReadyObservation
 	healthProbe             *csi.ReadProbe
 	fileProbe               *csi.ReadProbe
 	opt                     Options
@@ -305,7 +312,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	}
 
 	pathVisible := c.opt.CSI.Exists(item.SymlinkPath)
-	if pathVisible && c.opt.RearmShortCircuitIfVisible && c.pathReadable(ctx, item.SymlinkPath) {
+	if pathVisible && c.opt.RearmShortCircuitIfVisible && (!c.opt.TorBoxHealth.Enabled || item.SourceProtocol == model.ProtocolUsenet) && c.pathReadable(ctx, item.SymlinkPath) {
 		log.Info("file already visible through CSI; marking available", "rearm_short_circuit_if_visible", true)
 		cachedUntil := time.Now().Add(c.opt.CacheGrace)
 		_ = c.opt.Repo.MarkAvailable(ctx, item.ID, valueOrEmpty(item.InfoHash), cachedUntil)
@@ -379,6 +386,20 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		item.SourceProtocol = model.ProtocolUsenet
 		item.DownloadJobID = hash
 	} else {
+		if c.opt.TorBoxHealth.Enabled {
+			ready, err := c.torboxReady(ctx, hash)
+			if err != nil {
+				c.waitAfterStatusError(ctx, item, hash, err)
+				return
+			}
+			if !ready {
+				// Clear only the stale completed queue entry; preserve imported links.
+				if err := c.opt.Decypharr.DeleteTorrent(ctx, hash, false); err != nil {
+					c.failProvider(ctx, item, "decypharr", err)
+					return
+				}
+			}
+		}
 		addResult, err := c.opt.Decypharr.AddTorrent(ctx, torrent, category)
 		if err != nil {
 			c.failProvider(ctx, item, "decypharr", err)

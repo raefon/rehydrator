@@ -22,11 +22,12 @@ import (
 	"github.com/raefon/rehydrator/internal/rclone"
 	"github.com/raefon/rehydrator/internal/seerr"
 	"github.com/raefon/rehydrator/internal/syncer"
+	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.6.2"
+var version = "0.6.3"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
@@ -83,7 +84,12 @@ func main() {
 		jellyfinClient = jellyfin.NewClient(cfg.Jellyfin.URL, cfg.Jellyfin.APIKey, time.Duration(cfg.Jellyfin.TimeoutSeconds)*time.Second, cfg.Jellyfin.RefreshMode)
 	}
 
+	var torboxHealth *torbox.HealthClient
+	if cfg.TorBoxHealth.Enabled {
+		torboxHealth = torbox.NewHealthClient(cfg.TorBoxHealth.APIKey)
+	}
 	ctrl := controller.New(controller.Options{
+		TorBoxHealth: cfg.TorBoxHealth, TorBoxHealthClient: torboxHealth,
 		FileHealth:                 cfg.FileHealth,
 		Tenant:                     cfg.Tenant,
 		Repo:                       repo,

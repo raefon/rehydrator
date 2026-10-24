@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/model"
+	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 func (c *Controller) runFileHealth(ctx context.Context) {
@@ -89,28 +91,83 @@ func (c *Controller) reconcileFileHealth(ctx context.Context) {
 		_, _ = pass.Finish(ctx, nil, false, cfg.FailureThreshold, 0)
 		return
 	}
+	providerStates := map[string]db.ProviderHealth{}
+	if c.opt.TorBoxHealth.Enabled {
+		if c.opt.TorBoxHealthClient == nil {
+			slog.Warn("TorBox health enabled without a client")
+			return
+		}
+		providerStates, err = c.observeProviders(ctx, pass, targets)
+		if err != nil {
+			slog.Warn("provider health persistence failed", "error", err)
+			return
+		}
+	}
 	probe := func(path string) (bool, error) {
 		probeCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.ProbeTimeoutSeconds)*time.Second)
 		defer cancel()
 		return c.healthProbe.Check(probeCtx, path)
 	}
 	canary := false
+	canaryFailed := false
 	if cfg.CanaryPath != "" {
 		canary, err = probe(cfg.CanaryPath)
 		if err != nil || !canary {
 			slog.Warn("file health paused; mount canary unreadable", "error", err)
-			_, _ = pass.Finish(ctx, nil, true, cfg.FailureThreshold, 0)
-			return
+			canaryFailed = true
 		}
 	}
-	results, timedOut := sampleFileHealth(ctx, targets, probe)
-	outage := fileHealthOutage(results, canary, cfg.OutageFailurePercent)
+	readTargets := make([]db.FileHealthTarget, 0, len(targets))
+	for _, t := range targets {
+		if c.opt.TorBoxHealth.Enabled && t.Protocol == model.ProtocolTorrent && providerStates[t.InfoHash].Status != torbox.Available {
+			continue
+		}
+		readTargets = append(readTargets, t)
+	}
+	var reads []db.FileHealthResult
+	timedOut := 0
+	if !canaryFailed {
+		reads, timedOut = sampleFileHealth(ctx, readTargets, probe)
+	}
+	outage := canaryFailed || fileHealthOutage(reads, canary, cfg.OutageFailurePercent)
+	providerOutage := providerSampleOutage(providerStates, cfg.OutageFailurePercent)
+	byID := map[string]db.FileHealthResult{}
+	for _, r := range reads {
+		byID[r.Target.ID] = r
+	}
+	results := make([]db.FileHealthResult, 0, len(targets))
+	for _, t := range targets {
+		r, read := byID[t.ID]
+		if !read {
+			r = db.FileHealthResult{Target: t, Deferred: true}
+		}
+		if c.opt.TorBoxHealth.Enabled && t.Protocol == model.ProtocolTorrent {
+			h := providerStates[t.InfoHash]
+			r.Provider = &h
+			r.ProviderOutage = providerOutage
+			if h.Status == torbox.Unavailable {
+				r.Deferred = false
+			}
+		}
+		results = append(results, r)
+	}
 	failed, deferred := 0, 0
-	for _, result := range results {
-		if result.Deferred {
+	for _, r := range reads {
+		if r.Deferred {
 			deferred++
-		} else if !result.Readable {
+		} else if !r.Readable {
 			failed++
+		}
+	}
+	available, missing, unknown := 0, 0, 0
+	for _, h := range providerStates {
+		switch h.Status {
+		case torbox.Available:
+			available++
+		case torbox.Unavailable:
+			missing++
+		default:
+			unknown++
 		}
 	}
 	queued, err := pass.Finish(ctx, results, outage, cfg.FailureThreshold, cfg.MaxRearmsPerRun)
@@ -118,7 +175,7 @@ func (c *Controller) reconcileFileHealth(ctx context.Context) {
 		slog.Warn("file health pass failed", "error", err)
 		return
 	}
-	slog.Info("file health pass complete", "sampled", len(results), "checked", len(results)-deferred, "deferred", deferred, "timed_out", timedOut, "unreadable", failed, "outage_paused", outage, "rearms_queued", queued)
+	slog.Info("file health pass complete", "sampled", len(results), "checked", len(reads)-deferred, "provider_available", available, "provider_unavailable", missing, "provider_unknown", unknown, "provider_outage_paused", providerOutage, "deferred", deferred, "timed_out", timedOut, "unreadable", failed, "outage_paused", outage, "rearms_queued", queued)
 }
 
 // Continue after individual timeouts within a fixed outstanding-read budget.

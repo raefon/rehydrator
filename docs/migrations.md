@@ -30,3 +30,10 @@ Migration `026_file_health.sql` adds persistent per-file failure observations,
 automatic-recovery cooldown timestamps, and per-tenant sweep timestamps. It does
 not rearm or change existing lifecycle states when applied. Startup schema
 initialization includes it. See [file-health recovery](file-health.md).
+
+## v0.6.3: Provider observations
+
+`027_provider_health.sql` adds per-tenant/provider/hash observations, confirmation
+counts, and shared recovery cooldown timestamps. Applying it does not reconcile
+or delete media. Direct read-only TorBox checking remains opt-in. See
+[TorBox health](torbox-health.md).

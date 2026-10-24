@@ -27,6 +27,12 @@ func (c *Controller) rearmReady(ctx context.Context, item model.MediaCacheState,
 		c.refreshRclone(ctx, item.SymlinkPath)
 		return c.pathReadable(ctx, item.SymlinkPath), nil
 	}
+	if c.opt.TorBoxHealth.Enabled {
+		ready, err := c.torboxReady(ctx, hash)
+		if err != nil || !ready {
+			return false, err
+		}
+	}
 	info, err := c.opt.Decypharr.TorrentInfo(ctx, hash)
 	if err != nil {
 		return false, err

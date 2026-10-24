@@ -227,3 +227,10 @@ The state inventory includes `SourceProtocol`, `SourceDownloadID`, and
 `DownloadJobID`; NZB sources do not have torrent infohashes. Existing rearm routes
 use saved NZB bytes and Decypharr's SAB-compatible job status automatically.
 See [Usenet setup](usenet-setup.md) for configuration and recovery limits.
+
+## Stored TorBox observations (v0.6.3)
+
+Authenticated `GET /api/health/torbox` returns up to 200 stored observations for
+tracked torrent releases, including provider status/reason, timestamp, torrent ID,
+confirmation count and tracked-file count. It does not call TorBox or mutate the
+catalog. See [provider consistency checks](torbox-health.md).

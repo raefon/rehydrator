@@ -94,3 +94,9 @@ data:
       probe_timeout_seconds: 5
       outage_failure_percent: 50
       canary_path: "" # Optional known-readable file on the same remote mount.
+
+    torbox_health:
+      enabled: false # Opt-in read-only account checks; requires the same TorBox account as Decypharr.
+      api_key: "" # Prefer TORBOX_HEALTH_API_KEY from a Secret.
+      interval_seconds: 900
+      timeout_seconds: 20

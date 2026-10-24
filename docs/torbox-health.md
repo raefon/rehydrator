@@ -125,3 +125,16 @@ already-requested rows are not newly selected. Saved-source validation remains
 required, so the number checked may be lower than the total BROKEN count.
 Widespread-loss suppression still applies; this is not an unconditional bulk
 restore of every broken row. No new migration beyond 027 is required.
+
+## Missing placements after accepted adds (v0.6.7)
+
+Visibility-waiting torrents can retry saved sources when TorBox confirms absence
+and Decypharr has no job or reports a completed/error job. Active, stalled-download
+and unknown queue states block retries. The first eligible observation starts a
+15-minute grace period. Subsequent retries share a durable tenant/hash budget:
+three attempts maximum, with 15/30/60-minute backoff. This budget does not
+automatically reset after success; exhausted releases need investigation.
+Migration `029_provider_retries.sql` stores reservations and the last result.
+No Prowlarr fetch, synthesized magnet or provider deletion is used. Stale queue
+cleanup uses deleteFiles=false. Unknown/error observations never authorize adds.
+All related files continue waiting and refresh Jellyfin after becoming readable.

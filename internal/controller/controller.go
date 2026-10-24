@@ -583,6 +583,7 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 	}
 
 	if !ready {
+		c.retryMissingProvider(ctx, item)
 		c.markWaitingVisibility(ctx, item, valueOrEmpty(item.InfoHash), "waiting for Decypharr download completion before mount visibility")
 		return
 	}

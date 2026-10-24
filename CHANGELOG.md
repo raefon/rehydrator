@@ -1,3 +1,10 @@
+# Rehydrator v0.6.7 — Retry missing provider placements (unreleased)
+
+## Fixed
+- Waiting torrent releases absent from TorBox can retry their exact saved source through Decypharr after a 15-minute observation grace period.
+- Migration `029_provider_retries.sql` reserves retries durably per tenant/hash before submission. At most three retries use 15/30/60-minute backoff; restarts and sibling episodes share the budget.
+- Active or unknown Decypharr queue states, provider API errors, unknown provider results and invalid saved sources do not trigger resubmission. Queue cleanup preserves files. Waiting episodes continue normal visibility and Jellyfin refresh handling.
+
 # Rehydrator v0.6.6 — Recover abandoned pruning (unreleased)
 
 ## Fixed

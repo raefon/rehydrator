@@ -1,4 +1,4 @@
-# File-health recovery (v0.6.2)
+# File-health recovery (v0.6.4)
 
 The file-health worker recovers unexpected loss of files that Rehydrator still
 considers AVAILABLE. It does not depend on the episode remaining selectable in
@@ -22,8 +22,9 @@ Every option has an uppercase `FILE_HEALTH_` environment override, such as
 
 ## What gets recovered
 
-- Only AVAILABLE rows with a valid saved source type and no pending rearm are
-  sampled. This includes never-played episodes. ARCHIVED, FAILED, REQUESTED,
+- Filesystem-only mode samples AVAILABLE rows with a valid saved source type
+  and no pending rearm. Provider-first mode also includes unrequested BROKEN
+  torrents, as described below. This includes never-played episodes. ARCHIVED, FAILED, REQUESTED,
   REARMING, PRUNING and WAITING_FOR_VISIBILITY rows are excluded.
 - A file must fail three sampled reads by default. A successful read resets its
   failure count. A changed path or source identity starts confirmation again.
@@ -138,5 +139,7 @@ ORDER BY h.last_checked_at DESC;
 
 Enable [read-only TorBox health](torbox-health.md) to compare tracked torrent
 releases against the provider account inventory before making recovery decisions.
-In that mode provider-present mount failures do not cause provider resubmission;
+Since v0.6.4, that mode also reconciles unrequested BROKEN torrents with matching
+saved sources. Archived and in-flight rows stay excluded. Provider-present mount
+failures do not cause provider resubmission;
 unknown API results do not imply eviction. NZB handling is unchanged.

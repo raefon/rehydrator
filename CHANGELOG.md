@@ -1,3 +1,10 @@
+# Rehydrator v0.6.4 — Reconcile unrequested broken torrents (unreleased)
+
+## Fixed
+- Include unrequested BROKEN torrent rows in provider-first health sweeps when TorBox health is enabled, retaining source validation, confirmation thresholds, outage suppression and recovery caps.
+- Queue one missing-release restore and route eligible broken siblings into shared visibility waiting. Already provider-present, readable broken files enter visibility confirmation without a provider add.
+- Archived, failed, requested, pruning, rearming, source-less and already-requested rows remain excluded from new automatic work. No bulk lifecycle reset or schema migration is introduced.
+
 # Rehydrator v0.6.3 — TorBox provider-first health (unreleased)
 
 ## Added

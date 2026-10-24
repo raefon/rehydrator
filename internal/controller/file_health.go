@@ -17,7 +17,7 @@ func (c *Controller) runFileHealth(ctx context.Context) {
 	if cfg.IntervalSeconds < 30 || cfg.BatchSize < 1 || cfg.ProbeTimeoutSeconds < 1 {
 		return
 	}
-	slog.Info("file health worker starting", "interval_seconds", cfg.IntervalSeconds, "batch_size", cfg.BatchSize, "failure_threshold", cfg.FailureThreshold, "max_rearms", cfg.MaxRearmsPerRun)
+	slog.Info("file health worker starting", "interval_seconds", cfg.IntervalSeconds, "batch_size", cfg.BatchSize, "failure_threshold", cfg.FailureThreshold, "max_rearms", cfg.MaxRearmsPerRun, "torbox_health_enabled", c.opt.TorBoxHealth.Enabled, "include_broken_torrents", c.opt.TorBoxHealth.Enabled)
 	ticker := time.NewTicker(time.Duration(cfg.IntervalSeconds) * time.Second)
 	defer ticker.Stop()
 	c.reconcileFileHealth(ctx)
@@ -82,7 +82,7 @@ func (c *Controller) reconcileFileHealth(ctx context.Context) {
 		_, _ = pass.Finish(ctx, nil, true, cfg.FailureThreshold, 0)
 		return
 	}
-	targets, err := pass.Targets(ctx, cfg.BatchSize)
+	targets, err := pass.Targets(ctx, cfg.BatchSize, c.opt.TorBoxHealth.Enabled)
 	if err != nil {
 		slog.Warn("file health lookup failed", "error", err)
 		return

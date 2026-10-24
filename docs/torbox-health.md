@@ -1,14 +1,14 @@
-# Read-only TorBox consistency checks (v0.6.3)
+# Read-only TorBox consistency checks (v0.6.4)
 
 This opt-in mode makes provider observations the primary torrent recovery signal.
-It compares tracked AVAILABLE torrent hashes against the TorBox **account** list,
+It compares tracked AVAILABLE and unrequested BROKEN torrent hashes against the TorBox **account** list,
 including `download_present`, rather than asking only whether a hash exists in
 TorBox's global cache. Adds, rearming, queue cleanup and provider pruning remain
 Decypharr operations. Rehydrator's runtime health client only issues GET requests.
 
 ## Enable
 
-Deploy v0.6.3 with migration `027_provider_health.sql` after prior migrations,
+Deploy v0.6.4 with migration `027_provider_health.sql` after prior migrations,
 or enable startup schema initialization. Keep `file_health.enabled` and
 `rearm_enabled` enabled, then configure:
 
@@ -65,7 +65,7 @@ that the account placement needs restoration; filesystem outage checks still
 apply to filesystem-only recovery.
 
 When a season pack is selected for recovery, one row enters the rearm queue and
-its other AVAILABLE tracked files enter visibility waiting. Intentionally ARCHIVED
+its other eligible AVAILABLE or unrequested BROKEN tracked files enter visibility waiting. Intentionally ARCHIVED
 or already in-flight rows are not changed. A provider-confirmed missing placement
 has its stale Decypharr queue entry cleared with `deleteFiles=false` before the
 saved source is added again. Imported links remain intact.
@@ -105,3 +105,20 @@ torrent hashes. Direct cache inventory for TorBox cloud Usenet is not added.
 
 For a library you want kept available, continue using `prune_enabled: false`;
 otherwise intentional local archives remain excluded from automatic restoration.
+
+## Broken-row recovery in v0.6.4
+
+Provider-first sweeps include BROKEN torrents with `rearm_requested=false` and a
+saved, matching torrent source. Filesystem-only mode still checks AVAILABLE rows
+only. Provider-available and readable BROKEN files enter visibility waiting, where
+the normal readiness worker confirms availability and notifies Jellyfin without
+submitting a provider add. Provider-available but unreadable files stay BROKEN for
+mount diagnostics; unknown results do not queue recovery.
+
+Confirmed provider-unavailable releases use the existing confirmation/cooldown
+and per-pass cap, with one queued add per release and shared visibility waiting
+for eligible siblings. ARCHIVED, FAILED, REQUESTED, PRUNING, REARMING and
+already-requested rows are not newly selected. Saved-source validation remains
+required, so the number checked may be lower than the total BROKEN count.
+Widespread-loss suppression still applies; this is not an unconditional bulk
+restore of every broken row. No new migration beyond 027 is required.

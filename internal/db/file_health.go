@@ -58,12 +58,13 @@ func (r *Repo) AcquireFileHealthPass(ctx context.Context, tenant string, interva
 	return &FileHealthPass{tx: tx, tenant: tenant}, nil
 }
 func (p *FileHealthPass) Close(ctx context.Context) { _ = p.tx.Rollback(ctx) }
-func (p *FileHealthPass) Targets(ctx context.Context, limit int) ([]FileHealthTarget, error) {
+func (p *FileHealthPass) Targets(ctx context.Context, limit int, includeBroken ...bool) ([]FileHealthTarget, error) {
+	checkBroken := len(includeBroken) > 0 && includeBroken[0]
 	rows, err := p.tx.Query(ctx, `SELECT m.id::text,m.symlink_path,`+healthSourceKey+`,CASE WHEN h.path=m.symlink_path AND h.source_key=`+healthSourceKey+` THEN h.consecutive_failures ELSE 0 END,m.source_protocol,COALESCE(m.infohash,'')
  FROM media_cache_state m LEFT JOIN media_cache_file_health h ON h.media_id=m.id
- WHERE m.tenant=$1 AND m.state='AVAILABLE' AND NOT m.rearm_requested AND m.arr_id>0 AND m.symlink_path<>''
+ WHERE m.tenant=$1 AND (m.state='AVAILABLE' OR ($3 AND m.state='BROKEN' AND m.source_protocol='torrent')) AND NOT m.rearm_requested AND m.arr_id>0 AND m.symlink_path<>''
  AND EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id AND s.source_kind IN ('torrent_file','magnet','nzb_file') AND s.protocol=m.source_protocol AND (s.protocol='usenet' OR s.infohash=m.infohash))
- ORDER BY h.last_checked_at ASC NULLS FIRST,m.id LIMIT $2`, p.tenant, limit)
+ ORDER BY h.last_checked_at ASC NULLS FIRST,m.id LIMIT $2`, p.tenant, limit, checkBroken)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +122,14 @@ func (p *FileHealthPass) Finish(ctx context.Context, results []FileHealthResult,
 		if err != nil {
 			return 0, err
 		}
+		// A broken row which is already provider-present and readable needs no add.
+		if result.Provider != nil && result.Provider.Status == torbox.Available && result.Readable && !result.Deferred {
+			if _, err := p.tx.Exec(ctx, `UPDATE media_cache_state m SET state='WAITING_FOR_VISIBILITY',rearm_requested=true,next_retry_at=now(),last_error='provider health: readable broken file awaiting availability confirmation',updated_at=now()
+   WHERE m.id=$1 AND m.tenant=$2 AND m.state='BROKEN' AND NOT m.rearm_requested AND m.source_protocol='torrent' AND m.symlink_path=$3 AND `+healthSourceKey+`=$4
+   AND EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id AND s.protocol='torrent' AND s.infohash=m.infohash AND s.source_kind IN ('torrent_file','magnet'))`, t.ID, p.tenant, t.Path, t.SourceKey); err != nil {
+				return 0, err
+			}
+		}
 		if result.Deferred || (outage && !providerRecovery) || (result.Provider != nil && !providerRecovery) || failures < threshold || queued >= maxRearms || (providerRecovery && providerQueued[t.InfoHash]) {
 			continue
 		}
@@ -134,9 +143,9 @@ func (p *FileHealthPass) Finish(ctx context.Context, results []FileHealthResult,
 			}
 		}
 		tag, err := p.tx.Exec(ctx, `UPDATE media_cache_state m SET state='BROKEN',rearm_requested=true,retry_count=0,next_retry_at=NULL,last_error='file health: repeated unreadable checks; automatic rearm queued',updated_at=now()
- WHERE m.id=$1 AND m.tenant=$2 AND m.state='AVAILABLE' AND NOT m.rearm_requested AND m.symlink_path=$3 AND `+healthSourceKey+`=$4
+ WHERE m.id=$1 AND m.tenant=$2 AND (m.state='AVAILABLE' OR ($5 AND m.state='BROKEN' AND m.source_protocol='torrent')) AND NOT m.rearm_requested AND m.symlink_path=$3 AND `+healthSourceKey+`=$4
  AND NOT EXISTS(SELECT 1 FROM media_cache_file_health h WHERE h.media_id=m.id AND h.path=m.symlink_path AND h.source_key=`+healthSourceKey+` AND h.last_auto_rearm_at>now()-interval '24 hours')
- AND EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id AND s.protocol=m.source_protocol AND s.source_kind IN ('torrent_file','magnet','nzb_file'))`, t.ID, p.tenant, t.Path, t.SourceKey)
+ AND EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id AND s.protocol=m.source_protocol AND (s.protocol='usenet' OR s.infohash=m.infohash) AND s.source_kind IN ('torrent_file','magnet','nzb_file'))`, t.ID, p.tenant, t.Path, t.SourceKey, providerRecovery)
 		if err != nil {
 			return 0, err
 		}
@@ -149,7 +158,7 @@ func (p *FileHealthPass) Finish(ctx context.Context, results []FileHealthResult,
 				}
 			}
 			if providerRecovery {
-				if _, err := p.tx.Exec(ctx, `UPDATE media_cache_state SET state='WAITING_FOR_VISIBILITY',rearm_requested=true,next_retry_at=now()+interval '30 seconds',last_error='provider health: waiting for shared release recovery',updated_at=now() WHERE tenant=$1 AND source_protocol='torrent' AND infohash=$2 AND state='AVAILABLE' AND NOT rearm_requested`, p.tenant, t.InfoHash); err != nil {
+				if _, err := p.tx.Exec(ctx, `UPDATE media_cache_state SET state='WAITING_FOR_VISIBILITY',rearm_requested=true,next_retry_at=now()+interval '30 seconds',last_error='provider health: waiting for shared release recovery',updated_at=now() WHERE tenant=$1 AND source_protocol='torrent' AND infohash=$2 AND state IN ('AVAILABLE','BROKEN') AND NOT rearm_requested AND EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=media_cache_state.id AND s.protocol='torrent' AND s.infohash=media_cache_state.infohash AND s.source_kind IN ('torrent_file','magnet'))`, p.tenant, t.InfoHash); err != nil {
 					return 0, err
 				}
 			}

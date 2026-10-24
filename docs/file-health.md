@@ -1,4 +1,4 @@
-# File-health recovery (v0.6.1)
+# File-health recovery (v0.6.2)
 
 The file-health worker recovers unexpected loss of files that Rehydrator still
 considers AVAILABLE. It does not depend on the episode remaining selectable in
@@ -56,14 +56,26 @@ whole sample. A canary does not override that widespread-failure guard. Large
 simultaneous provider evictions can look like an outage; inspect logs and recover
 selected content explicitly instead of rearming the entire library automatically.
 
-A timed-out read stops the rest of that sample. It counts as a failure only when
-the sample already has a successful read or the canary passed, and the widespread
-failure guard permits recovery. Otherwise recovery pauses. At most one blocked
-read remains in this worker; subsequent probes cannot accumulate additional
-blocked filesystem calls.
-If the mount never releases that read, repair/remount the filesystem and restart
-Rehydrator as needed. These bounds cover this worker, not every reader in Arr,
-Jellyfin, or other Rehydrator flows.
+In v0.6.2, an individual timeout no longer ends the sample. The health worker has
+**four outstanding-read slots**, separate from rearm's read slot. Checks proceed
+sequentially until a timeout leaves a read in flight; other slots allow later
+files to be checked. A path already being read is never probed a second time.
+
+If all slots are occupied, remaining targets are **deferred**. Their rolling-sweep
+position advances and their previous failure counts are retained, but they do
+not count as failures or successful reads and cannot trigger recovery. Outage
+percentages use only attempted reads, so deferred files do not dilute an outage.
+
+A timed-out attempted read can contribute to confirmation when the sample has a
+successful read or the canary passed, subject to the widespread-failure guard.
+If all four reads remain stuck forever, health checks cannot assess more files
+until the mount releases them; repair/remount and restart as needed. Bounded
+progress does not mean stuck kernel filesystem reads can be forcibly cancelled.
+
+The probe still requests **one byte**, not a whole file or ffprobe metadata scan.
+Opening a file alone would not establish stream readability. rclone can fetch a
+larger remote chunk behind the one-byte request. ffprobe is not used because it
+can seek and read more data without solving a stalled mount.
 
 Failure observations, last automatic recovery, and sweep timestamps are stored
 in PostgreSQL. A per-tenant transaction lock prevents replicas from performing
@@ -105,12 +117,12 @@ by a symlink check alone.
 
 ## Deploy and inspect
 
-Apply migration `026_file_health.sql` after earlier migrations, or deploy v0.6.1
+Apply migration `026_file_health.sql` after earlier migrations, or deploy v0.6.2
 with automatic schema initialization enabled. No live deployment is performed by
 updating these repository files. The worker requires `rearm_enabled: true`.
 
 Look for `file health worker starting`, `file health pass complete`, and the
-`file_health_rearm_requested` event. Summary logs include checked/unreadable
+`file_health_rearm_requested` event. Summary logs include sampled, checked, timed-out, deferred, and unreadable
 counts, outage suppression, and queued recoveries. Inspect persisted observations:
 
 ```sql

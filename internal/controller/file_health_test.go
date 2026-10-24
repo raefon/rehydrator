@@ -51,3 +51,25 @@ func TestRearmRequiresReadableBytes(t *testing.T) {
 		t.Fatal("readable file not accepted")
 	}
 }
+
+func TestHealthSampleContinuesAfterTimeout(t *testing.T) {
+	targets := []db.FileHealthTarget{{Path: "slow"}, {Path: "healthy"}, {Path: "busy"}, {Path: "same-path-busy"}}
+	results, timeouts := sampleFileHealth(context.Background(), targets, func(path string) (bool, error) {
+		switch path {
+		case "slow":
+			return false, context.DeadlineExceeded
+		case "busy":
+			return false, csi.ErrProbeBusy
+		case "same-path-busy":
+			return false, csi.ErrProbePathBusy
+		default:
+			return true, nil
+		}
+	})
+	if len(results) != 4 || timeouts != 1 || !results[1].Readable || !results[2].Deferred || !results[3].Deferred {
+		t.Fatalf("results=%+v timeouts=%d", results, timeouts)
+	}
+	if fileHealthOutage(results, false, 50) {
+		t.Fatal("deferred reads treated as mount failures")
+	}
+}

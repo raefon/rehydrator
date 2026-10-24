@@ -23,7 +23,9 @@ func (c *Checker) Exists(path string) bool {
 	if c.base != "" {
 		clean := strings.TrimPrefix(path, c.base)
 		clean = strings.TrimPrefix(clean, "/")
-		candidates = append(candidates, filepath.Join(c.base, clean))
+		if mapped := filepath.Join(c.base, clean); mapped != path {
+			candidates = append(candidates, mapped)
+		}
 	}
 
 	for _, p := range candidates {
@@ -46,7 +48,9 @@ func (c *Checker) Readable(path string) bool {
 	candidates := []string{path}
 	if c.base != "" {
 		clean := strings.TrimPrefix(strings.TrimPrefix(path, c.base), "/")
-		candidates = append(candidates, filepath.Join(c.base, clean))
+		if mapped := filepath.Join(c.base, clean); mapped != path {
+			candidates = append(candidates, mapped)
+		}
 	}
 	for _, candidate := range candidates {
 		f, err := os.Open(candidate)

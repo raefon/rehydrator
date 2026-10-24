@@ -9,8 +9,8 @@ Decypharr owns all TorBox communication.
 
 ## Version
 
-This draft is **v0.6.1**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.1`.
+This draft is **v0.6.2**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.2`.
 
 ## Workflow
 

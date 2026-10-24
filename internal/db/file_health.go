@@ -17,6 +17,7 @@ type FileHealthTarget struct {
 type FileHealthResult struct {
 	Target   FileHealthTarget
 	Readable bool
+	Deferred bool
 }
 type FileHealthPass struct {
 	tx     pgx.Tx
@@ -89,13 +90,17 @@ func (p *FileHealthPass) Finish(ctx context.Context, results []FileHealthResult,
 		if outage {
 			detail = "sample outage; recovery paused"
 		}
+		if result.Deferred {
+			failures = t.Failures
+			detail = "probe deferred: read slots occupied"
+		}
 		_, err := p.tx.Exec(ctx, `INSERT INTO media_cache_file_health(media_id,path,source_key,consecutive_failures,last_checked_at,last_healthy_at,detail)
  SELECT m.id,$2,$3,$4,now(),CASE WHEN $5 THEN now() ELSE NULL END,$6 FROM media_cache_state m WHERE m.id=$1 AND m.tenant=$7 AND m.symlink_path=$2 AND `+healthSourceKey+`=$3
  ON CONFLICT(media_id) DO UPDATE SET path=EXCLUDED.path,source_key=EXCLUDED.source_key,consecutive_failures=EXCLUDED.consecutive_failures,last_checked_at=now(),last_healthy_at=CASE WHEN $5 THEN now() ELSE media_cache_file_health.last_healthy_at END,detail=EXCLUDED.detail`, t.ID, t.Path, t.SourceKey, failures, result.Readable, detail, p.tenant)
 		if err != nil {
 			return 0, err
 		}
-		if outage || failures < threshold || queued >= maxRearms {
+		if result.Deferred || outage || failures < threshold || queued >= maxRearms {
 			continue
 		}
 		tag, err := p.tx.Exec(ctx, `UPDATE media_cache_state m SET state='BROKEN',rearm_requested=true,retry_count=0,next_retry_at=NULL,last_error='file health: repeated unreadable checks; automatic rearm queued',updated_at=now()

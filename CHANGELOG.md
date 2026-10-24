@@ -1,3 +1,11 @@
+# Rehydrator v0.6.2 — Health-scan progress past slow files (unreleased)
+
+## Fixed
+- Continue a file-health sample after individual one-byte read timeouts, using a separate four-slot outstanding-read budget. Never launch duplicate concurrent probes for the same path.
+- Record busy/skipped probes as deferred observations, not unreadable-file evidence; advance rolling scan order while preserving prior failure counts.
+- Keep health reads separate from rearm probes and log checked, deferred, and timed-out counts. Existing outage guards and recovery limits remain in force.
+- Avoid retrying an identical CSI path through the configured root alias.
+
 # Rehydrator v0.6.1 — Automatic file-health recovery (unreleased)
 
 ## Added

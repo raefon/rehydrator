@@ -35,6 +35,9 @@ func fileHealthOutage(results []db.FileHealthResult, canary bool, percent int) b
 	}
 	failed, healthy := 0, 0
 	for _, r := range results {
+		if r.Deferred {
+			continue
+		}
 		if r.Readable {
 			healthy++
 		} else {
@@ -42,14 +45,17 @@ func fileHealthOutage(results []db.FileHealthResult, canary bool, percent int) b
 		}
 	}
 	// No automatic recovery without at least one successful read on the mount.
+	if healthy+failed == 0 {
+		return true
+	}
 	if healthy == 0 && !canary {
 		return true
 	}
-	return len(results) >= 3 && failed*100 >= len(results)*percent
+	return healthy+failed >= 3 && failed*100 >= (healthy+failed)*percent
 }
 
 func (c *Controller) reconcileFileHealth(ctx context.Context) {
-	if !c.opt.FileHealth.Enabled || !c.opt.RearmEnabled || c.opt.Repo == nil || c.fileProbe == nil || c.opt.Decypharr == nil {
+	if !c.opt.FileHealth.Enabled || !c.opt.RearmEnabled || c.opt.Repo == nil || c.healthProbe == nil || c.opt.Decypharr == nil {
 		return
 	}
 	cfg := c.opt.FileHealth
@@ -86,7 +92,7 @@ func (c *Controller) reconcileFileHealth(ctx context.Context) {
 	probe := func(path string) (bool, error) {
 		probeCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.ProbeTimeoutSeconds)*time.Second)
 		defer cancel()
-		return c.fileProbe.Check(probeCtx, path)
+		return c.healthProbe.Check(probeCtx, path)
 	}
 	canary := false
 	if cfg.CanaryPath != "" {
@@ -97,25 +103,13 @@ func (c *Controller) reconcileFileHealth(ctx context.Context) {
 			return
 		}
 	}
-	results := make([]db.FileHealthResult, 0, len(targets))
-	blocked := false
-	for _, target := range targets {
-		readable, err := probe(target.Path)
-		if errors.Is(err, csi.ErrProbeBusy) {
-			blocked = true
-			slog.Warn("file health paused; previous mount read remains blocked")
-			break
-		}
-		results = append(results, db.FileHealthResult{Target: target, Readable: readable})
-		if err != nil {
-			slog.Warn("file health read timed out; stopping this sample", "path", target.Path, "error", err)
-			break
-		}
-	}
-	outage := blocked || fileHealthOutage(results, canary, cfg.OutageFailurePercent)
-	failed := 0
+	results, timedOut := sampleFileHealth(ctx, targets, probe)
+	outage := fileHealthOutage(results, canary, cfg.OutageFailurePercent)
+	failed, deferred := 0, 0
 	for _, result := range results {
-		if !result.Readable {
+		if result.Deferred {
+			deferred++
+		} else if !result.Readable {
 			failed++
 		}
 	}
@@ -124,5 +118,28 @@ func (c *Controller) reconcileFileHealth(ctx context.Context) {
 		slog.Warn("file health pass failed", "error", err)
 		return
 	}
-	slog.Info("file health pass complete", "checked", len(results), "unreadable", failed, "outage_paused", outage, "rearms_queued", queued)
+	slog.Info("file health pass complete", "sampled", len(results), "checked", len(results)-deferred, "deferred", deferred, "timed_out", timedOut, "unreadable", failed, "outage_paused", outage, "rearms_queued", queued)
+}
+
+// Continue after individual timeouts within a fixed outstanding-read budget.
+// Deferred targets advance the sweep cursor without becoming failure evidence.
+func sampleFileHealth(ctx context.Context, targets []db.FileHealthTarget, probe func(string) (bool, error)) ([]db.FileHealthResult, int) {
+	results := make([]db.FileHealthResult, 0, len(targets))
+	timeouts := 0
+	for _, target := range targets {
+		if ctx.Err() != nil {
+			break
+		}
+		readable, err := probe(target.Path)
+		if errors.Is(err, csi.ErrProbeBusy) || errors.Is(err, csi.ErrProbePathBusy) {
+			results = append(results, db.FileHealthResult{Target: target, Deferred: true})
+			continue
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			timeouts++
+			slog.Warn("file health read timed out; continuing bounded sample", "path", target.Path)
+		}
+		results = append(results, db.FileHealthResult{Target: target, Readable: readable})
+	}
+	return results, timeouts
 }

@@ -59,6 +59,7 @@ type Options struct {
 }
 
 type Controller struct {
+	healthProbe             *csi.ReadProbe
 	fileProbe               *csi.ReadProbe
 	opt                     Options
 	jellyfinRefreshSem      chan struct{}
@@ -130,12 +131,14 @@ func New(opt Options) *Controller {
 	if opt.SonarrCategory == "" {
 		opt.SonarrCategory = "sonarr"
 	}
-	var probe *csi.ReadProbe
+	var probe, healthProbe *csi.ReadProbe
 	if opt.CSI != nil {
 		probe = csi.NewReadProbe(opt.CSI)
+		healthProbe = csi.NewReadProbeWithLimit(opt.CSI, 4)
 	}
 	return &Controller{
 		fileProbe:             probe,
+		healthProbe:           healthProbe,
 		opt:                   opt,
 		jellyfinRefreshSem:    make(chan struct{}, opt.JellyfinConfig.MaxRefreshesPerRun),
 		jellyfinRefreshDedupe: map[string]time.Time{},

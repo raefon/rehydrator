@@ -121,6 +121,29 @@ func TestFileHealthRecoveryPolicy(t *testing.T) {
 		}
 	}
 	cooldownPass.Close(ctx)
+	// Busy paths are observations of scheduling, not evidence of failed reads.
+	if _, err := r.pool.Exec(ctx, `UPDATE media_cache_file_health SET consecutive_failures=2 WHERE media_id=$1`, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	deferredPass, err := r.AcquireFileHealthPass(ctx, tenant, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferredTargets, err := deferredPass.Targets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range deferredTargets {
+		if target.ID == ids[0] {
+			if n, err := deferredPass.Finish(ctx, []FileHealthResult{{Target: target, Deferred: true}}, false, 3, 2); err != nil || n != 0 {
+				t.Fatal("deferred path queued", err)
+			}
+		}
+	}
+	deferredPass.Close(ctx)
+	if err := r.pool.QueryRow(ctx, `SELECT consecutive_failures FROM media_cache_file_health WHERE media_id=$1`, ids[0]).Scan(&failures); err != nil || failures != 2 {
+		t.Fatal("deferred observation changed failure evidence", failures, err)
+	}
 	// A path/source change must discard previous failures.
 	if _, err := r.pool.Exec(ctx, `UPDATE media_cache_file_health SET consecutive_failures=9 WHERE media_id=$1;`, ids[0]); err != nil {
 		t.Fatal(err)

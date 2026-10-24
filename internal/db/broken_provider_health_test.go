@@ -98,7 +98,7 @@ func TestBrokenTorrentProviderReconciliation(t *testing.T) {
 				t.Fatalf("ineligible target selected: %+v", target)
 			}
 			h := states[target.InfoHash]
-			results = append(results, FileHealthResult{Target: target, Provider: &h, Readable: h.Status == torbox.Available, Deferred: h.Status == torbox.Unknown})
+			results = append(results, FileHealthResult{Target: target, Provider: &h, ProviderOutage: true, Readable: h.Status == torbox.Available, Deferred: h.Status == torbox.Unknown})
 		}
 		queued, err := p.Finish(ctx, results, false, 3, 1)
 		if err != nil {

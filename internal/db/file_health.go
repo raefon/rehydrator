@@ -113,7 +113,9 @@ func (p *FileHealthPass) Finish(ctx context.Context, results []FileHealthResult,
 			}
 			if result.Provider.Status == torbox.Unavailable {
 				failures = result.Provider.Failures
-				providerRecovery = !result.ProviderOutage
+				// Repeated fresh account misses are evidence of loss even in a
+				// mostly missing sample. Unknown observations reset this count.
+				providerRecovery = !result.ProviderOutage || failures >= threshold
 			}
 		}
 		_, err := p.tx.Exec(ctx, `INSERT INTO media_cache_file_health(media_id,path,source_key,consecutive_failures,last_checked_at,last_healthy_at,detail)

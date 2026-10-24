@@ -70,12 +70,12 @@ type errTorBoxCooling struct{}
 
 func (errTorBoxCooling) Error() string { return "TorBox health cooldown active" }
 
-func providerSampleOutage(states map[string]db.ProviderHealth, percent int) bool {
+func providerSampleOutage(states map[string]db.ProviderHealth, percent, threshold int) bool {
 	known, missing := 0, 0
 	for _, h := range states {
 		if h.Status == torbox.Available || h.Status == torbox.Unavailable {
 			known++
-			if h.Status == torbox.Unavailable {
+			if h.Status == torbox.Unavailable && h.Failures < threshold {
 				missing++
 			}
 		}

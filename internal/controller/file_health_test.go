@@ -78,12 +78,12 @@ func TestHealthSampleContinuesAfterTimeout(t *testing.T) {
 
 func TestProviderOutageCountsReleasesNotEpisodes(t *testing.T) {
 	states := map[string]db.ProviderHealth{"pack": {Status: "unavailable"}}
-	if providerSampleOutage(states, 50) {
+	if providerSampleOutage(states, 50, 3) {
 		t.Fatal("one pack treated as a mass outage")
 	}
 	states["other"] = db.ProviderHealth{Status: "unavailable"}
 	states["healthy"] = db.ProviderHealth{Status: "available"}
-	if !providerSampleOutage(states, 50) {
+	if !providerSampleOutage(states, 50, 3) {
 		t.Fatal("mass outage not suppressed")
 	}
 }
@@ -112,5 +112,28 @@ func TestProviderReadinessSharedCache(t *testing.T) {
 	c.providerReadyCache = nil
 	if ready, err := c.torboxReady(context.Background(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil || !ready {
 		t.Fatal("provider availability ignored", err)
+	}
+}
+
+func TestConfirmedProviderLossDoesNotPauseRecovery(t *testing.T) {
+	states := map[string]db.ProviderHealth{
+		"a": {Status: "unavailable", Failures: 3},
+		"b": {Status: "unavailable", Failures: 3},
+		"c": {Status: "unavailable", Failures: 3},
+	}
+	if providerSampleOutage(states, 50, 3) {
+		t.Fatal("confirmed losses treated as outage")
+	}
+	for hash := range states {
+		states[hash] = db.ProviderHealth{Status: "unavailable", Failures: 2}
+	}
+	if !providerSampleOutage(states, 50, 3) {
+		t.Fatal("unconfirmed widespread loss not paused")
+	}
+	states["a"] = db.ProviderHealth{Status: "unknown"}
+	states["b"] = db.ProviderHealth{Status: "unknown"}
+	states["c"] = db.ProviderHealth{Status: "unknown"}
+	if providerSampleOutage(states, 50, 3) {
+		t.Fatal("unknown results treated as confirmed absence")
 	}
 }

@@ -1,4 +1,4 @@
-# File-health recovery (v0.6.4)
+# File-health recovery (v0.6.5)
 
 The file-health worker recovers unexpected loss of files that Rehydrator still
 considers AVAILABLE. It does not depend on the episode remaining selectable in
@@ -54,8 +54,9 @@ otherwise an entirely unreadable sample pauses rather than guessing.
 
 For samples of three or more files, the default 50% failure threshold pauses the
 whole sample. A canary does not override that widespread-failure guard. Large
-simultaneous provider evictions can look like an outage; inspect logs and recover
-selected content explicitly instead of rearming the entire library automatically.
+simultaneous filesystem failures can look like an outage. With TorBox health
+enabled, v0.6.5 allows repeatedly confirmed provider losses to enter bounded
+rearm recovery despite the missing percentage. Unknown API results never qualify.
 
 In v0.6.2, an individual timeout no longer ends the sample. The health worker has
 **four outstanding-read slots**, separate from rearm's read slot. Checks proceed

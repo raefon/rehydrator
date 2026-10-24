@@ -1,4 +1,4 @@
-# Read-only TorBox consistency checks (v0.6.4)
+# Read-only TorBox consistency checks (v0.6.5)
 
 This opt-in mode makes provider observations the primary torrent recovery signal.
 It compares tracked AVAILABLE and unrequested BROKEN torrent hashes against the TorBox **account** list,
@@ -8,7 +8,7 @@ Decypharr operations. Rehydrator's runtime health client only issues GET request
 
 ## Enable
 
-Deploy v0.6.4 with migration `027_provider_health.sql` after prior migrations,
+Deploy v0.6.5 with migration `027_provider_health.sql` after prior migrations,
 or enable startup schema initialization. Keep `file_health.enabled` and
 `rearm_enabled` enabled, then configure:
 
@@ -59,7 +59,10 @@ fresh negative observations are required by the default file-health threshold.
 A group-level 24-hour automatic recovery cooldown prevents different episodes
 from repeatedly submitting the same release. The pass's existing submission cap
 still applies. Widespread negative results (three or more distinct releases at
-the configured failure percentage) pause provider recovery for that sample.
+the configured failure percentage) pause unconfirmed provider recovery for that sample. In v0.6.5, releases reaching
+the fresh-negative confirmation threshold can recover even in an entirely missing
+sample; API failures and unknown results reset confirmation. The submission cap
+and shared cooldown still apply.
 Provider-confirmed loss does not require a readable mount canary to establish
 that the account placement needs restoration; filesystem outage checks still
 apply to filesystem-only recovery.

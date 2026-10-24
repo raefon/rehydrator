@@ -9,8 +9,8 @@ Decypharr owns TorBox mutations. Optional read-only TorBox health checks compare
 
 ## Version
 
-This draft is **v0.6.4**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.4`.
+This draft is **v0.6.5**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.5`.
 
 ## Workflow
 

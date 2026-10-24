@@ -130,7 +130,7 @@ func (c *Controller) reconcileFileHealth(ctx context.Context) {
 		reads, timedOut = sampleFileHealth(ctx, readTargets, probe)
 	}
 	outage := canaryFailed || fileHealthOutage(reads, canary, cfg.OutageFailurePercent)
-	providerOutage := providerSampleOutage(providerStates, cfg.OutageFailurePercent)
+	providerOutage := providerSampleOutage(providerStates, cfg.OutageFailurePercent, cfg.FailureThreshold)
 	byID := map[string]db.FileHealthResult{}
 	for _, r := range reads {
 		byID[r.Target.ID] = r

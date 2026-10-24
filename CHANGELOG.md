@@ -1,3 +1,9 @@
+# Rehydrator v0.6.5 — Recover confirmed provider losses (unreleased)
+
+## Fixed
+- Allow repeatedly confirmed TorBox losses to enter the existing Decypharr rearm flow even when most sampled releases are missing. Cached observations do not add confirmations; API errors and unknown results reset them.
+- Preserve per-pass recovery caps, shared release deduplication, 24-hour cooldowns, source validation and filesystem outage protection.
+
 # Rehydrator v0.6.4 — Reconcile unrequested broken torrents (unreleased)
 
 ## Fixed

@@ -118,7 +118,8 @@ self_heal:
   recent_hours: 24
   max_refreshes_per_run: 5
 
-# Unexpected cache loss recovery; intentionally ARCHIVED items stay archived.
+# Torrent-only cache loss recovery; NZB/Usenet files are excluded.
+# Intentionally ARCHIVED items stay archived.
 file_health:
   enabled: true
   interval_seconds: 300

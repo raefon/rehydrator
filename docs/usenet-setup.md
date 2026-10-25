@@ -146,3 +146,10 @@ manual adds without Arr source history are not automatically recovered.
 This release does not automatically replace failed releases through Arr or change
 Arr quality settings. Recovery and live provider availability need verification
 in your deployment.
+
+## Scheduled file health (v0.6.8)
+
+Periodic file-health sweeps exclude NZB/Usenet files to avoid background NNTP
+article retrieval. This removes proactive file-health recovery for Usenet.
+Playback-triggered recovery and checks during existing rearm/visibility jobs
+remain enabled. Changing this policy does not cancel Usenet jobs already queued.

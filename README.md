@@ -9,8 +9,8 @@ Decypharr owns TorBox mutations. Optional read-only TorBox health checks compare
 
 ## Version
 
-This draft is **v0.6.7**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.7`.
+This draft is **v0.6.8**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.8`.
 
 ## Workflow
 
@@ -112,7 +112,7 @@ The selected Usenet setup uses TorBox Pro NNTP in Decypharr. See the
 [provider configuration fragment](config/decypharr-torbox-nntp.example.json);
 cloud Usenet cache/CDN integration is deferred.
 
-Unexpected cache loss can be recovered by [periodic file health checks](docs/file-health.md).
+Unexpected torrent cache loss can be recovered by [periodic file health checks](docs/file-health.md).
 
 Optional [TorBox provider-first health checks](docs/torbox-health.md) compare stored
 torrent hashes with the account's reported availability; all provider mutations

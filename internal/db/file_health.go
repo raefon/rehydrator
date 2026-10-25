@@ -62,7 +62,7 @@ func (p *FileHealthPass) Targets(ctx context.Context, limit int, includeBroken .
 	checkBroken := len(includeBroken) > 0 && includeBroken[0]
 	rows, err := p.tx.Query(ctx, `SELECT m.id::text,m.symlink_path,`+healthSourceKey+`,CASE WHEN h.path=m.symlink_path AND h.source_key=`+healthSourceKey+` THEN h.consecutive_failures ELSE 0 END,m.source_protocol,COALESCE(m.infohash,'')
  FROM media_cache_state m LEFT JOIN media_cache_file_health h ON h.media_id=m.id
- WHERE m.tenant=$1 AND (m.state='AVAILABLE' OR ($3 AND m.state='BROKEN' AND m.source_protocol='torrent')) AND NOT m.rearm_requested AND m.arr_id>0 AND m.symlink_path<>''
+ WHERE m.tenant=$1 AND m.source_protocol='torrent' AND (m.state='AVAILABLE' OR ($3 AND m.state='BROKEN' AND m.source_protocol='torrent')) AND NOT m.rearm_requested AND m.arr_id>0 AND m.symlink_path<>''
  AND EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id AND s.source_kind IN ('torrent_file','magnet','nzb_file') AND s.protocol=m.source_protocol AND (s.protocol='usenet' OR s.infohash=m.infohash))
  ORDER BY h.last_checked_at ASC NULLS FIRST,m.id LIMIT $2`, p.tenant, limit, checkBroken)
 	if err != nil {

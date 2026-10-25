@@ -1,3 +1,10 @@
+# Rehydrator v0.6.8 — Torrent-only scheduled health checks (unreleased)
+
+## Changed
+- Exclude Usenet/NZB rows from scheduled file-health selection in filesystem-only and TorBox provider-first modes, avoiding background NNTP reads from routine scans.
+- Retain Usenet playback recovery and rearm/visibility readability checks. Existing queued jobs are unchanged; proactive Usenet file-health recovery is disabled.
+- Log the torrent-only source scope at worker startup. No migration or configuration change is required.
+
 # Rehydrator v0.6.7 — Retry missing provider placements (unreleased)
 
 ## Fixed

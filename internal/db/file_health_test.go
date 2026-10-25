@@ -39,6 +39,37 @@ func TestFileHealthRecoveryPolicy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A valid NZB source must never cause routine reads of NNTP-backed files.
+	nzbItem, err := r.UpsertImportedMovie(ctx, tenant, 200, "Usenet", "/media/usenet.mkv", "radarr", time.Now().Add(time.Hour), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SaveTorrentMetadata(ctx, nzbItem.ID, model.TorrentMetadata{
+		Kind: model.SourceNZBFile, Protocol: model.ProtocolUsenet, NZBFile: []byte(nzbData), NZBFilename: "release.nzb", DownloadID: "health-nzb",
+	}, "radarr"); err != nil {
+		t.Fatal(err)
+	}
+	for _, includeBroken := range []bool{false, true} {
+		p, err := r.AcquireFileHealthPass(ctx, tenant, 0)
+		if err != nil || p == nil {
+			t.Fatal("pass", err)
+		}
+		targets, err := p.Targets(ctx, 100, includeBroken)
+		if err != nil {
+			p.Close(ctx)
+			t.Fatal(err)
+		}
+		if len(targets) != 4 {
+			p.Close(ctx)
+			t.Fatalf("torrent selection changed: %d", len(targets))
+		}
+		for _, target := range targets {
+			if target.ID == nzbItem.ID || target.Protocol != model.ProtocolTorrent {
+				t.Fatal("NNTP file selected for scheduled probing")
+			}
+		}
+		p.Close(ctx)
+	}
 	if _, err := r.pool.Exec(ctx, `UPDATE media_cache_state SET state='ARCHIVED' WHERE id=$1`, ids[3]); err != nil {
 		t.Fatal(err)
 	}

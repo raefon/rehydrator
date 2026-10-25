@@ -1,6 +1,6 @@
-# File-health recovery (v0.6.5)
+# File-health recovery (v0.6.8)
 
-The file-health worker recovers unexpected loss of files that Rehydrator still
+The file-health worker recovers unexpected loss of torrent-backed files that Rehydrator still
 considers AVAILABLE. It does not depend on the episode remaining selectable in
 Jellyfin. It follows the imported library path, including symlinks, and reads a
 byte instead of trusting a cached directory entry.
@@ -20,9 +20,17 @@ file_health:
 Every option has an uppercase `FILE_HEALTH_` environment override, such as
 `FILE_HEALTH_BATCH_SIZE` and `FILE_HEALTH_CANARY_PATH`.
 
+Since v0.6.8, scheduled file-health sampling excludes Usenet/NZB rows in both
+filesystem-only and provider-first modes. Probing NNTP-backed files can initiate
+article downloads, adding streaming load even for a one-byte read. Playback
+recovery and Usenet rearm/visibility completion still use readability checks;
+Usenet files no longer receive proactive scheduled file-health recovery.
+An explicitly configured canary is still probed, so choose a torrent-backed
+canary rather than an NNTP-backed file.
+
 ## What gets recovered
 
-- Filesystem-only mode samples AVAILABLE rows with a valid saved source type
+- Filesystem-only mode samples AVAILABLE torrent rows with a valid saved source type
   and no pending rearm. Provider-first mode also includes unrequested BROKEN
   torrents, as described below. This includes never-played episodes. ARCHIVED, FAILED, REQUESTED,
   REARMING, PRUNING and WAITING_FOR_VISIBILITY rows are excluded.

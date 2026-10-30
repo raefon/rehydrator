@@ -684,6 +684,7 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.TorBoxHealth.IntervalSeconds = getenvInt("TORBOX_HEALTH_INTERVAL_SECONDS", cfg.TorBoxHealth.IntervalSeconds)
 	cfg.TorBoxHealth.TimeoutSeconds = getenvInt("TORBOX_HEALTH_TIMEOUT_SECONDS", cfg.TorBoxHealth.TimeoutSeconds)
 	cfg.FileHealth.CanaryPath = getenv("FILE_HEALTH_CANARY_PATH", cfg.FileHealth.CanaryPath)
+	cfg.FileHealth.RecoverArchived = getenvBool("FILE_HEALTH_RECOVER_ARCHIVED", cfg.FileHealth.RecoverArchived)
 	cfg.FileHealth.Enabled = getenvBool("FILE_HEALTH_ENABLED", cfg.FileHealth.Enabled)
 	cfg.FileHealth.IntervalSeconds = getenvInt("FILE_HEALTH_INTERVAL_SECONDS", cfg.FileHealth.IntervalSeconds)
 	cfg.FileHealth.BatchSize = getenvInt("FILE_HEALTH_BATCH_SIZE", cfg.FileHealth.BatchSize)

@@ -17,7 +17,7 @@ func (c *Controller) runFileHealth(ctx context.Context) {
 	if cfg.IntervalSeconds < 30 || cfg.BatchSize < 1 || cfg.ProbeTimeoutSeconds < 1 {
 		return
 	}
-	slog.Info("file health worker starting", "interval_seconds", cfg.IntervalSeconds, "batch_size", cfg.BatchSize, "failure_threshold", cfg.FailureThreshold, "max_rearms", cfg.MaxRearmsPerRun, "source_protocol", model.ProtocolTorrent, "torbox_health_enabled", c.opt.TorBoxHealth.Enabled, "include_broken_torrents", c.opt.TorBoxHealth.Enabled)
+	slog.Info("file health worker starting", "interval_seconds", cfg.IntervalSeconds, "batch_size", cfg.BatchSize, "failure_threshold", cfg.FailureThreshold, "max_rearms", cfg.MaxRearmsPerRun, "source_protocol", model.ProtocolTorrent, "torbox_health_enabled", c.opt.TorBoxHealth.Enabled, "include_broken_torrents", c.opt.TorBoxHealth.Enabled, "recover_archived", c.opt.FileHealth.RecoverArchived && !c.opt.PruneEnabled && c.opt.TorBoxHealth.Enabled)
 	ticker := time.NewTicker(time.Duration(cfg.IntervalSeconds) * time.Second)
 	defer ticker.Stop()
 	c.reconcileFileHealth(ctx)

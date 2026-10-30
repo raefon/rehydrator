@@ -128,6 +128,7 @@ self_heal:
 # Torrent-only cache loss recovery; NZB/Usenet files are excluded.
 # Intentionally ARCHIVED items stay archived.
 file_health:
+  recover_archived: false # Opt-in: current Arr torrent imports with saved sources; requires pruning disabled and TorBox health enabled.
   enabled: true
   interval_seconds: 300
   batch_size: 20

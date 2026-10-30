@@ -1,3 +1,10 @@
+# Rehydrator v0.6.12 — Opt-in archived import recovery (unreleased)
+
+## Added
+- `file_health.recover_archived` (default false) brings current Arr-owned archived torrent imports with validated matching saved sources back into provider health reconciliation when pruning is disabled.
+- Transition to unrequested BROKEN, not AVAILABLE or an immediate provider add. Existing health batch limits, fresh confirmations, per-release deduplication, recovery caps and cooldowns govern restoration.
+- Skip source-less, mismatched/invalid sources, Usenet and in-flight rows. Retain metadata and write an audit event per transition. No new migration required.
+
 # Rehydrator v0.6.11 — Seerr TV recovery and individual Arr missing files (unreleased)
 
 ## Added

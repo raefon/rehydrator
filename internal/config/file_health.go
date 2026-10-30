@@ -2,6 +2,7 @@ package config
 
 // FileHealthConfig controls a rolling availability sweep, not provider keepalive.
 type FileHealthConfig struct {
+	RecoverArchived      bool   `yaml:"recover_archived"`
 	CanaryPath           string `yaml:"canary_path"`
 	Enabled              bool   `yaml:"enabled"`
 	IntervalSeconds      int    `yaml:"interval_seconds"`

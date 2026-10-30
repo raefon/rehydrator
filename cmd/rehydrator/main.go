@@ -27,7 +27,7 @@ import (
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.6.11"
+var version = "0.6.12"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
@@ -189,7 +189,7 @@ func main() {
 			Category:   cfg.DecypharrRadarrCategory,
 			Interval:   cfg.RadarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
-			OnObserved: ctrl.ReconcileDisabledPrune,
+			OnObserved: ctrl.ReconcileImportedRecovery,
 			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
 				ctrl.ScheduleInitialImportJellyfinRefresh(ctx, item, "radarr_"+reason)
 			},
@@ -205,7 +205,7 @@ func main() {
 			Category:   cfg.DecypharrSonarrCategory,
 			Interval:   cfg.SonarrSyncInterval,
 			CacheGrace: cfg.CacheGrace,
-			OnObserved: ctrl.ReconcileDisabledPrune,
+			OnObserved: ctrl.ReconcileImportedRecovery,
 			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
 				ctrl.ScheduleInitialImportJellyfinRefresh(ctx, item, "sonarr_"+reason)
 			},

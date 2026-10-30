@@ -163,3 +163,36 @@ The normal provider health sweep then confirms availability or queues bounded
 recovery. Migration `028_stale_pruning.sql` adds a durable grace-period marker; no new setting is needed. Keep inventory sync enabled.
 Source-less rows and archived files remain untouched. This assumes all replicas
 for the tenant use pruning disabled; drain older pruning-enabled replicas first.
+
+## Previously archived imports (v0.6.12)
+
+Disabling pruning does not normally reactivate archived files. To explicitly
+restore previously archived torrent imports into an always-available library:
+
+```yaml
+prune_enabled: false
+rearm_enabled: true
+file_health:
+  enabled: true
+  recover_archived: true
+torbox_health:
+  enabled: true
+```
+
+Keep the existing TorBox health API key and Sonarr/Radarr inventory sync enabled.
+Environment override: `FILE_HEALTH_RECOVER_ARCHIVED=true`.
+
+Each current imported file observed in Arr is eligible only when it is ARCHIVED,
+has no pending rearm, and has a validated saved torrent file/magnet matching its
+current hash. Eligible rows become unrequested BROKEN and get an
+`archived_recovery_enabled` audit event. No immediate provider add occurs.
+The normal health sweep confirms loss and restores at its existing batch size,
+failure threshold, max-rearms-per-pass and shared 24-hour cooldown.
+Provider-present readable files move into visibility confirmation without an add.
+
+Look for `archived import returned to provider health checks`, followed by
+`file health pass complete` and the ordinary visibility/Jellyfin refresh logs.
+This applies to movies and episode files. Source-less archives require source
+recovery/reacquisition; Usenet and already-running jobs are unchanged. Turning
+the option off prevents further transitions but does not rearchive restored rows.
+No new schema migration is needed.

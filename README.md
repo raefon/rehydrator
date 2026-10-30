@@ -9,8 +9,8 @@ Decypharr owns TorBox mutations. Optional read-only TorBox health checks compare
 
 ## Version
 
-This draft is **v0.6.8**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.8`.
+This draft is **v0.6.9**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.9`.
 
 ## Workflow
 
@@ -111,6 +111,10 @@ automatic Usenet pruning remains disabled.
 The selected Usenet setup uses TorBox Pro NNTP in Decypharr. See the
 [provider configuration fragment](config/decypharr-torbox-nntp.example.json);
 cloud Usenet cache/CDN integration is deferred.
+
+Periodic [Jellyfin inventory reconciliation](docs/jellyfin-setup.md#periodic-movie-and-episode-reconciliation-v069)
+finds imported movies and episodes missing from Jellyfin and requests bounded
+targeted scans without routine Usenet read probes.
 
 Unexpected torrent cache loss can be recovered by [periodic file health checks](docs/file-health.md).
 

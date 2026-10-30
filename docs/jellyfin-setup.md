@@ -101,3 +101,45 @@ are reported as failures. A missing plugin does not trigger a full scan.
 Logs show the returned status/item ID; metadata processing is still asynchronous.
 Paths must match Jellyfin's library view, and mounted files must be readable.
 The integration does not repair WebDAV streaming errors or mount timeouts.
+
+## Periodic movie and episode reconciliation (v0.6.9)
+
+Enable Sonarr/Radarr inventory sync and use Jellyfin `refresh_mode: targeted_scan`
+with the Targeted Scans plugin. Migration `030_jellyfin_inventory.sql` is included
+in automatic schema initialization.
+
+```yaml
+jellyfin:
+  inventory_sync:
+    enabled: true
+    interval_seconds: 1800
+    max_refreshes_per_run: 5
+    cooldown_minutes: 360
+    path_mappings: {}
+```
+
+The worker runs at startup and every 30 minutes. It compares AVAILABLE imports
+in Rehydrator's synchronized Arr inventory to a complete Jellyfin Movie/Episode
+catalog, including alternate media-source paths. It covers old and never-played
+imports, movies and episodes, without requiring a saved torrent/NZB source.
+It does not search for unacquired episodes, re-add downloads, change lifecycle
+states or probe local files. Targeted scans themselves may read media through
+Jellyfin. Archived and recovering files are excluded.
+
+If mount prefixes differ, set `path_mappings: {"/storage/media": "/media"}`
+to map the Arr/Rehydrator prefix to the Jellyfin-visible prefix. Longest directory
+prefix wins. Ensure the mapped path belongs to an existing Jellyfin library.
+
+Each missing item receives at most one attempt per six hours, including failed
+attempts, with a durable reservation before the request. Older attempts rotate
+behind unattempted files. Accepted scans are requests, not proof the item has
+finished indexing; later passes compare the catalog again. A failed/partial
+catalog aborts the pass and never infers missing entries. Notification mode
+skips this worker with a warning instead of silently requesting ineffective scans.
+
+Look for `Jellyfin inventory sync complete` with tracked, missing, attempted,
+accepted and failed counts; each scan records action `inventory_missing` in the
+normal Jellyfin refresh audit. Config environment overrides are
+`JELLYFIN_INVENTORY_SYNC_ENABLED`, `JELLYFIN_INVENTORY_SYNC_INTERVAL_SECONDS`,
+`JELLYFIN_INVENTORY_SYNC_MAX_REFRESHES_PER_RUN` and
+`JELLYFIN_INVENTORY_SYNC_COOLDOWN_MINUTES`. Path mappings use YAML.

@@ -1,3 +1,11 @@
+# Rehydrator v0.6.9 — Reconcile missing Jellyfin movies and episodes (unreleased)
+
+## Added
+- Periodic metadata-only comparison of the synchronized Arr import inventory with Jellyfin movie/episode paths, including alternate versions and optional directory-prefix mappings.
+- Queue at most five targeted scans per default 30-minute pass for AVAILABLE imports missing from the index, including older and never-played files without saved rearm sources.
+- Durable per-item six-hour scan-attempt cooldowns across replicas/restarts, refresh audit entries, and pass summary logs. Incomplete/failed Jellyfin inventories abort the pass.
+- Migration `030_jellyfin_inventory.sql` and YAML/environment controls. Requires targeted_scan mode and its Jellyfin plugin. No direct Usenet read probes, provider re-adds, lifecycle resets or full-library scan fallback.
+
 # Rehydrator v0.6.8 — Torrent-only scheduled health checks (unreleased)
 
 ## Changed

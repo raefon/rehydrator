@@ -135,19 +135,28 @@ concurrent_workers: 2
 db_auto_migrate: false
 `
 
+type JellyfinInventoryConfig struct {
+	Enabled            bool              `yaml:"enabled"`
+	IntervalSeconds    int               `yaml:"interval_seconds"`
+	MaxRefreshesPerRun int               `yaml:"max_refreshes_per_run"`
+	CooldownMinutes    int               `yaml:"cooldown_minutes"`
+	PathMappings       map[string]string `yaml:"path_mappings"`
+}
+
 type JellyfinConfig struct {
-	RefreshMode            string `yaml:"refresh_mode"`
-	MaxRefreshesPerRun     int    `yaml:"max_refreshes_per_run"`
-	RefreshDedupeMinutes   int    `yaml:"refresh_dedupe_minutes"`
-	Enabled                bool   `yaml:"enabled"`
-	URL                    string `yaml:"url"`
-	APIKey                 string `yaml:"api_key"`
-	RefreshAfterRearm      bool   `yaml:"refresh_after_rearm"`
-	RefreshAfterVisibility bool   `yaml:"refresh_after_visibility"`
-	RefreshAfterImport     bool   `yaml:"refresh_after_import"`
-	RefreshAfterPrune      bool   `yaml:"refresh_after_prune"`
-	RefreshDelaySeconds    int    `yaml:"refresh_delay_seconds"`
-	TimeoutSeconds         int    `yaml:"timeout_seconds"`
+	InventorySync          JellyfinInventoryConfig `yaml:"inventory_sync"`
+	RefreshMode            string                  `yaml:"refresh_mode"`
+	MaxRefreshesPerRun     int                     `yaml:"max_refreshes_per_run"`
+	RefreshDedupeMinutes   int                     `yaml:"refresh_dedupe_minutes"`
+	Enabled                bool                    `yaml:"enabled"`
+	URL                    string                  `yaml:"url"`
+	APIKey                 string                  `yaml:"api_key"`
+	RefreshAfterRearm      bool                    `yaml:"refresh_after_rearm"`
+	RefreshAfterVisibility bool                    `yaml:"refresh_after_visibility"`
+	RefreshAfterImport     bool                    `yaml:"refresh_after_import"`
+	RefreshAfterPrune      bool                    `yaml:"refresh_after_prune"`
+	RefreshDelaySeconds    int                     `yaml:"refresh_delay_seconds"`
+	TimeoutSeconds         int                     `yaml:"timeout_seconds"`
 }
 
 type Config struct {
@@ -394,7 +403,7 @@ func defaults() Config {
 		TorBoxHealth:                  DefaultTorBoxHealth(),
 		FileHealth:                    DefaultFileHealth(),
 		RearmBackend:                  "decypharr",
-		Jellyfin:                      JellyfinConfig{MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
+		Jellyfin:                      JellyfinConfig{InventorySync: JellyfinInventoryConfig{Enabled: true, IntervalSeconds: 1800, MaxRefreshesPerRun: 5, CooldownMinutes: 360}, MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
 		RadarrURL:                     "http://radarr:7878",
 		SonarrURL:                     "http://sonarr:8989",
 		DecypharrURL:                  "http://decypharr:8282",
@@ -693,6 +702,10 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Jellyfin.RefreshAfterImport = getenvBool("JELLYFIN_REFRESH_AFTER_IMPORT", cfg.Jellyfin.RefreshAfterImport)
 	cfg.Jellyfin.RefreshAfterPrune = getenvBool("JELLYFIN_REFRESH_AFTER_PRUNE", cfg.Jellyfin.RefreshAfterPrune)
 	cfg.Jellyfin.RefreshDelaySeconds = getenvInt("JELLYFIN_REFRESH_DELAY_SECONDS", cfg.Jellyfin.RefreshDelaySeconds)
+	cfg.Jellyfin.InventorySync.Enabled = getenvBool("JELLYFIN_INVENTORY_SYNC_ENABLED", cfg.Jellyfin.InventorySync.Enabled)
+	cfg.Jellyfin.InventorySync.IntervalSeconds = getenvInt("JELLYFIN_INVENTORY_SYNC_INTERVAL_SECONDS", cfg.Jellyfin.InventorySync.IntervalSeconds)
+	cfg.Jellyfin.InventorySync.MaxRefreshesPerRun = getenvInt("JELLYFIN_INVENTORY_SYNC_MAX_REFRESHES_PER_RUN", cfg.Jellyfin.InventorySync.MaxRefreshesPerRun)
+	cfg.Jellyfin.InventorySync.CooldownMinutes = getenvInt("JELLYFIN_INVENTORY_SYNC_COOLDOWN_MINUTES", cfg.Jellyfin.InventorySync.CooldownMinutes)
 	cfg.Jellyfin.TimeoutSeconds = getenvInt("JELLYFIN_TIMEOUT_SECONDS", cfg.Jellyfin.TimeoutSeconds)
 
 	cfg.PostgresURL = getenv("POSTGRES_URL", cfg.PostgresURL)
@@ -819,6 +832,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Jellyfin.Enabled && (strings.TrimSpace(cfg.Jellyfin.URL) == "" || strings.TrimSpace(cfg.Jellyfin.APIKey) == "") {
 		return errors.New("jellyfin.url and jellyfin.api_key are required when Jellyfin is enabled")
+	}
+	if cfg.Jellyfin.InventorySync.Enabled && (cfg.Jellyfin.InventorySync.IntervalSeconds < 60 || cfg.Jellyfin.InventorySync.MaxRefreshesPerRun < 1 || cfg.Jellyfin.InventorySync.MaxRefreshesPerRun > 100 || cfg.Jellyfin.InventorySync.CooldownMinutes < 1) {
+		return errors.New("jellyfin.inventory_sync requires interval_seconds >=60, max_refreshes_per_run 1..100 and cooldown_minutes >=1")
 	}
 	if cfg.Jellyfin.RefreshDelaySeconds < 0 || cfg.Jellyfin.TimeoutSeconds <= 0 {
 		return errors.New("jellyfin refresh_delay_seconds must be nonnegative and timeout_seconds must be positive")

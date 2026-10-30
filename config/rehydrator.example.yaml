@@ -98,6 +98,12 @@ rclone_rc:
   timeout_seconds: 10
 
 jellyfin:
+  inventory_sync:
+    enabled: true # Requires targeted_scan mode and the Targeted Scans plugin.
+    interval_seconds: 1800
+    max_refreshes_per_run: 5
+    cooldown_minutes: 360
+    path_mappings: {} # Example: {"/storage/media": "/media"}; Jellyfin-visible prefixes.
   refresh_mode: notification # Use targeted_scan with the Targeted Scans plugin installed.
   enabled: false
   url: http://jellyfin:8096

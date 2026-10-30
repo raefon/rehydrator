@@ -153,6 +153,9 @@ func New(opt Options) *Controller {
 }
 
 func (c *Controller) Run(ctx context.Context) error {
+	if c.opt.JellyfinConfig.InventorySync.Enabled {
+		go c.runJellyfinInventory(ctx)
+	}
 	if c.opt.FileHealth.Enabled && c.opt.RearmEnabled {
 		go c.runFileHealth(ctx)
 	}

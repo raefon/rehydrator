@@ -3,6 +3,7 @@ package csi
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 )
 
@@ -60,4 +61,14 @@ func (p *ReadProbe) Check(ctx context.Context, path string) (bool, error) {
 	case <-ctx.Done():
 		return false, ctx.Err()
 	}
+}
+
+// NewMissingPathProbe checks metadata only. Only ENOENT establishes absence;
+// permission errors and I/O errors must not be classified as missing content.
+// One retained slot bounds FUSE calls which outlive their context deadline.
+func NewMissingPathProbe() *ReadProbe {
+	return &ReadProbe{slots: make(chan struct{}, 1), read: func(path string) bool {
+		_, err := os.Stat(path)
+		return errors.Is(err, os.ErrNotExist)
+	}}
 }

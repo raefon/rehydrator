@@ -66,6 +66,7 @@ type Options struct {
 type Controller struct {
 	providerReadyMu         sync.Mutex
 	providerReadyCache      map[string]providerReadyObservation
+	missingPathProbe        *csi.ReadProbe
 	healthProbe             *csi.ReadProbe
 	fileProbe               *csi.ReadProbe
 	opt                     Options
@@ -146,6 +147,7 @@ func New(opt Options) *Controller {
 	return &Controller{
 		fileProbe:             probe,
 		healthProbe:           healthProbe,
+		missingPathProbe:      csi.NewMissingPathProbe(),
 		opt:                   opt,
 		jellyfinRefreshSem:    make(chan struct{}, opt.JellyfinConfig.MaxRefreshesPerRun),
 		jellyfinRefreshDedupe: map[string]time.Time{},

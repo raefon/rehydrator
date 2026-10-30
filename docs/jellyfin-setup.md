@@ -143,3 +143,24 @@ normal Jellyfin refresh audit. Config environment overrides are
 `JELLYFIN_INVENTORY_SYNC_ENABLED`, `JELLYFIN_INVENTORY_SYNC_INTERVAL_SECONDS`,
 `JELLYFIN_INVENTORY_SYNC_MAX_REFRESHES_PER_RUN` and
 `JELLYFIN_INVENTORY_SYNC_COOLDOWN_MINUTES`. Path mappings use YAML.
+
+## Missing imports without saved sources (v0.6.10)
+
+For torrent imports missing from Jellyfin with no validated matching saved source,
+reconciliation now checks filesystem metadata before requesting a scan. Only an
+ENOENT result establishes a missing library path. Such an unchanged AVAILABLE,
+unrequested torrent row becomes FAILED with a source-recovery-required reason,
+and action `inventory_source_recovery_required` is recorded as skipped in the
+refresh audit. It leaves scan selection until explicitly recovered/reacquired.
+
+A readable or existing file without a saved source still receives its normal
+targeted scan. API inventory failures, filesystem permission/I/O errors and probe
+timeouts do not establish missing content. Metadata probes use a single bounded
+slot and are capped per pass; they never open media for reading. Usenet paths
+bypass metadata probing entirely. A missing target can also reflect a mount
+problem: verify the mount before reacquiring anything. This state does not
+blocklist releases or mutate Arr/TorBox.
+
+Look for `Jellyfin inventory item requires source recovery` and pass counters
+`source_recovery_required` / `metadata_checked`. No new settings or migration
+are required.

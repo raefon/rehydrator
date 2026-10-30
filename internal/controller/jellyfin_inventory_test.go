@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/raefon/rehydrator/internal/config"
+	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/jellyfin"
 	"github.com/raefon/rehydrator/internal/model"
@@ -100,4 +101,31 @@ func TestInventoryReconciliationMoviesEpisodesWithoutReadProbes(t *testing.T) {
 	if !found["/library/movies/2.mkv"] || !found["/library/tv/1.mkv"] {
 		t.Fatal("missing movie/episode coverage", scans)
 	}
+	// Enabling metadata checks flags only the missing source-less torrent.
+	c.opt.CSI = csi.NewChecker("")
+	c.reconcileJellyfinInventory(ctx)
+	movie, ok, err := repo.GetState(ctx, tenant, model.MediaMovie, 2)
+	if err != nil || !ok || movie.State != model.StateFailed || movie.RearmRequested {
+		t.Fatalf("missing source-less torrent not flagged: %+v %v", movie, err)
+	}
+	ep, ok, err := repo.GetState(ctx, tenant, model.MediaSeries, 3)
+	if err != nil || !ok || ep.State != model.StateAvailable {
+		t.Fatalf("Usenet import changed: %+v %v", ep, err)
+	}
+	// Existing files without provenance must still be scanned, never marked failed.
+	f, err := os.CreateTemp(t.TempDir(), "existing-*.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	existing, err := repo.UpsertImportedMovie(ctx, tenant, 4, "Existing", f.Name(), "radarr", time.Now(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.reconcileJellyfinInventory(ctx)
+	got, ok, err := repo.GetState(ctx, tenant, model.MediaMovie, 4)
+	if err != nil || !ok || got.State != model.StateAvailable || len(scans) != 3 || scans[2] != existing.SymlinkPath {
+		t.Fatalf("existing source-less file incorrectly suppressed: %+v scans=%v err=%v", got, scans, err)
+	}
+
 }

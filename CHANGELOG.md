@@ -1,3 +1,10 @@
+# Rehydrator v0.6.10 — Flag missing imports without recovery sources (unreleased)
+
+## Fixed
+- Jellyfin inventory reconciliation checks path metadata for source-less torrent imports missing from Jellyfin. A confirmed missing path moves the unchanged idle import to FAILED with an explicit source-recovery-required reason, rather than repeatedly submitting impossible targeted scans.
+- Valid saved sources and concurrent source/lifecycle changes are preserved. Existing files remain scan candidates; absence from Jellyfin alone does not establish file loss.
+- Metadata checks are bounded and never open/read media bytes. Usenet imports bypass these checks. No migration, re-download, provider deletion or automatic Arr blocklisting is introduced.
+
 # Rehydrator v0.6.9 — Reconcile missing Jellyfin movies and episodes (unreleased)
 
 ## Added

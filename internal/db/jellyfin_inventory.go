@@ -26,3 +26,17 @@ func (r *Repo) ClaimJellyfinInventory(ctx context.Context, tenant, id, path stri
  WHERE i.path<>EXCLUDED.path OR i.last_attempt_at<=now()-($4*interval '1 second')`, tenant, id, path, cooldown.Seconds())
 	return tag.RowsAffected() > 0, err
 }
+
+// FlagMissingInventorySource changes only the same still-idle torrent import.
+// Concurrent source capture or lifecycle changes must win over this observation.
+func (r *Repo) FlagMissingInventorySource(ctx context.Context, tenant, id, path string) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `UPDATE media_cache_state m
+ SET state='FAILED',rearm_requested=false,next_retry_at=NULL,last_checked=now(),
+ last_error='source recovery required: torrent library path is missing and no matching saved torrent file or magnet is available'
+ WHERE m.tenant=$1 AND m.id=$2 AND m.symlink_path=$3 AND m.state='AVAILABLE'
+ AND NOT m.rearm_requested AND m.source_protocol='torrent'
+ AND NOT EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id
+ AND s.protocol='torrent' AND s.source_kind IN ('magnet','torrent_file') AND s.infohash=m.infohash)`,
+		tenant, id, path)
+	return tag.RowsAffected() > 0, err
+}

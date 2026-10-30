@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"github.com/raefon/rehydrator/internal/model"
 	"os"
 	"testing"
 	"time"
@@ -68,4 +69,24 @@ func TestJellyfinInventoryIncludesOldSourceLessMoviesAndEpisodes(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal("independent file blocked", err)
 	}
+	// Missing-file classification must be scoped and recheck the saved source.
+	if changed, err := r.FlagMissingInventorySource(ctx, "other", movie.ID, movie.SymlinkPath); err != nil || changed {
+		t.Fatal("tenant flag guard", err)
+	}
+	if changed, err := r.FlagMissingInventorySource(ctx, tenant, movie.ID, "/wrong"); err != nil || changed {
+		t.Fatal("path flag guard", err)
+	}
+	if err := r.SaveTorrentMetadata(ctx, movie.ID, model.TorrentMetadata{Kind: model.SourceMagnet, Magnet: "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "radarr"); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := r.FlagMissingInventorySource(ctx, tenant, movie.ID, movie.SymlinkPath); err != nil || changed {
+		t.Fatal("concurrent saved source guard", err)
+	}
+	if changed, err := r.FlagMissingInventorySource(ctx, tenant, episode.ID, episode.SymlinkPath); err != nil || !changed {
+		t.Fatal("source-less flag failed", err)
+	}
+	if changed, err := r.FlagMissingInventorySource(ctx, tenant, episode.ID, episode.SymlinkPath); err != nil || changed {
+		t.Fatal("non-AVAILABLE flag guard", err)
+	}
+
 }

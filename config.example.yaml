@@ -99,6 +99,7 @@ rclone_rc:
 
 jellyfin:
   inventory_sync:
+    mark_missing_in_arr: false # Opt-in file-record removal; requires same-mount file_health.canary_path.
     enabled: true # Requires targeted_scan mode and the Targeted Scans plugin.
     interval_seconds: 1800
     max_refreshes_per_run: 5

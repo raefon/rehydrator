@@ -72,3 +72,15 @@ func NewMissingPathProbe() *ReadProbe {
 		return errors.Is(err, os.ErrNotExist)
 	}}
 }
+
+// NewMissingSymlinkProbe requires the library entry itself to remain a symlink.
+func NewMissingSymlinkProbe() *ReadProbe {
+	return &ReadProbe{slots: make(chan struct{}, 1), read: func(path string) bool {
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			return false
+		}
+		_, err = os.Stat(path)
+		return errors.Is(err, os.ErrNotExist)
+	}}
+}

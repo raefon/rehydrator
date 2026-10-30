@@ -136,6 +136,7 @@ db_auto_migrate: false
 `
 
 type JellyfinInventoryConfig struct {
+	MarkMissingInArr   bool              `yaml:"mark_missing_in_arr"`
 	Enabled            bool              `yaml:"enabled"`
 	IntervalSeconds    int               `yaml:"interval_seconds"`
 	MaxRefreshesPerRun int               `yaml:"max_refreshes_per_run"`
@@ -702,6 +703,7 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Jellyfin.RefreshAfterImport = getenvBool("JELLYFIN_REFRESH_AFTER_IMPORT", cfg.Jellyfin.RefreshAfterImport)
 	cfg.Jellyfin.RefreshAfterPrune = getenvBool("JELLYFIN_REFRESH_AFTER_PRUNE", cfg.Jellyfin.RefreshAfterPrune)
 	cfg.Jellyfin.RefreshDelaySeconds = getenvInt("JELLYFIN_REFRESH_DELAY_SECONDS", cfg.Jellyfin.RefreshDelaySeconds)
+	cfg.Jellyfin.InventorySync.MarkMissingInArr = getenvBool("JELLYFIN_INVENTORY_SYNC_MARK_MISSING_IN_ARR", cfg.Jellyfin.InventorySync.MarkMissingInArr)
 	cfg.Jellyfin.InventorySync.Enabled = getenvBool("JELLYFIN_INVENTORY_SYNC_ENABLED", cfg.Jellyfin.InventorySync.Enabled)
 	cfg.Jellyfin.InventorySync.IntervalSeconds = getenvInt("JELLYFIN_INVENTORY_SYNC_INTERVAL_SECONDS", cfg.Jellyfin.InventorySync.IntervalSeconds)
 	cfg.Jellyfin.InventorySync.MaxRefreshesPerRun = getenvInt("JELLYFIN_INVENTORY_SYNC_MAX_REFRESHES_PER_RUN", cfg.Jellyfin.InventorySync.MaxRefreshesPerRun)

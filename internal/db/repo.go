@@ -616,6 +616,7 @@ func (r *Repo) BackfillSeerrRequestArrID(ctx context.Context, tenant string, req
         FROM media_cache_state m
         WHERE sr.tenant = $1
           AND sr.request_key = $2
+          AND sr.media_type = 'movie'
           AND sr.tenant = m.tenant
           AND sr.media_type = m.media_type
           AND sr.tmdb_id IS NOT NULL

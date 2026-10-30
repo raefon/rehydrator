@@ -20,6 +20,8 @@ type Client struct {
 
 type Request struct {
 	RequestKey string
+	TVDBID     int
+	Seasons    []int
 	RequestID  int
 	MediaType  model.MediaType
 	TMDBID     int
@@ -127,7 +129,11 @@ func parseRequest(m map[string]any) (Request, bool) {
 		tmdbID = firstInt(media, "tmdbId", "tmdbID")
 	}
 
-	if mediaType == "" || tmdbID == 0 {
+	tvdbID := firstInt(media, "tvdbId", "tvdbID")
+	if tvdbID == 0 {
+		tvdbID = firstInt(m, "tvdbId", "tvdbID")
+	}
+	if mediaType == "" || (tmdbID == 0 && (mediaType != model.MediaSeries || tvdbID == 0)) {
 		return Request{}, false
 	}
 
@@ -158,6 +164,8 @@ func parseRequest(m map[string]any) (Request, bool) {
 	return Request{
 		RequestKey: key,
 		RequestID:  requestID,
+		TVDBID:     tvdbID,
+		Seasons:    Seasons(m["seasons"]),
 		MediaType:  mediaType,
 		TMDBID:     tmdbID,
 		Title:      title,

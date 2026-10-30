@@ -34,6 +34,7 @@ func (c *Controller) runJellyfinInventory(ctx context.Context) {
 }
 func (c *Controller) reconcileJellyfinInventory(ctx context.Context) {
 	cfg := c.opt.JellyfinConfig.InventorySync
+	c.reconcileArrMissing(ctx)
 	paths, err := c.opt.Jellyfin.InventoryPaths(ctx)
 	if err != nil {
 		slog.Warn("Jellyfin inventory sync aborted; inventory inconclusive", "error", err)

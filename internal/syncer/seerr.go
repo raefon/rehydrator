@@ -68,6 +68,25 @@ func (s *SeerrSyncer) SyncOnce(ctx context.Context) error {
 	notTracked := 0
 
 	for _, req := range requests {
+		if req.MediaType == model.MediaSeries {
+			seen++
+			key, err := s.repo.RecordSeerrTV(ctx, s.tenant, req.RequestID, req.TMDBID, req.Title, req.Status, req.RawJSON)
+			if err != nil {
+				slog.Warn("Seerr TV request persistence failed", "error", err)
+				continue
+			}
+			if !seerr.Approved(req.Status) {
+				continue
+			}
+			count, err := s.repo.RequestSeerrTV(ctx, s.tenant, key, req.TVDBID, req.Seasons)
+			if err != nil {
+				slog.Warn("Seerr TV request recovery failed", "request_key", key, "error", err)
+				continue
+			}
+			rearmRequested += count
+			slog.Info("Seerr TV request reconciled", "request_key", key, "tvdb_id", req.TVDBID, "seasons", req.Seasons, "rearms_queued", count, "acquisition_owner", "sonarr")
+			continue
+		}
 		if req.MediaType != model.MediaMovie || req.TMDBID <= 0 {
 			continue
 		}

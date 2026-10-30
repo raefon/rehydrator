@@ -40,3 +40,18 @@ func (r *Repo) FlagMissingInventorySource(ctx context.Context, tenant, id, path 
 		tenant, id, path)
 	return tag.RowsAffected() > 0, err
 }
+
+// SourceRecoveryWorkItems includes previously flagged rows for opt-in Arr updates.
+func (r *Repo) SourceRecoveryWorkItems(ctx context.Context, tenant string, limit int) ([]model.MediaCacheState, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+itemSelectColumns+` FROM media_cache_state m
+ WHERE tenant=$1 AND source_protocol='torrent' AND state='FAILED' AND NOT rearm_requested
+ AND last_error LIKE 'source recovery required:%' AND COALESCE(symlink_path,'')<>''
+ AND NOT EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id AND s.protocol='torrent' AND s.infohash=m.infohash AND s.source_kind IN ('magnet','torrent_file'))
+ AND NOT EXISTS(SELECT 1 FROM media_cache_events e WHERE e.media_id=m.id AND e.event_type='arr_missing_reported')
+ ORDER BY m.id LIMIT $2`, tenant, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}

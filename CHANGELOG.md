@@ -1,3 +1,11 @@
+# Rehydrator v0.6.11 — Seerr TV recovery and individual Arr missing files (unreleased)
+
+## Added
+- Accept TV requests through Seerr webhooks and polling, including Moonfin requests forwarded through Seerr. Only approved requests with explicit TVDB identity and season scope rearm matching saved sources. One primary submission per release; siblings await visibility.
+- Deduplicate TV requests across webhook/polling using the Seerr request ID. Pending approvals, available content, unrequested seasons and imports without saved sources are not rearmed.
+- Opt-in `jellyfin.inventory_sync.mark_missing_in_arr` updates individual Arr imported-file records for source-less failed torrents with confirmed dangling symlinks. Requires a readable same-mount canary, fresh Arr ownership/path checks, and rechecks absence immediately before the file-delete API.
+- Keep acquisition with Seerr/Sonarr/Radarr. No automatic replacement search, unmonitoring or blocklisting. Default behavior preserves Arr files; no schema migration required.
+
 # Rehydrator v0.6.10 — Flag missing imports without recovery sources (unreleased)
 
 ## Fixed

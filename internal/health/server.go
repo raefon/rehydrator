@@ -14,6 +14,7 @@ import (
 
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/model"
+	"github.com/raefon/rehydrator/internal/seerr"
 )
 
 type Server struct {
@@ -992,8 +993,40 @@ func (h *apiHandler) handleSeerrPost(w http.ResponseWriter, r *http.Request, for
 		force = v
 	}
 
-	if mediaType != model.MediaMovie {
-		http.Error(w, "only movie Seerr rearm payloads are supported in this version", http.StatusBadRequest)
+	if mediaType == model.MediaSeries {
+		request := firstMap(payload, "request")
+		if requestID <= 0 {
+			requestID = firstInt(request, "id", "requestId")
+		}
+		tvdbID := firstInt(payload, "tvdbId", "tvdbID")
+		if tvdbID <= 0 {
+			tvdbID = firstInt(media, "tvdbId", "tvdbID")
+		}
+		seasons := seerr.Seasons(payload["seasons"])
+		if len(seasons) == 0 {
+			seasons = seerr.Seasons(request["seasons"])
+		}
+		if requestID <= 0 || (tmdbID <= 0 && tvdbID <= 0) {
+			http.Error(w, "TV payload requires requestId and tmdbId or tvdbId", http.StatusBadRequest)
+			return
+		}
+		raw, _ := json.Marshal(payload)
+		key, err := h.repo.RecordSeerrTV(r.Context(), h.tenant, requestID, tmdbID, title, status, string(raw))
+		if err != nil {
+			http.Error(w, "could not persist TV request", 500)
+			return
+		}
+		event := strings.ToUpper(firstString(payload, "notification_type", "notificationType", "event"))
+		approved := event == "MEDIA_APPROVED" || event == "MEDIA_AUTO_APPROVED" || seerr.Approved(firstString(request, "status"))
+		count := 0
+		if approved {
+			count, err = h.repo.RequestSeerrTV(r.Context(), h.tenant, key, tvdbID, seasons)
+			if err != nil {
+				http.Error(w, "could not reconcile TV request", 500)
+				return
+			}
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "media_type": "series", "request_key": key, "rearms_queued": count, "tvdb_id": tvdbID, "seasons": seasons, "acquisition_owner": "sonarr", "message": "Saved-source recovery is approval/season scoped; Seerr/Sonarr handles new or source-less acquisitions. Missing scope can be resolved by Seerr polling."})
 		return
 	}
 	if arrID <= 0 && tmdbID <= 0 {

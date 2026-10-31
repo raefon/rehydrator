@@ -103,3 +103,49 @@ func (p *bencodeReader) skip(depth int) error {
 	}
 	return nil
 }
+
+// ValidateGatewayTorrent restricts the qBittorrent-compatible gateway to v1
+// metainfo. A SHA-1 of a v2 info dictionary is not a usable v1 identity.
+func ValidateGatewayTorrent(data []byte) error {
+	if _, err := TorrentFileInfoHash(data); err != nil {
+		return err
+	}
+	p := bencodeReader{data: data, pos: 1}
+	for p.pos < len(data) && data[p.pos] != 'e' {
+		key, err := p.readString()
+		if err != nil {
+			return err
+		}
+		if string(key) != "info" {
+			if err = p.skip(0); err != nil {
+				return err
+			}
+			continue
+		}
+		p.pos++
+		pieces := false
+		for p.pos < len(data) && data[p.pos] != 'e' {
+			k, err := p.readString()
+			if err != nil {
+				return err
+			}
+			if string(k) == "meta version" {
+				return fmt.Errorf("v2 and hybrid torrents are not supported by the gateway")
+			}
+			if string(k) == "pieces" {
+				v, err := p.readString()
+				if err != nil || len(v) == 0 || len(v)%20 != 0 {
+					return fmt.Errorf("invalid v1 pieces")
+				}
+				pieces = true
+			} else if err = p.skip(0); err != nil {
+				return err
+			}
+		}
+		if !pieces {
+			return fmt.Errorf("gateway torrent requires v1 pieces")
+		}
+		return nil
+	}
+	return fmt.Errorf("missing info dictionary")
+}

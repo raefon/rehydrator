@@ -5,14 +5,22 @@ Decypharr, PostgreSQL, CSI-rclone, and **Jellyfin**. Seerr can provide request i
 
 It records imported releases, asks Decypharr to prune expired provider placements,
 and restores archived media when Jellyfin playback or an API request asks for it.
-Decypharr owns TorBox mutations. Optional read-only TorBox health checks compare tracked releases with the provider account inventory.
+In legacy mode, Decypharr owns torrent mutations. Optional [TorBox cloud Usenet](docs/torbox-cloud-setup.md) submits hosted NZBs directly. Optional read-only TorBox health checks compare tracked releases with the provider account inventory.
 
 ## Version
 
-This draft is **v0.6.12**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.6.12`.
+The opt-in [v0.7.0 direct TorBox gateway](docs/torbox-gateway-setup.md) handles
+torrents and hosted NZBs through one CSI-mounted WebDAV catalog without
+Decypharr. It is a fresh-start playground; live cluster acceptance remains
+required. UI work is deferred.
+
+This draft is **v0.7.0**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.0`.
 
 ## Workflow
+
+The following describes legacy Decypharr mode. For the direct torrent/NZB
+gateway, use the [gateway setup and workflow](docs/torbox-gateway-setup.md).
 
 1. Radarr/Sonarr downloads normally through Prowlarr and Decypharr.
 2. Arr grab webhooks capture the exact original source before import, with durable retries.
@@ -35,7 +43,7 @@ Keep **Remove Completed** enabled if that is your normal configuration.
 
 1. Copy [the configuration example](config/rehydrator.example.yaml) and fill in
    PostgreSQL, tenant, Arr, Decypharr, API authentication, and mount settings.
-2. Apply the applicable SQL migrations through **023**, or enable `db_auto_migrate`.
+2. Apply the applicable SQL migrations through **032**, or enable `db_auto_migrate`.
 3. Configure Arr webhooks for **On Grab** and **On Import**, including upgrades.
 4. Enable Jellyfin, provide its API key, and configure its Webhook plugin.
 5. Validate one movie and one episode against your running mount before broad pruning.
@@ -108,9 +116,9 @@ Usenet/NZB downloads through Decypharr are supported in v0.6.0; see
 [Usenet setup](docs/usenet-setup.md). Original NZBs are captured from Arr grabs;
 automatic Usenet pruning remains disabled.
 
-The selected Usenet setup uses TorBox Pro NNTP in Decypharr. See the
+Usenet can use TorBox Pro NNTP in Decypharr or the separate TorBox-hosted NZB backend. See the
 [provider configuration fragment](config/decypharr-torbox-nntp.example.json);
-cloud Usenet cache/CDN integration is deferred.
+[cloud Usenet setup](docs/torbox-cloud-setup.md) is a separate opt-in backend.
 
 Periodic [Jellyfin inventory reconciliation](docs/jellyfin-setup.md#periodic-movie-and-episode-reconciliation-v069)
 finds imported movies and episodes missing from Jellyfin and requests bounded

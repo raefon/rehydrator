@@ -1,7 +1,7 @@
 # TorBox hosted Usenet migration
 
-Status: deferred at user request; design only, not enabled or deployed. The integration-owner choice must
-be settled before implementation. Existing NNTP playback must remain operational
+Status: implemented locally as the separate v0.7.0 cloud backend; not deployed.
+See [the rollout guide](../torbox-cloud-setup.md). The design below records earlier alternatives. Cloud NZB integration now belongs to Rehydrator; Decypharr retains torrents and NNTP jobs. Existing NNTP playback must remain operational
 throughout the migration.
 
 ## Intended result

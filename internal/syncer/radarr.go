@@ -15,27 +15,29 @@ import (
 )
 
 type RadarrSyncer struct {
-	decypharr  *decypharr.Client
-	repo       *db.Repo
-	radarr     *arr.Client
-	tenant     string
-	category   string
-	interval   time.Duration
-	cacheGrace time.Duration
-	onImported func(context.Context, model.MediaCacheState, string)
-	onObserved func(context.Context, model.MediaCacheState)
+	sourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
+	decypharr    *decypharr.Client
+	repo         *db.Repo
+	radarr       *arr.Client
+	tenant       string
+	category     string
+	interval     time.Duration
+	cacheGrace   time.Duration
+	onImported   func(context.Context, model.MediaCacheState, string)
+	onObserved   func(context.Context, model.MediaCacheState)
 }
 
 type RadarrOptions struct {
-	Decypharr  *decypharr.Client
-	Repo       *db.Repo
-	Radarr     *arr.Client
-	Tenant     string
-	Category   string
-	Interval   time.Duration
-	CacheGrace time.Duration
-	OnImported func(context.Context, model.MediaCacheState, string)
-	OnObserved func(context.Context, model.MediaCacheState)
+	SourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
+	Decypharr    *decypharr.Client
+	Repo         *db.Repo
+	Radarr       *arr.Client
+	Tenant       string
+	Category     string
+	Interval     time.Duration
+	CacheGrace   time.Duration
+	OnImported   func(context.Context, model.MediaCacheState, string)
+	OnObserved   func(context.Context, model.MediaCacheState)
 }
 
 func NewRadarr(opt RadarrOptions) *RadarrSyncer {
@@ -49,15 +51,16 @@ func NewRadarr(opt RadarrOptions) *RadarrSyncer {
 		opt.Category = "radarr"
 	}
 	return &RadarrSyncer{
-		decypharr:  opt.Decypharr,
-		repo:       opt.Repo,
-		radarr:     opt.Radarr,
-		tenant:     opt.Tenant,
-		category:   opt.Category,
-		interval:   opt.Interval,
-		cacheGrace: opt.CacheGrace,
-		onImported: opt.OnImported,
-		onObserved: opt.OnObserved,
+		sourceLookup: opt.SourceLookup,
+		decypharr:    opt.Decypharr,
+		repo:         opt.Repo,
+		radarr:       opt.Radarr,
+		tenant:       opt.Tenant,
+		category:     opt.Category,
+		interval:     opt.Interval,
+		cacheGrace:   opt.CacheGrace,
+		onImported:   opt.OnImported,
+		onObserved:   opt.OnObserved,
 	}
 }
 
@@ -139,6 +142,15 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 			s.onImported(ctx, item, refreshReason)
 		}
 
+		if s.sourceLookup != nil {
+			source, err := s.sourceLookup(ctx, item)
+			if err != nil {
+				slog.Debug("gateway import source not found", "arr_id", item.ArrID, "error", err)
+			} else if err = s.repo.SaveTorrentMetadata(ctx, item.ID, source, s.category); err != nil {
+				slog.Warn("gateway import source save failed", "error", err)
+			}
+			continue
+		}
 		if item.SourceProtocol != model.ProtocolUsenet && (item.InfoHash == nil || *item.InfoHash == "") {
 			torrent, err := s.radarr.LatestGrabbedTorrent(ctx, movie.ID, model.MediaMovie)
 			if err != nil {

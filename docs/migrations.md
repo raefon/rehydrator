@@ -37,3 +37,14 @@ initialization includes it. See [file-health recovery](file-health.md).
 counts, and shared recovery cooldown timestamps. Applying it does not reconcile
 or delete media. Direct read-only TorBox checking remains opt-in. See
 [TorBox health](torbox-health.md).
+
+## v0.7.0: Direct gateway
+
+`031_cloud_usenet.sql` creates the original cloud-NZB queue and submission gate.
+`032_direct_gateway.sql` adds retained protocol-specific sources, the shared
+torrent/NZB job catalog, and expiring hashed client sessions. It copies existing
+cloud-NZB jobs without changing their IDs, retaining the old table. Neither
+migration submits downloads, deletes library data, nor changes CSI mounts.
+Apply both in order after earlier migrations, or enable `db_auto_migrate`.
+Back up original-source payloads as credentials may occur in private source data.
+See [direct gateway setup](torbox-gateway-setup.md) for the fresh playground.

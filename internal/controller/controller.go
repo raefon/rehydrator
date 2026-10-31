@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/raefon/rehydrator/internal/arr"
+	"github.com/raefon/rehydrator/internal/cloudusenet"
 	"github.com/raefon/rehydrator/internal/config"
 	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
@@ -22,6 +23,7 @@ import (
 )
 
 type Options struct {
+	CloudUsenet        *cloudusenet.Service
 	TorBoxHealth       config.TorBoxHealthConfig
 	TorBoxHealthClient interface {
 		Availability(context.Context, []string) (map[string]torbox.Observation, error)
@@ -160,7 +162,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	if c.opt.JellyfinConfig.InventorySync.Enabled {
 		go c.runJellyfinInventory(ctx)
 	}
-	if c.opt.FileHealth.Enabled && c.opt.RearmEnabled {
+	if c.opt.FileHealth.Enabled && c.opt.RearmEnabled && !c.directGateway() {
 		go c.runFileHealth(ctx)
 	}
 	if c.opt.SelfHealEnabled {
@@ -196,7 +198,7 @@ func (c *Controller) reconcile(ctx context.Context) {
 }
 
 func (c *Controller) reconcileRearms(ctx context.Context) {
-	if c.providerCoolingDown(ctx, "decypharr") {
+	if c.providerCoolingDown(ctx, "decypharr") && c.opt.CloudUsenet == nil {
 		return
 	}
 	items, err := c.opt.Repo.RearmWorkItems(ctx, c.opt.MaxRearmsPerRun, c.opt.MaxRetries)
@@ -302,6 +304,16 @@ func (c *Controller) runItems(ctx context.Context, items []model.MediaCacheState
 }
 
 func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState) {
+	if !c.directGateway() && !isCloudItem(item) && c.opt.CloudUsenet != nil && c.providerCoolingDown(ctx, "decypharr") {
+		return
+	}
+	backend := "decypharr"
+	if isCloudItem(item) {
+		backend = "torbox_cloud"
+	}
+	if c.directGateway() {
+		backend = "torbox_gateway"
+	}
 	log := slog.With(
 		"tenant", item.Tenant,
 		"media_type", item.MediaType,
@@ -329,7 +341,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	if pathVisible {
 		log.Info("CSI path is visible but rearm will still be queued because CSI visibility is not authoritative for archived cache state")
 	} else {
-		log.Info("file missing; rearming", "backend", "decypharr")
+		log.Info("file missing; rearming", "backend", backend)
 	}
 	if err := c.opt.Repo.MarkRearming(ctx, item.ID); err != nil {
 		log.Error("failed to mark rearming", "error", err)
@@ -357,39 +369,67 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		return
 	}
 
+	if torrent.Protocol == model.ProtocolUsenet && cloudusenet.IsJob(torrent.DownloadID) {
+		backend = "torbox_cloud"
+	}
 	category := c.categoryFor(item.MediaType)
 	if err := c.opt.Repo.SaveTorrentMetadata(ctx, item.ID, torrent, category); err != nil {
 		c.fail(ctx, item, err)
 		return
 	}
 
-	metaJSON, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "protocol": torrent.Protocol, "original_download_id": torrent.DownloadID, "source": torrent.Source, "source_kind": string(torrent.Kind), "source_title": torrent.SourceTitle, "client": "decypharr", "category": category})
+	metaJSON, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "protocol": torrent.Protocol, "original_download_id": torrent.DownloadID, "source": torrent.Source, "source_kind": string(torrent.Kind), "source_title": torrent.SourceTitle, "client": backend, "category": category})
 	_ = c.opt.Repo.Event(ctx, item.ID, "torrent_metadata_resolved", string(metaJSON))
 	item.SourceProtocol = torrent.Protocol
 	hash := torrent.InfoHash
-	if torrent.Protocol == model.ProtocolUsenet {
-		hash, err = c.opt.Repo.EnsureNZBJob(ctx, item.ID, func(job string) (string, error) {
-			_, found, statusErr := c.opt.Decypharr.NZBStatus(ctx, job, category)
-			if statusErr != nil {
-				return "", statusErr
-			}
-			if found {
-				return job, nil
-			}
-			exists, err := c.opt.Decypharr.LibraryHasDownload(ctx, job)
-			if err != nil {
-				return "", err
-			}
-			if exists {
-				return job, nil
-			}
-			return c.opt.Decypharr.AddNZB(ctx, torrent, category)
-		})
+	if c.directGateway() {
+		hash, err = c.opt.CloudUsenet.Ensure(ctx, torrent, category)
 		if err != nil {
-			c.waitAfterStatusError(ctx, item, torrent.DownloadID, err)
+			c.fail(ctx, item, err)
 			return
 		}
+		if torrent.Protocol == model.ProtocolUsenet {
+			item.DownloadJobID = hash
+			item.SourceDownloadID = hash
+		}
+	} else if torrent.Protocol == model.ProtocolUsenet {
+		if cloudusenet.IsJob(torrent.DownloadID) {
+			if c.opt.CloudUsenet == nil {
+				c.fail(ctx, item, fmt.Errorf("cloud Usenet backend is disabled"))
+				return
+			}
+			hash, err = c.opt.Repo.EnsureNZBJob(ctx, item.ID, func(job string) (string, error) {
+				_, err := c.opt.CloudUsenet.Source(ctx, torrent.DownloadID)
+				return torrent.DownloadID, err
+			})
+			if err != nil {
+				c.waitAfterStatusError(ctx, item, torrent.DownloadID, err)
+				return
+			}
+		} else {
+			hash, err = c.opt.Repo.EnsureNZBJob(ctx, item.ID, func(job string) (string, error) {
+				_, found, statusErr := c.opt.Decypharr.NZBStatus(ctx, job, category)
+				if statusErr != nil {
+					return "", statusErr
+				}
+				if found {
+					return job, nil
+				}
+				exists, err := c.opt.Decypharr.LibraryHasDownload(ctx, job)
+				if err != nil {
+					return "", err
+				}
+				if exists {
+					return job, nil
+				}
+				return c.opt.Decypharr.AddNZB(ctx, torrent, category)
+			})
+			if err != nil {
+				c.waitAfterStatusError(ctx, item, torrent.DownloadID, err)
+				return
+			}
 
+		}
 		item.SourceProtocol = model.ProtocolUsenet
 		item.DownloadJobID = hash
 	} else {
@@ -415,8 +455,15 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		hash = firstNonEmpty(addResult.Hash, hash)
 	}
 
-	payload, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "protocol": torrent.Protocol, "download_job_id": item.DownloadJobID, "source_kind": string(torrent.Kind), "category": category, "client": "decypharr"})
-	_ = c.opt.Repo.Event(ctx, item.ID, "decypharr_readd_requested", string(payload))
+	payload, _ := json.Marshal(map[string]string{"infohash": torrent.InfoHash, "protocol": torrent.Protocol, "download_job_id": item.DownloadJobID, "source_kind": string(torrent.Kind), "category": category, "client": backend})
+	eventName := "decypharr_readd_requested"
+	if c.directGateway() {
+		eventName = "gateway_rearm_observation_requested"
+	}
+	if backend == "torbox_cloud" {
+		eventName = "cloud_usenet_rearm_wait_requested"
+	}
+	_ = c.opt.Repo.Event(ctx, item.ID, eventName, string(payload))
 
 	ready, err := c.rearmReady(ctx, item, hash)
 	if err != nil {
@@ -425,7 +472,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 	}
 
 	if !ready {
-		c.markWaitingVisibility(ctx, item, hash, "waiting for Decypharr download completion before mount visibility")
+		c.markWaitingVisibility(ctx, item, hash, "waiting for provider completion before mount visibility")
 		return
 	}
 
@@ -454,7 +501,7 @@ func (c *Controller) handleRearm(ctx context.Context, item model.MediaCacheState
 		"cached_until": cachedUntil.Format(time.RFC3339),
 		"infohash":     torrent.InfoHash,
 		"protocol":     torrent.Protocol, "download_job_id": item.DownloadJobID,
-		"client": "decypharr",
+		"client": backend,
 	})
 	_ = c.opt.Repo.Event(ctx, item.ID, "available", string(finalJSON))
 	log.Info("rehydration complete", "cached_until", cachedUntil, "protocol", torrent.Protocol, "download_identity", hash)
@@ -580,7 +627,7 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 		return
 	}
 
-	if c.providerCoolingDown(ctx, "decypharr") {
+	if !c.directGateway() && !isCloudItem(item) && c.providerCoolingDown(ctx, "decypharr") {
 		return
 	}
 	ready, err := c.rearmReady(ctx, item, valueOrEmpty(item.InfoHash))
@@ -591,7 +638,7 @@ func (c *Controller) handleVisibility(ctx context.Context, item model.MediaCache
 
 	if !ready {
 		c.retryMissingProvider(ctx, item)
-		c.markWaitingVisibility(ctx, item, valueOrEmpty(item.InfoHash), "waiting for Decypharr download completion before mount visibility")
+		c.markWaitingVisibility(ctx, item, valueOrEmpty(item.InfoHash), "waiting for provider completion before mount visibility")
 		return
 	}
 
@@ -910,5 +957,5 @@ func (c *Controller) waitAfterStatusError(ctx context.Context, item model.MediaC
 	if isRateLimited(err) {
 		_ = c.opt.Repo.SetProviderCooldown(ctx, item.Tenant, "decypharr", c.opt.ProviderCooldown, err.Error())
 	}
-	c.markWaitingVisibility(ctx, item, hash, "Decypharr status check failed; retrying without resubmission: "+err.Error())
+	c.markWaitingVisibility(ctx, item, hash, "provider status check failed; retrying without resubmission: "+err.Error())
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/raefon/rehydrator/internal/cloudusenet"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
@@ -45,6 +46,25 @@ func (c *Controller) RecordGrabImport(ctx context.Context, g model.GrabSource, p
 
 func (c *Controller) captureGrabSource(ctx context.Context, g model.GrabSource) error {
 	t := g.Torrent
+	if c.directGateway() {
+		source, err := c.opt.CloudUsenet.Source(ctx, g.DownloadID)
+		if err != nil {
+			return err
+		}
+		g.Torrent = source
+		return c.opt.Repo.CompleteGrabSource(ctx, g)
+	}
+	if cloudusenet.IsJob(g.DownloadID) {
+		if c.opt.CloudUsenet == nil {
+			return fmt.Errorf("cloud Usenet source backend is disabled")
+		}
+		source, err := c.opt.CloudUsenet.Source(ctx, g.DownloadID)
+		if err != nil {
+			return err
+		}
+		g.Torrent = source
+		return c.opt.Repo.CompleteGrabSource(ctx, g)
+	}
 	if t.Kind == model.SourceRecoveryRequired || (t.TorrentURL == "" && t.Magnet == "" && len(t.NZBFile) == 0 && len(t.TorrentFile) == 0) {
 		mt := model.MediaMovie
 		if g.Arr == "sonarr" {

@@ -1,3 +1,6 @@
+> For TorBox-hosted NZB downloads, use [TorBox cloud setup](torbox-cloud-setup.md)
+> in v0.7.0. This page describes the existing NNTP backend, retained for old imports.
+
 # TorBox Pro NNTP through Decypharr (v0.6.0)
 
 Rehydrator supports original NZB sources alongside torrent files and magnets.
@@ -8,8 +11,8 @@ Sonarr/Radarr still select releases, import files, and manage quality upgrades.
 
 Use TorBox Pro's **NNTP news server** for NZBs and keep TorBox's existing cloud
 provider for torrents. Rehydrator continues to send all adds/status requests to
-Decypharr. Usenet automatic pruning stays disabled. Cloud Usenet cache/CDN routing
-is deferred.
+Decypharr. Usenet automatic pruning stays disabled. Cloud Usenet cache/CDN routing is now available through the separate
+[hosted NZB backend](torbox-cloud-setup.md).
 
 Merge the `usenet` section from
 [`decypharr-torbox-nntp.example.json`](../config/decypharr-torbox-nntp.example.json)
@@ -47,9 +50,9 @@ source inspected for this integration does not submit NZBs to that API; its
 SABnzbd handler routes to NNTP. An open upstream [TorBox Usenet catalog PR](https://github.com/sirrobot01/decypharr/pull/431)
 adds read-only mounting of already-finished cloud downloads, not NZB submission
 and rearm. Do not use that PR as proof that the end-to-end cloud workflow works.
-A cloud-cache implementation requires Decypharr-side submission/catalog/stream
-support or another explicitly selected adapter; changing Rehydrator's provider
-name alone cannot enable it.
+Rehydrator v0.7.0 provides its own cloud submission/catalog/stream adapter;
+see [hosted NZB setup](torbox-cloud-setup.md). Changing Decypharr's provider
+name alone does not enable that separate backend.
 
 ## Configure Decypharr and Arr
 

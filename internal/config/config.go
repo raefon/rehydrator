@@ -133,6 +133,21 @@ cache_grace_hours: 24
 max_retries: 10
 concurrent_workers: 2
 db_auto_migrate: false
+
+# Direct v0.7.0 playground; see docs/torbox-gateway-setup.md.
+# Requires prune_enabled: false, API enabled, and cloud_usenet.enabled: false.
+gateway:
+  enabled: false
+  api_key: ""
+  qb_username: arr
+  qb_password: ""
+  sab_api_key: ""
+  dav_username: rclone
+  dav_password: ""
+  mount_path: /storage/torbox
+  download_path: /storage/media/downloads/rehydrator
+  submit_interval_seconds: 120
+  recover_missing: true
 `
 
 type JellyfinInventoryConfig struct {
@@ -161,6 +176,8 @@ type JellyfinConfig struct {
 }
 
 type Config struct {
+	Gateway      GatewayConfig `yaml:"gateway"`
+	CloudUsenet  CloudUsenetConfig
 	TorBoxHealth TorBoxHealthConfig
 	FileHealth   FileHealthConfig
 	RearmBackend string
@@ -263,6 +280,8 @@ type Config struct {
 }
 
 type fileConfig struct {
+	Gateway      GatewayConfig      `yaml:"gateway"`
+	CloudUsenet  CloudUsenetConfig  `yaml:"cloud_usenet"`
 	TorBoxHealth TorBoxHealthConfig `yaml:"torbox_health"`
 	FileHealth   FileHealthConfig   `yaml:"file_health"`
 	RearmBackend string             `yaml:"rearm_backend"`
@@ -403,6 +422,8 @@ func defaults() Config {
 	return Config{
 		TorBoxHealth:                  DefaultTorBoxHealth(),
 		FileHealth:                    DefaultFileHealth(),
+		Gateway:                       DefaultGateway(),
+		CloudUsenet:                   DefaultCloudUsenet(),
 		RearmBackend:                  "decypharr",
 		Jellyfin:                      JellyfinConfig{InventorySync: JellyfinInventoryConfig{Enabled: true, IntervalSeconds: 1800, MaxRefreshesPerRun: 5, CooldownMinutes: 360}, MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
 		RadarrURL:                     "http://radarr:7878",
@@ -477,7 +498,7 @@ func ensureConfigFile(path string) (bool, error) {
 }
 
 func readFileConfig(path string) (fileConfig, error) {
-	fc := fileConfig{TorBoxHealth: DefaultTorBoxHealth(), Jellyfin: defaults().Jellyfin, FileHealth: DefaultFileHealth()}
+	fc := fileConfig{Gateway: DefaultGateway(), CloudUsenet: DefaultCloudUsenet(), TorBoxHealth: DefaultTorBoxHealth(), Jellyfin: defaults().Jellyfin, FileHealth: DefaultFileHealth()}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -492,6 +513,8 @@ func readFileConfig(path string) (fileConfig, error) {
 }
 
 func applyFileConfig(cfg *Config, fc fileConfig) {
+	cfg.CloudUsenet = fc.CloudUsenet
+	cfg.Gateway = fc.Gateway
 	cfg.TorBoxHealth = fc.TorBoxHealth
 	cfg.FileHealth = fc.FileHealth
 	cfg.DecypharrAPIToken = fc.Decypharr.APIToken
@@ -683,6 +706,26 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.TorBoxHealth.APIKey = getenv("TORBOX_HEALTH_API_KEY", cfg.TorBoxHealth.APIKey)
 	cfg.TorBoxHealth.IntervalSeconds = getenvInt("TORBOX_HEALTH_INTERVAL_SECONDS", cfg.TorBoxHealth.IntervalSeconds)
 	cfg.TorBoxHealth.TimeoutSeconds = getenvInt("TORBOX_HEALTH_TIMEOUT_SECONDS", cfg.TorBoxHealth.TimeoutSeconds)
+	cfg.Gateway.Enabled = getenvBool("GATEWAY_ENABLED", cfg.Gateway.Enabled)
+	cfg.Gateway.RecoverMissing = getenvBool("GATEWAY_RECOVER_MISSING", cfg.Gateway.RecoverMissing)
+	cfg.Gateway.APIKey = getenv("GATEWAY_API_KEY", cfg.Gateway.APIKey)
+	cfg.Gateway.QBUsername = getenv("GATEWAY_QB_USERNAME", cfg.Gateway.QBUsername)
+	cfg.Gateway.QBPassword = getenv("GATEWAY_QB_PASSWORD", cfg.Gateway.QBPassword)
+	cfg.Gateway.SABAPIKey = getenv("GATEWAY_SAB_API_KEY", cfg.Gateway.SABAPIKey)
+	cfg.Gateway.DAVUsername = getenv("GATEWAY_DAV_USERNAME", cfg.Gateway.DAVUsername)
+	cfg.Gateway.DAVPassword = getenv("GATEWAY_DAV_PASSWORD", cfg.Gateway.DAVPassword)
+	cfg.Gateway.MountPath = getenv("GATEWAY_MOUNT_PATH", cfg.Gateway.MountPath)
+	cfg.Gateway.DownloadPath = getenv("GATEWAY_DOWNLOAD_PATH", cfg.Gateway.DownloadPath)
+	cfg.Gateway.SubmitIntervalSeconds = getenvInt("GATEWAY_SUBMIT_INTERVAL_SECONDS", cfg.Gateway.SubmitIntervalSeconds)
+	cfg.CloudUsenet.RecoverMissing = getenvBool("CLOUD_USENET_RECOVER_MISSING", cfg.CloudUsenet.RecoverMissing)
+	cfg.CloudUsenet.Enabled = getenvBool("CLOUD_USENET_ENABLED", cfg.CloudUsenet.Enabled)
+	cfg.CloudUsenet.APIKey = getenv("CLOUD_USENET_API_KEY", cfg.CloudUsenet.APIKey)
+	cfg.CloudUsenet.SABAPIKey = getenv("CLOUD_USENET_SAB_API_KEY", cfg.CloudUsenet.SABAPIKey)
+	cfg.CloudUsenet.DAVUsername = getenv("CLOUD_USENET_DAV_USERNAME", cfg.CloudUsenet.DAVUsername)
+	cfg.CloudUsenet.DAVPassword = getenv("CLOUD_USENET_DAV_PASSWORD", cfg.CloudUsenet.DAVPassword)
+	cfg.CloudUsenet.MountPath = getenv("CLOUD_USENET_MOUNT_PATH", cfg.CloudUsenet.MountPath)
+	cfg.CloudUsenet.DownloadPath = getenv("CLOUD_USENET_DOWNLOAD_PATH", cfg.CloudUsenet.DownloadPath)
+	cfg.CloudUsenet.SubmitIntervalSeconds = getenvInt("CLOUD_USENET_SUBMIT_INTERVAL_SECONDS", cfg.CloudUsenet.SubmitIntervalSeconds)
 	cfg.FileHealth.CanaryPath = getenv("FILE_HEALTH_CANARY_PATH", cfg.FileHealth.CanaryPath)
 	cfg.FileHealth.RecoverArchived = getenvBool("FILE_HEALTH_RECOVER_ARCHIVED", cfg.FileHealth.RecoverArchived)
 	cfg.FileHealth.Enabled = getenvBool("FILE_HEALTH_ENABLED", cfg.FileHealth.Enabled)
@@ -830,8 +873,32 @@ func validate(cfg Config) error {
 	if cfg.Jellyfin.RefreshMode != "" && cfg.Jellyfin.RefreshMode != "notification" && cfg.Jellyfin.RefreshMode != "targeted_scan" {
 		return errors.New("jellyfin.refresh_mode must be notification or targeted_scan")
 	}
-	if cfg.RearmBackend != "decypharr" {
-		return errors.New("rearm_backend must be decypharr; configure TorBox inside Decypharr")
+	if cfg.Gateway.Enabled && cfg.CloudUsenet.Enabled {
+		return errors.New("enable gateway or cloud_usenet, not both")
+	}
+	if cfg.Gateway.Enabled {
+		if cfg.Gateway.QBUsername == "" || cfg.Gateway.QBPassword == "" || cfg.PruneEnabled {
+			return errors.New("gateway requires qb_username/qb_password and prune_enabled=false")
+		}
+	}
+	if cfg.Gateway.Enabled {
+		for _, category := range []string{cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory} {
+			if category == "" || category == "." || category == ".." || strings.ContainsAny(category, "/\\") {
+				return errors.New("gateway categories must be nonempty path components")
+			}
+		}
+	}
+	if cfg.CloudUsenet.Enabled || cfg.Gateway.Enabled {
+		u := cfg.CloudUsenet
+		if cfg.Gateway.Enabled {
+			u = cfg.Gateway.CloudUsenetConfig
+		}
+		if !cfg.APIEnabled || u.APIKey == "" || u.SABAPIKey == "" || u.DAVUsername == "" || u.DAVPassword == "" || u.SubmitIntervalSeconds < 60 || !strings.HasPrefix(u.MountPath, "/") || !strings.HasPrefix(u.DownloadPath, "/") || u.MountPath == "/" || u.DownloadPath == "/" || u.DownloadPath == u.MountPath || strings.HasPrefix(filepath.Clean(u.DownloadPath), filepath.Clean(u.MountPath)+"/") || strings.HasPrefix(filepath.Clean(u.MountPath), filepath.Clean(u.DownloadPath)+"/") {
+			return errors.New("gateway/cloud_usenet requires API enabled, TorBox/SAB keys, DAV credentials, distinct absolute mount/download paths and submit_interval_seconds >=60")
+		}
+	}
+	if cfg.RearmBackend != "decypharr" && !(cfg.Gateway.Enabled && cfg.RearmBackend == "torbox") {
+		return errors.New("rearm_backend must be decypharr, or torbox with gateway.enabled")
 	}
 	if cfg.Jellyfin.Enabled && (strings.TrimSpace(cfg.Jellyfin.URL) == "" || strings.TrimSpace(cfg.Jellyfin.APIKey) == "") {
 		return errors.New("jellyfin.url and jellyfin.api_key are required when Jellyfin is enabled")
@@ -858,7 +925,7 @@ func validate(cfg Config) error {
 	if cfg.SeerrSyncEnabled && (cfg.SeerrURL == "" || cfg.SeerrAPIKey == "") {
 		return errors.New("SEERR_URL/SEERR_API_KEY or seerr.url/seerr.api_key are required when Seerr sync is enabled")
 	}
-	if cfg.RearmBackend == "decypharr" && cfg.DecypharrURL == "" {
+	if !cfg.Gateway.Enabled && cfg.RearmBackend == "decypharr" && cfg.DecypharrURL == "" {
 		return errors.New("DECYPHARR_URL or decypharr.url is required")
 	}
 	if cfg.RearmBackend == "decypharr" && cfg.DecypharrAPIToken == "" && cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {

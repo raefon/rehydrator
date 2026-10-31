@@ -4,14 +4,37 @@ import (
 	"context"
 	"time"
 
+	"fmt"
+	"github.com/raefon/rehydrator/internal/cloudusenet"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
 func (c *Controller) rearmReady(ctx context.Context, item model.MediaCacheState, hash string) (bool, error) {
+	if c.directGateway() {
+		id := hash
+		if item.SourceProtocol == model.ProtocolUsenet {
+			id = item.SourceDownloadID
+		}
+		ready, err := c.opt.CloudUsenet.Ready(ctx, id)
+		return ready && c.pathReadable(ctx, item.SymlinkPath), err
+	}
 	if item.SourceProtocol == model.ProtocolUsenet {
 		job := item.DownloadJobID
 		if job == "" {
 			job = hash
+		}
+		if cloudusenet.IsJob(job) || cloudusenet.IsJob(item.SourceDownloadID) {
+			if c.opt.CloudUsenet == nil {
+				return false, fmt.Errorf("cloud Usenet backend is disabled")
+			}
+			if !cloudusenet.IsJob(job) {
+				job = item.SourceDownloadID
+			}
+			ready, err := c.opt.CloudUsenet.Ready(ctx, job)
+			if err != nil || !ready {
+				return false, err
+			}
+			return c.pathReadable(ctx, item.SymlinkPath), nil
 		}
 		ready, found, err := c.opt.Decypharr.NZBStatus(ctx, job, c.categoryFor(item.MediaType))
 		if err != nil {
@@ -59,4 +82,12 @@ func (c *Controller) pathReadable(ctx context.Context, path string) bool {
 	defer cancel()
 	readable, err := c.fileProbe.Check(probeCtx, path)
 	return err == nil && readable
+}
+
+func isCloudItem(item model.MediaCacheState) bool {
+	return cloudusenet.IsJob(item.SourceDownloadID) || cloudusenet.IsJob(item.DownloadJobID)
+}
+
+func (c *Controller) directGateway() bool {
+	return c.opt.CloudUsenet != nil && c.opt.CloudUsenet.Direct()
 }

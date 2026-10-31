@@ -23,6 +23,11 @@ type Server struct {
 }
 
 type APIOptions struct {
+	GatewayQB                    http.HandlerFunc
+	GatewaySAB                   http.HandlerFunc
+	GatewayDAV                   http.HandlerFunc
+	CloudSAB                     http.HandlerFunc
+	CloudDAV                     http.HandlerFunc
 	CaptureGrab                  func(context.Context, model.GrabSource) error
 	RecordGrabImport             func(context.Context, model.GrabSource, string) error
 	JellyfinItemPath             func(context.Context, string, string) (string, error)
@@ -62,6 +67,21 @@ func newServer(opt APIOptions) *Server {
 	}
 
 	mux := http.NewServeMux()
+	if opt.GatewayQB != nil {
+		mux.HandleFunc("/api/v2/", opt.GatewayQB)
+	}
+	if opt.GatewaySAB != nil {
+		mux.HandleFunc("/sabnzbd/api", opt.GatewaySAB)
+	}
+	if opt.GatewayDAV != nil {
+		mux.HandleFunc("/webdav/", opt.GatewayDAV)
+	}
+	if opt.CloudSAB != nil {
+		mux.HandleFunc("/sabnzbd-cloud/api", opt.CloudSAB)
+	}
+	if opt.CloudDAV != nil {
+		mux.HandleFunc("/cloud-usenet/dav/", opt.CloudDAV)
+	}
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")

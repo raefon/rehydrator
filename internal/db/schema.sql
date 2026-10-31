@@ -442,3 +442,67 @@ CREATE TABLE IF NOT EXISTS media_cache_jellyfin_inventory (
  last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  PRIMARY KEY(tenant,media_id)
 );
+CREATE TABLE IF NOT EXISTS media_cache_cloud_usenet (
+ id TEXT PRIMARY KEY DEFAULT ('cloud-nzb-'||gen_random_uuid()::text),
+ tenant TEXT NOT NULL,
+ category TEXT NOT NULL,
+ fingerprint TEXT NOT NULL,
+ filename TEXT NOT NULL,
+ nzb BYTEA NOT NULL,
+ name TEXT NOT NULL,
+ provider_id BIGINT NOT NULL DEFAULT 0,
+ state TEXT NOT NULL DEFAULT 'Queued' CHECK(state IN ('Queued','Submitting','Downloading','Mounting','Completed','Missing','Failed','SubmissionUnknown')),
+ files JSONB NOT NULL DEFAULT '[]'::jsonb,
+ attempts INTEGER NOT NULL DEFAULT 0,
+ missing_checks INTEGER NOT NULL DEFAULT 0,
+ hidden BOOLEAN NOT NULL DEFAULT false,
+ next_check_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ last_error TEXT NOT NULL DEFAULT '',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE(tenant,category,fingerprint)
+);
+CREATE TABLE IF NOT EXISTS media_cache_cloud_usenet_gate (
+ tenant TEXT PRIMARY KEY,
+ next_submit_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_cloud_usenet_due ON media_cache_cloud_usenet(tenant,next_check_at);
+CREATE TABLE IF NOT EXISTS gateway_sources (
+ id TEXT PRIMARY KEY DEFAULT ('source-'||gen_random_uuid()::text),
+ tenant TEXT NOT NULL,
+ protocol TEXT NOT NULL CHECK(protocol IN ('torrent','usenet')),
+ kind TEXT NOT NULL CHECK(kind IN ('magnet','torrent_file','nzb_file')),
+ fingerprint TEXT NOT NULL,
+ filename TEXT NOT NULL DEFAULT '',
+ payload BYTEA,
+ magnet TEXT NOT NULL DEFAULT '',
+ infohash TEXT NOT NULL DEFAULT '',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE(tenant,protocol,fingerprint),
+ CHECK((kind='magnet' AND protocol='torrent' AND magnet<>'' AND payload IS NULL)
+ OR (kind='torrent_file' AND protocol='torrent' AND payload IS NOT NULL AND magnet='')
+ OR (kind='nzb_file' AND protocol='usenet' AND payload IS NOT NULL AND magnet='' AND infohash=''))
+);
+CREATE TABLE IF NOT EXISTS gateway_jobs (
+ LIKE media_cache_cloud_usenet INCLUDING ALL
+);
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'usenet' CHECK(protocol IN ('torrent','usenet'));
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'nzb_file';
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS infohash TEXT NOT NULL DEFAULT '';
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS magnet TEXT NOT NULL DEFAULT '';
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS torrent_file BYTEA;
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS source_id TEXT REFERENCES gateway_sources(id);
+CREATE UNIQUE INDEX IF NOT EXISTS gateway_torrent_identity ON gateway_jobs(tenant,infohash) WHERE protocol='torrent';
+CREATE TABLE IF NOT EXISTS gateway_sessions (
+ token_hash TEXT PRIMARY KEY,
+ tenant TEXT NOT NULL,
+ expires_at TIMESTAMPTZ NOT NULL
+);
+INSERT INTO gateway_sources(tenant,protocol,kind,fingerprint,filename,payload)
+ SELECT DISTINCT ON (tenant,fingerprint) tenant,'usenet','nzb_file',fingerprint,filename,nzb
+ FROM media_cache_cloud_usenet ORDER BY tenant,fingerprint,created_at
+ ON CONFLICT(tenant,protocol,fingerprint) DO NOTHING;
+INSERT INTO gateway_jobs(id,tenant,category,fingerprint,filename,nzb,name,provider_id,state,files,attempts,missing_checks,hidden,next_check_at,last_error,created_at,updated_at,source_id)
+ SELECT j.id,j.tenant,j.category,j.fingerprint,j.filename,j.nzb,j.name,j.provider_id,j.state,j.files,j.attempts,j.missing_checks,j.hidden,j.next_check_at,j.last_error,j.created_at,j.updated_at,s.id
+ FROM media_cache_cloud_usenet j JOIN gateway_sources s ON s.tenant=j.tenant AND s.protocol='usenet' AND s.fingerprint=j.fingerprint
+ ON CONFLICT DO NOTHING;

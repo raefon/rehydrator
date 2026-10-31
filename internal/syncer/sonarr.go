@@ -15,15 +15,16 @@ import (
 )
 
 type SonarrSyncer struct {
-	decypharr  *decypharr.Client
-	repo       *db.Repo
-	sonarr     *arr.Client
-	tenant     string
-	category   string
-	interval   time.Duration
-	cacheGrace time.Duration
-	onImported func(context.Context, model.MediaCacheState, string)
-	onObserved func(context.Context, model.MediaCacheState)
+	sourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
+	decypharr    *decypharr.Client
+	repo         *db.Repo
+	sonarr       *arr.Client
+	tenant       string
+	category     string
+	interval     time.Duration
+	cacheGrace   time.Duration
+	onImported   func(context.Context, model.MediaCacheState, string)
+	onObserved   func(context.Context, model.MediaCacheState)
 
 	mu          sync.Mutex
 	running     bool
@@ -34,16 +35,17 @@ type SonarrSyncer struct {
 }
 
 type SonarrOptions struct {
-	Decypharr  *decypharr.Client
-	Repo       *db.Repo
-	Sonarr     *arr.Client
-	Tenant     string
-	Category   string
-	Interval   time.Duration
-	CacheGrace time.Duration
-	Debounce   time.Duration
-	OnImported func(context.Context, model.MediaCacheState, string)
-	OnObserved func(context.Context, model.MediaCacheState)
+	SourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
+	Decypharr    *decypharr.Client
+	Repo         *db.Repo
+	Sonarr       *arr.Client
+	Tenant       string
+	Category     string
+	Interval     time.Duration
+	CacheGrace   time.Duration
+	Debounce     time.Duration
+	OnImported   func(context.Context, model.MediaCacheState, string)
+	OnObserved   func(context.Context, model.MediaCacheState)
 }
 
 func NewSonarr(opt SonarrOptions) *SonarrSyncer {
@@ -60,16 +62,17 @@ func NewSonarr(opt SonarrOptions) *SonarrSyncer {
 		opt.Debounce = 30 * time.Second
 	}
 	return &SonarrSyncer{
-		decypharr:  opt.Decypharr,
-		repo:       opt.Repo,
-		sonarr:     opt.Sonarr,
-		tenant:     opt.Tenant,
-		category:   opt.Category,
-		interval:   opt.Interval,
-		cacheGrace: opt.CacheGrace,
-		onImported: opt.OnImported,
-		onObserved: opt.OnObserved,
-		debounce:   opt.Debounce,
+		sourceLookup: opt.SourceLookup,
+		decypharr:    opt.Decypharr,
+		repo:         opt.Repo,
+		sonarr:       opt.Sonarr,
+		tenant:       opt.Tenant,
+		category:     opt.Category,
+		interval:     opt.Interval,
+		cacheGrace:   opt.CacheGrace,
+		onImported:   opt.OnImported,
+		onObserved:   opt.OnObserved,
+		debounce:     opt.Debounce,
 	}
 }
 
@@ -233,6 +236,15 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 				s.onImported(ctx, item, refreshReason)
 			}
 
+			if s.sourceLookup != nil {
+				source, err := s.sourceLookup(ctx, item)
+				if err != nil {
+					slog.Debug("gateway import source not found", "arr_id", item.ArrID, "error", err)
+				} else if err = s.repo.SaveTorrentMetadata(ctx, item.ID, source, s.category); err != nil {
+					slog.Warn("gateway import source save failed", "error", err)
+				}
+				continue
+			}
 			if item.SourceProtocol != model.ProtocolUsenet && (item.InfoHash == nil || *item.InfoHash == "") {
 				torrent, err := s.sonarr.LatestGrabbedTorrentForState(ctx, item)
 				if err != nil {

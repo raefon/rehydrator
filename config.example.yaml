@@ -138,8 +138,35 @@ file_health:
   outage_failure_percent: 50
   canary_path: "" # Optional known-readable file on the same remote mount.
 
+# Separate TorBox Pro hosted-NZB backend. Existing NNTP/torrent routes stay in Decypharr.
+cloud_usenet:
+  enabled: false
+  api_key: "" # CLOUD_USENET_API_KEY: TorBox API key, not NNTP credentials.
+  sab_api_key: "" # CLOUD_USENET_SAB_API_KEY: separate key for the Arr client.
+  dav_username: "" # CLOUD_USENET_DAV_USERNAME
+  dav_password: "" # CLOUD_USENET_DAV_PASSWORD
+  mount_path: /storage/torbox-cloud
+  download_path: /storage/media/downloads/torbox-usenet
+  submit_interval_seconds: 120 # Shared tenant gate; at least 60 seconds.
+  recover_missing: true # Also requires rearm_enabled.
+
 torbox_health:
   enabled: false # Opt-in read-only account checks; requires the same TorBox account as Decypharr.
   api_key: "" # Prefer TORBOX_HEALTH_API_KEY from a Secret.
   interval_seconds: 900
   timeout_seconds: 20
+
+# Direct v0.7.0 playground; see docs/torbox-gateway-setup.md.
+# Requires prune_enabled: false, API enabled, and cloud_usenet.enabled: false.
+gateway:
+  enabled: false
+  api_key: ""
+  qb_username: arr
+  qb_password: ""
+  sab_api_key: ""
+  dav_username: rclone
+  dav_password: ""
+  mount_path: /storage/torbox
+  download_path: /storage/media/downloads/rehydrator
+  submit_interval_seconds: 120
+  recover_missing: true

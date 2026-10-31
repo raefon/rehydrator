@@ -5,10 +5,23 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/raefon/rehydrator/internal/cloudusenet"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
 func (c *Controller) resolveRearmTorrent(ctx context.Context, item model.MediaCacheState) (model.TorrentMetadata, error) {
+	if c.directGateway() {
+		id := valueOrEmpty(item.InfoHash)
+		if item.SourceProtocol == model.ProtocolUsenet {
+			id = item.SourceDownloadID
+		}
+		if id != "" {
+			source, err := c.opt.CloudUsenet.Source(ctx, id)
+			if err == nil {
+				return source, nil
+			}
+		}
+	}
 	if c.opt.Repo != nil {
 		if err := c.opt.Repo.LinkGrabSourceForItem(ctx, item.Tenant, item.ID); err != nil {
 			return model.TorrentMetadata{}, err
@@ -34,6 +47,12 @@ func (c *Controller) resolveRearmTorrent(ctx context.Context, item model.MediaCa
 			return saved.ValidateSource()
 		}
 	}
+	if c.opt.CloudUsenet != nil && cloudusenet.IsJob(item.SourceDownloadID) {
+		return c.opt.CloudUsenet.Source(ctx, item.SourceDownloadID)
+	}
+	if c.directGateway() {
+		return model.TorrentMetadata{}, model.ErrSourceRecoveryRequired
+	}
 	// Legacy hash/magnet columns do not establish source provenance. Recover the
 	// original source from Arr instead of guessing how this release was submitted.
 	client, err := c.arrClientFor(item.MediaType)
@@ -49,6 +68,12 @@ func (c *Controller) resolveRearmTorrent(ctx context.Context, item model.MediaCa
 	}
 	if c.opt.Decypharr == nil {
 		return torrent, model.ErrSourceRecoveryRequired
+	}
+	if torrent.Protocol == model.ProtocolUsenet && cloudusenet.IsJob(torrent.DownloadID) {
+		if c.opt.CloudUsenet == nil {
+			return torrent, fmt.Errorf("cloud Usenet backend is disabled")
+		}
+		return c.opt.CloudUsenet.Source(ctx, torrent.DownloadID)
 	}
 	recovered, err := c.opt.Decypharr.PrepareTorrent(ctx, torrent)
 	if err != nil {

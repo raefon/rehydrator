@@ -1,0 +1,376 @@
+package gateway
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/raefon/rehydrator/internal/config"
+	"github.com/raefon/rehydrator/internal/csi"
+	"github.com/raefon/rehydrator/internal/db"
+	"github.com/raefon/rehydrator/internal/model"
+	"github.com/raefon/rehydrator/internal/torbox"
+)
+
+const Prefix = "cloud-nzb-"
+
+func IsJob(id string) bool { return strings.HasPrefix(strings.ToLower(id), Prefix) }
+
+type Provider interface {
+	Create(context.Context, []byte, string) (int64, error)
+	Get(context.Context, int64) (torbox.UsenetDownload, bool, error)
+	Link(context.Context, int64, int64) (string, error)
+}
+type TorrentProvider interface {
+	Submit(context.Context, model.TorrentMetadata) (int64, error)
+	Get(context.Context, int64) (torbox.UsenetDownload, bool, error)
+	Link(context.Context, int64, int64) (string, error)
+}
+type Service struct {
+	direct             bool
+	torrent            TorrentProvider
+	qbUser, qbPassword string
+	cfg                config.CloudUsenetConfig
+	tenant             string
+	repo               *db.Repo
+	provider           Provider
+	mountProbe         *csi.ReadProbe
+	links              linkCache
+	categories         map[string]bool
+}
+
+func New(cfg config.CloudUsenetConfig, tenant string, repo *db.Repo, provider Provider, categories ...string) *Service {
+	allowed := map[string]bool{}
+	for _, cat := range categories {
+		allowed[cat] = true
+	}
+	return &Service{cfg: cfg, tenant: tenant, repo: repo, provider: provider, categories: allowed, mountProbe: csi.NewReadProbeWithLimit(csi.NewChecker(cfg.MountPath), 1)}
+}
+func (s *Service) Source(ctx context.Context, id string) (model.TorrentMetadata, error) {
+	j, err := s.repo.GatewayJob(ctx, s.tenant, strings.ToLower(id))
+	if err != nil {
+		return model.TorrentMetadata{}, err
+	}
+	if j.Protocol == model.ProtocolTorrent {
+		return (model.TorrentMetadata{Protocol: model.ProtocolTorrent, Kind: model.SourceKind(j.SourceKind), InfoHash: j.InfoHash, Magnet: j.Magnet, TorrentFile: j.TorrentFile, TorrentFilename: j.Filename, DownloadID: j.InfoHash, SourceTitle: j.Name, Source: "torbox_gateway"}).ValidateSource()
+	}
+	return (model.TorrentMetadata{Protocol: model.ProtocolUsenet, Kind: model.SourceNZBFile, NZBFile: j.NZB, NZBFilename: j.Filename, DownloadID: j.ID, SourceTitle: j.Name, Source: "torbox_cloud"}).ValidateSource()
+}
+func (s *Service) Ready(ctx context.Context, id string) (bool, error) {
+	j, err := s.repo.GatewayJob(ctx, s.tenant, strings.ToLower(id))
+	if err != nil {
+		return false, err
+	}
+	if j.State == "Failed" || j.State == "SubmissionUnknown" {
+		return false, fmt.Errorf("%w: gateway job %s: %s", model.ErrSourceRecoveryRequired, j.State, j.LastError)
+	}
+	return j.State == "Completed", nil
+}
+func (s *Service) Run(ctx context.Context) {
+	slog.Info("TorBox gateway worker starting", "mount_path", s.cfg.MountPath, "submit_interval_seconds", s.cfg.SubmitIntervalSeconds)
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		pass, cancel := context.WithTimeout(ctx, 55*time.Second)
+		for i := 0; i < 5 && pass.Err() == nil; i++ {
+			if err := s.Reconcile(pass); err != nil {
+				slog.Warn("TorBox gateway worker", "error", err)
+				break
+			}
+		}
+		cancel()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+func (s *Service) Reconcile(ctx context.Context) error {
+	protocol := ""
+	if !s.direct {
+		protocol = model.ProtocolUsenet
+	}
+	j, claimed, err := s.repo.ClaimCloudNZB(ctx, s.tenant, time.Duration(s.cfg.SubmitIntervalSeconds)*time.Second, protocol)
+	if err != nil || !claimed {
+		return err
+	}
+	if j.State == "Queued" {
+		var id int64
+		var err error
+		if j.Protocol == model.ProtocolTorrent {
+			source, e := s.Source(ctx, j.ID)
+			err = e
+			if err == nil {
+				id, err = s.torrent.Submit(ctx, source)
+			}
+		} else {
+			id, err = s.provider.Create(ctx, j.NZB, j.Filename)
+		}
+		if errors.Is(err, torbox.ErrSubmissionNotStarted) {
+			return s.repo.DeferGatewaySubmission(ctx, s.tenant, j.ID, err.Error())
+		}
+		if err != nil {
+			j.State = "SubmissionUnknown"
+			j.LastError = "cloud add outcome unknown; inspect TorBox before retrying: " + err.Error()
+		} else {
+			j.ProviderID = id
+			j.State = "Downloading"
+			j.LastError = ""
+			j.MissingChecks = 0
+		}
+		slog.Info("TorBox gateway submission result", "protocol", j.Protocol, "job_id", j.ID, "provider_id", j.ProviderID, "state", j.State)
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+	}
+	var download torbox.UsenetDownload
+	var found bool
+	if j.Protocol == model.ProtocolTorrent {
+		download, found, err = s.torrent.Get(ctx, j.ProviderID)
+	} else {
+		download, found, err = s.provider.Get(ctx, j.ProviderID)
+	}
+	if err != nil {
+		j.LastError = err.Error()
+		j.MissingChecks = 0
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 5*time.Minute)
+	}
+	if !found || (download.Present != nil && !*download.Present && (download.State == "cached" || download.State == "completed")) {
+		if j.MissingChecks < 3 {
+			j.MissingChecks++
+		}
+		j.State = "Missing"
+		j.LastError = "TorBox cloud placement is absent; awaiting confirmation"
+		if j.MissingChecks >= 3 && s.cfg.RecoverMissing {
+			if j.Attempts >= 3 {
+				j.State = "Failed"
+				j.LastError = "cloud release recovery attempt limit reached"
+			} else {
+				j.State = "Queued"
+				j.LastError = "confirmed missing cloud placement; saved source queued for recovery"
+				if err := s.repo.CloudNZBRecoveryWaiting(ctx, s.tenant, j.ID); err != nil {
+					return err
+				}
+
+			}
+		}
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 5*time.Minute)
+	}
+	j.MissingChecks = 0
+	if download.Name != "" {
+		j.Name = download.Name
+	}
+	if strings.EqualFold(download.State, "failed") {
+		j.State = "Failed"
+		j.LastError = "TorBox provider download failed; acquire a replacement through Arr"
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Hour)
+	}
+	if !download.Ready() {
+		j.State = "Downloading"
+		j.LastError = ""
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+	}
+	if err = torbox.ValidateUsenetFiles(download.Files); err != nil {
+		return err
+	}
+	if len(j.Files) > 0 && !sameCatalog(j.Files, download.Files) {
+		j.State = "Failed"
+		j.LastError = "provider catalog changed; original import paths cannot be restored safely"
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Hour)
+	}
+	if j.State == "Completed" {
+		j.Files = download.Files
+		j.LastError = ""
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 15*time.Minute)
+	}
+	j.Files = download.Files
+	j.State = "Mounting"
+	j.LastError = ""
+	// Publish the virtual catalog before checking its rclone mount.
+	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute); err != nil {
+		return err
+	}
+	if err = s.createLinks(j); err != nil {
+		j.LastError = err.Error()
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+	}
+	// One bounded CDN byte probe establishes that the delivery mount works.
+	// Arr performs its own validation/import of the complete file list.
+	candidate := ""
+	for _, file := range j.Files {
+		if file.Size == 0 {
+			continue
+		}
+		if candidate == "" {
+			candidate = file.Name
+		}
+		switch strings.ToLower(filepath.Ext(file.Name)) {
+		case ".mkv", ".mp4", ".m4v", ".avi", ".ts", ".webm":
+			candidate = file.Name
+		}
+		if candidate == file.Name && (strings.EqualFold(filepath.Ext(file.Name), ".mkv") || strings.EqualFold(filepath.Ext(file.Name), ".mp4")) {
+			break
+		}
+	}
+	if candidate == "" {
+		j.LastError = "waiting for a nonempty cloud payload file"
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	readable, err := s.mountProbe.Check(probeCtx, filepath.Join(s.cfg.MountPath, s.catalogPath(j), filepath.FromSlash(candidate)))
+	cancel()
+	if err != nil || !readable {
+		j.LastError = "waiting for cloud WebDAV mount visibility/readability"
+		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+	}
+	j.State = "Completed"
+	j.LastError = ""
+	slog.Info("TorBox gateway ready for Arr import", "protocol", j.Protocol, "job_id", j.ID, "provider_id", j.ProviderID, "files", len(j.Files))
+	return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 15*time.Minute)
+}
+func (s *Service) storage(j db.CloudNZBJob) string {
+	return filepath.Join(s.cfg.DownloadPath, j.Category, j.ID)
+}
+func (s *Service) createLinks(j db.CloudNZBJob) error {
+	if !s.categories[j.Category] {
+		return fmt.Errorf("unconfigured cloud category")
+	}
+	for _, f := range j.Files {
+		dest := filepath.Join(s.storage(j), filepath.FromSlash(f.Name))
+		target := filepath.Join(s.cfg.MountPath, s.catalogPath(j), filepath.FromSlash(f.Name))
+		if err := safeCloudParents(s.cfg.DownloadPath, filepath.Dir(dest)); err != nil {
+			return err
+		}
+		existing, err := os.Readlink(dest)
+		if err == nil {
+			if existing != target {
+				return fmt.Errorf("cloud download path has a different symlink")
+			}
+			continue
+		}
+		if _, err := os.Lstat(dest); err == nil {
+			return fmt.Errorf("cloud download path already exists")
+		}
+		if err := os.Symlink(target, dest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Only the configured root is trusted; provider-supplied subdirectories must
+// never traverse existing symlinks in the local download tree.
+func safeCloudParents(root, directory string) error {
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(root, directory)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("download path escaped configured root")
+	}
+	current := root
+	if relative == "." {
+		return nil
+	}
+	for _, part := range strings.Split(relative, string(os.PathSeparator)) {
+		current = filepath.Join(current, part)
+		if err := os.Mkdir(current, 0755); err != nil && !os.IsExist(err) {
+			return err
+		}
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("download parent is not a real directory")
+		}
+	}
+	return nil
+}
+
+func NewDirect(cfg config.GatewayConfig, tenant string, repo *db.Repo, torrents TorrentProvider, usenet Provider, categories ...string) *Service {
+	s := New(cfg.CloudUsenetConfig, tenant, repo, usenet, categories...)
+	s.direct = true
+	s.torrent = torrents
+	s.qbUser = cfg.QBUsername
+	s.qbPassword = cfg.QBPassword
+	return s
+}
+func (s *Service) catalogPath(j db.CloudNZBJob) string {
+	if !s.direct {
+		return "jobs/" + j.ID
+	}
+	if j.Protocol == model.ProtocolTorrent {
+		return "torrents/" + j.ID
+	}
+	return "usenet/" + j.ID
+}
+func (s *Service) DAVRoot() string {
+	if s.direct {
+		return "/webdav/"
+	}
+	return DAVPath
+}
+func (s *Service) Direct() bool { return s.direct }
+
+// Ensure retains source identity and wakes observation without resetting retry
+// budgets or authorizing another upload after an ambiguous submission.
+func (s *Service) Ensure(ctx context.Context, source model.TorrentMetadata, category string) (string, error) {
+	j, err := s.repo.AddGatewaySource(ctx, s.tenant, category, source)
+	if err != nil {
+		return "", err
+	}
+	if err = s.repo.WakeGatewayJob(ctx, s.tenant, j.ID); err != nil {
+		return "", err
+	}
+	if j.Protocol == model.ProtocolTorrent {
+		return j.InfoHash, nil
+	}
+	return j.ID, nil
+}
+
+// SourceForImport binds an imported link to its retained gateway job even after
+// Arr removes completed download history. It reads link metadata, not media.
+func (s *Service) SourceForImport(ctx context.Context, item model.MediaCacheState) (model.TorrentMetadata, error) {
+	target, err := os.Readlink(item.SymlinkPath)
+	if err != nil {
+		return model.TorrentMetadata{}, err
+	}
+	relative, err := filepath.Rel(s.cfg.MountPath, target)
+	if err != nil {
+		return model.TorrentMetadata{}, err
+	}
+	parts := strings.Split(filepath.ToSlash(relative), "/")
+	if len(parts) < 3 || (parts[0] != "torrents" && parts[0] != "usenet") {
+		return model.TorrentMetadata{}, model.ErrSourceRecoveryRequired
+	}
+	j, err := s.repo.GatewayJob(ctx, s.tenant, parts[1])
+	if err != nil {
+		return model.TorrentMetadata{}, err
+	}
+	if s.catalogPath(j) != parts[0]+"/"+parts[1] {
+		return model.TorrentMetadata{}, model.ErrSourceRecoveryRequired
+	}
+	return s.Source(ctx, j.ID)
+}
+
+func sameCatalog(before, after []torbox.UsenetFile) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	names := map[string]int64{}
+	for _, f := range before {
+		names[f.Name] = f.Size
+	}
+	for _, f := range after {
+		size, ok := names[f.Name]
+		if !ok || size != f.Size {
+			return false
+		}
+	}
+	return true
+}

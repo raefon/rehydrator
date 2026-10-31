@@ -1,3 +1,21 @@
+# Rehydrator v0.7.0 — TorBox gateway playground (unreleased)
+
+## Direct gateway
+- Opt-in direct TorBox torrent and hosted-NZB jobs share a durable worker, original-source store and authenticated `/webdav/` catalog. No Decypharr calls in direct acquisition/recovery mode. UI remains deferred.
+- qBittorrent-compatible `/api/v2/` supports Arr login, magnet/file submission, queue/files/properties/categories and local completion cleanup. SAB uses `/sabnzbd/api`.
+- Migration 032 retains sources independently of imported media and tracks expiring hashed client sessions. Recovery keeps stable per-job torrent/Usenet paths after provider ID changes.
+- Direct-mode Arr inventory binds imports through gateway symlinks. Confirmed provider loss wakes related imports for visibility completion and Jellyfin refresh.
+- Direct mode rejects provider pruning and unsupported torrent controls. V2/hybrid torrents and remote torrent URL fetching are excluded. Ambiguous submissions require inspection.
+- Added gateway configuration, CSI remote example, redacted job diagnostics, operational setup and PostgreSQL/mock-provider lifecycle tests. Live TorBox/CSI/Arr/Jellyfin acceptance remains deployment work.
+
+## Added
+- Opt-in SAB-compatible /sabnzbd-cloud/api accepts original NZBs and durably submits them directly to TorBox's cloud Usenet API, including server-side repair/unpacking.
+- Read-only authenticated /cloud-usenet/dav/ exposes stable per-job paths for a separate rclone/CSI mount. Range streams proxy cached, short-lived CDN links without exposing the TorBox key or making an API call per range read.
+- Migration 031_cloud_usenet.sql stores original NZBs, namespaced client job IDs, separate provider IDs, file catalogs, submission reservations, shared upload throttling and bounded recovery attempts.
+- Staging symlinks and SAB completion support normal Arr imports. Grab capture preserves cloud sources locally; cloud jobs use their own status/readability for rearm and Jellyfin refresh.
+- Three fresh missing-placement observations can queue saved-NZB recovery when cloud recovery and rearm are enabled. Related imports enter shared visibility waiting. Interrupted/ambiguous submissions stop for inspection rather than blindly duplicating.
+- Legacy-mode Decypharr NNTP imports and torrents retain their backend. No automatic old-path migration, Usenet pruning or routine NNTP health reads.
+
 # Rehydrator v0.6.12 — Opt-in archived import recovery (unreleased)
 
 ## Added

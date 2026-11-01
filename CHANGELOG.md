@@ -1,3 +1,10 @@
+# Rehydrator v0.7.9 — TorBox provider progress (unreleased)
+
+- Persist whitelisted provider observations from existing polling: original state, optional download fraction, speed, size, downloaded bytes and completion/presence/cache flags.
+- Show TorBox progress and readiness separately from Rehydrator workflow state. Preserve unknown values, processing-at-100%, and stale observations after lookup failures.
+- Clear observations when provider placements change; browsing the dashboard adds no provider polling requests.
+- Apply migration 034 before rolling out gateway/controller binaries, or use gateway db_auto_migrate before controller rollout.
+
 # Rehydrator v0.7.8 — Recovery and diagnostics dashboard (unreleased)
 
 - Add tenant-scoped torrent-hash/job lookup, retained-source validation, provider IDs, scheduled checks, attempt budgets, and matching library records.

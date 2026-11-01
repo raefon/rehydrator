@@ -33,7 +33,7 @@ func TestDirectTorrentAPIContract(t *testing.T) {
 					if r.URL.Query().Get("id") == "" {
 						fmt.Fprint(w, `{"success":true,"data":[]}`)
 					} else {
-						fmt.Fprint(w, `{"success":true,"data":[{"id":42,"download_state":"uploading","download_present":true,"files":[{"id":0,"name":"Movie.mkv","size":6}]}]}`)
+						fmt.Fprint(w, `{"success":true,"data":[{"id":42,"download_state":"uploading","progress":1,"download_present":true,"files":[{"id":0,"name":"Movie.mkv","size":6}]}]}`)
 					}
 				case "/torrents/createtorrent":
 					adds++
@@ -82,6 +82,10 @@ func TestDirectTorrentAPIContract(t *testing.T) {
 			d, found, err := c.Get(context.Background(), id)
 			if err != nil || !found || !d.Ready() {
 				t.Fatal(d, found, err)
+			}
+			observed := d.Status(id, true)
+			if observed.State != "uploading" || observed.Progress == nil || *observed.Progress != 1 || !observed.Ready {
+				t.Fatal("provider state or progress lost during readiness normalization", observed)
 			}
 			if _, err = c.Link(context.Background(), id, 0); err != nil {
 				t.Fatal(err)

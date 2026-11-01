@@ -100,6 +100,7 @@ func (c *TorrentClient) Get(ctx context.Context, id int64) (UsenetDownload, bool
 		if err = ValidateUsenetFiles(d.Files); err != nil {
 			return d, false, err
 		}
+		d.RawState = d.State
 		if d.Present != nil && *d.Present && len(d.Files) > 0 {
 			d.State = "cached"
 		} else if d.Present == nil {

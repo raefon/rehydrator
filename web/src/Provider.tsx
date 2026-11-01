@@ -1,0 +1,7 @@
+import type { ProviderStatus } from './model';
+export default function Provider({ status }: { status: ProviderStatus | null }) {
+ if (!status) return <small>Not observed yet</small>;
+ const age = Math.max(0, Math.floor((Date.now() - Date.parse(status.checkedAt)) / 1000));
+ const updated = age < 60 ? `${age}s ago` : `${Math.floor(age/60)}m ago`;
+ return <div style={{maxWidth:280,whiteSpace:'normal'}}><strong>{status.found ? status.state || 'State not supplied' : 'Placement absent'}</strong>{status.progress !== null && <><span>Download {(status.progress*100).toFixed(1)}%</span><div className="progress" role="progressbar" aria-label="TorBox download progress" aria-valuenow={status.progress*100} aria-valuemin={0} aria-valuemax={100}><i style={{width:`${status.progress*100}%`}} /></div></>}{status.found && status.progress === null && <small>Progress not supplied</small>}<small style={{display:'block'}}>{status.ready ? 'Ready on TorBox' : 'Not ready on TorBox'}{status.cached === true ? ' · Cached' : ''}</small>{status.speed !== null && <small style={{display:'block'}}>{(status.speed/1024**2).toFixed(1)} MiB/s</small>}{status.size !== null && <small style={{display:'block'}}>{status.downloaded !== null ? `${(status.downloaded/1024**3).toFixed(2)} / ` : ''}{(status.size/1024**3).toFixed(2)} GiB</small>}<small style={{display:'block',color:status.checkFailed?'var(--orange)':undefined}}>Observed {updated}{status.checkFailed ? ' · Last lookup failed; stale observation' : ''}</small></div>;
+}

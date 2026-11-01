@@ -21,11 +21,18 @@ type UsenetFile struct {
 	Size int64  `json:"size"`
 }
 type UsenetDownload struct {
-	ID      int64        `json:"id"`
-	Name    string       `json:"name"`
-	State   string       `json:"download_state"`
-	Present *bool        `json:"download_present"`
-	Files   []UsenetFile `json:"files"`
+	RawState   string       `json:"-"`
+	Progress   *float64     `json:"progress"`
+	Speed      *float64     `json:"download_speed"`
+	Size       *float64     `json:"size"`
+	Downloaded *float64     `json:"total_downloaded"`
+	Finished   *bool        `json:"download_finished"`
+	Cached     *bool        `json:"cached"`
+	ID         int64        `json:"id"`
+	Name       string       `json:"name"`
+	State      string       `json:"download_state"`
+	Present    *bool        `json:"download_present"`
+	Files      []UsenetFile `json:"files"`
 }
 
 func (d UsenetDownload) Ready() bool {

@@ -115,9 +115,8 @@ retained-source and provider queue logic as Arr. Browsing does not read media or
 generate provider links. Hidden download-client history remains browsable as
 retained catalog files. Recovery scheduling is available through the diagnostics view; there are no delete or force-upload controls.
 
-Job progress percentages, live provider speed and controller heartbeat are not
-stored, so the dashboard does not invent these metrics. Health reports successful
-catalog/database access and pending verification, not active integration probes.
+Provider progress is described below. Health reports successful catalog/database
+access and pending verification, not active integration probes.
 
 ## Recovery & diagnostics
 
@@ -144,3 +143,32 @@ Download activity includes retained jobs marked hidden by Arr, labeled **Hidden
 from client queue**. Hidden status is not deletion. Only downloads tracked by this
 gateway appear; the dashboard does not invent history for pre-existing provider
 placements. Current download-client visibility remains unchanged.
+
+## TorBox progress and processing
+
+Apply migration `034_provider_status.sql` before upgrading processes, or start the
+schema-migrating gateway first, then roll out the controller. No credentials or new
+configuration are needed. Provider telemetry is nullable for existing jobs until
+their next scheduled provider check.
+
+The gateway retains the raw TorBox state separately from Rehydrator's state.
+For example, TorBox may report **Direct Unpack: Completed · Download 100%**, while
+Rehydrator still waits for provider readiness. Download progress never authorizes
+an import. Existing readiness and mounted-file verification rules still apply.
+
+Optional fields include `progress` (fraction 0–1), `download_speed`, `size`,
+`total_downloaded`, `download_finished`, `download_present`, and `cached`.
+Unknown progress is not displayed as zero; invalid/negative metrics are discarded.
+Only provider-supplied bytes and speed are displayed. No unpack percentage is
+inferred, and no source URL/credential is retained in these observations.
+
+Provider polling frequency is unchanged: active jobs are usually scheduled about
+a minute apart and completed jobs about fifteen minutes apart, subject to worker
+capacity and errors. The dashboard polls PostgreSQL every ten seconds, not TorBox.
+It shows observation age and marks the last reading stale after a provider error.
+TorBox itself may cache API responses, so these are observations, not a live stream.
+A missing placement clears its old progress; replacement provider IDs discard
+observations for the previous placement.
+
+References: [TorBox API](https://api-docs.torbox.app/) and
+[official Usenet SDK model](https://github.com/TorBox-App/torbox-sdk-py/blob/main/src/torbox_api/models/get_usenet_list_ok_response.py).

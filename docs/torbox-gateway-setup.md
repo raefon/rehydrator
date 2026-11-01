@@ -1,4 +1,4 @@
-# Direct TorBox gateway (v0.7.8 playground)
+# Direct TorBox gateway (v0.7.9 playground)
 
 Rehydrator accepts torrents and NZBs, submits them directly to TorBox, and exposes
 one read-only WebDAV catalog for CSI-rclone. Decypharr is not used in this mode.
@@ -48,7 +48,7 @@ available and new downloads wait in `Mounting` instead of prematurely completing
 Gateway delete-data requests enqueue durable staging cleanup for the controller.
 
 Gateway `/readyz` checks database/catalog access without asking the controller,
-Arr or the CSI mount. `/healthz` is process liveness. Apply migrations through 033
+Arr or the CSI mount. `/healthz` is process liveness. Apply migrations through 034
 before rollout, or let the gateway initialize the schema first. Do not run
 schema repair concurrently with active controllers. The gateway must not wait
 for `/config/.permissions-initialized` or depend on a pod that needs its CSI mount.

@@ -172,9 +172,15 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		download, found, err = s.provider.Get(ctx, j.ProviderID)
 	}
 	if err != nil {
+		if recordErr := s.repo.RecordProviderCheckFailure(ctx, s.tenant, j); recordErr != nil {
+			return recordErr
+		}
 		j.LastError = err.Error()
 		j.MissingChecks = 0
 		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 5*time.Minute)
+	}
+	if err = s.repo.RecordProviderStatus(ctx, s.tenant, j, download.Status(j.ProviderID, found)); err != nil {
+		return err
 	}
 	if !found || (download.Present != nil && !*download.Present && (download.State == "cached" || download.State == "completed")) {
 		if j.MissingChecks < 3 {

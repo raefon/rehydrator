@@ -13,6 +13,7 @@ import (
 
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/model"
+	"github.com/raefon/rehydrator/internal/torbox"
 )
 
 // ConfigureDashboard performs OIDC discovery before the HTTP listener starts.
@@ -98,15 +99,16 @@ type dashboardFile struct {
 	Path string `json:"path"`
 }
 type dashboardJob struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Category  string          `json:"category"`
-	Protocol  string          `json:"protocol"`
-	Status    string          `json:"status"`
-	Files     []dashboardFile `json:"files"`
-	Hidden    bool            `json:"hidden"`
-	Attempts  int             `json:"attempts"`
-	CreatedAt string          `json:"createdAt"`
+	Provider  *torbox.ProviderStatus `json:"provider"`
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	Category  string                 `json:"category"`
+	Protocol  string                 `json:"protocol"`
+	Status    string                 `json:"status"`
+	Files     []dashboardFile        `json:"files"`
+	Hidden    bool                   `json:"hidden"`
+	Attempts  int                    `json:"attempts"`
+	CreatedAt string                 `json:"createdAt"`
 }
 
 func (s *Service) dashboardJob(j db.CloudNZBJob) dashboardJob {
@@ -117,7 +119,7 @@ func (s *Service) dashboardJob(j db.CloudNZBJob) dashboardJob {
 	if name == "" {
 		name = j.ID
 	}
-	result := dashboardJob{ID: j.ID, Name: name, Category: j.Category, Protocol: j.Protocol, Status: j.State, Hidden: j.Hidden, Attempts: j.Attempts, CreatedAt: j.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"), Files: []dashboardFile{}}
+	result := dashboardJob{Provider: j.ProviderStatus, ID: j.ID, Name: name, Category: j.Category, Protocol: j.Protocol, Status: j.State, Hidden: j.Hidden, Attempts: j.Attempts, CreatedAt: j.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"), Files: []dashboardFile{}}
 	if j.State == "Completed" || j.State == "Mounting" {
 		for _, file := range j.Files {
 			result.Files = append(result.Files, dashboardFile{Name: file.Name, Size: file.Size, Path: s.catalogPath(j) + "/" + file.Name})

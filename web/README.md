@@ -113,8 +113,34 @@ The dashboard lists tenant-scoped jobs, browses catalog file metadata, and accep
 one magnet, torrent or NZB per submission (50 MiB file limit). Uploads use the same
 retained-source and provider queue logic as Arr. Browsing does not read media or
 generate provider links. Hidden download-client history remains browsable as
-retained catalog files. No delete/retry controls are provided.
+retained catalog files. Recovery scheduling is available through the diagnostics view; there are no delete or force-upload controls.
 
 Job progress percentages, live provider speed and controller heartbeat are not
 stored, so the dashboard does not invent these metrics. Health reports successful
 catalog/database access and pending verification, not active integration probes.
+
+## Recovery & diagnostics
+
+Search by an exact torrent infohash or gateway job ID, or select a retained job by
+name. NZBs retain their separate job identity. The panel shows source kind and
+validity, provider ID, attempts, missing confirmations, scheduled provider/controller
+checks and up to 500 matching library rows. Original source contents, API keys and
+raw provider errors are not returned.
+
+**Check TorBox now** is read-only: it does not upload, modify job state, or increment
+missing confirmations. Requests are limited to one per job every 15 seconds and
+ten per gateway in that window. Unknown torrent submissions can be looked up by
+exact hash, but this action does not adopt or resubmit them. Scheduled reconciliation
+handles adoption. Unknown NZBs require provider inspection.
+
+**Request rearm** requires a valid saved source, enabled recovery, a known provider
+ID, three scheduled missing confirmations, and fewer than three attempts. Confirming
+wakes the existing worker, which checks TorBox again before queuing a recovery.
+The normal provider submission interval and attempt budget remain in force.
+Failed/uncertain jobs cannot be reset from the dashboard. If source data is absent,
+acquire a replacement through Sonarr/Radarr or submit its original source.
+
+Download activity includes retained jobs marked hidden by Arr, labeled **Hidden
+from client queue**. Hidden status is not deletion. Only downloads tracked by this
+gateway appear; the dashboard does not invent history for pre-existing provider
+placements. Current download-client visibility remains unchanged.

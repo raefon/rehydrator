@@ -83,6 +83,8 @@ func (s *Service) Dashboard(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, s.dashboardJob(job))
 		}
 		writeJSON(w, map[string]any{"authMode": mode, "tenant": s.tenant, "role": s.role, "categories": categories, "jobs": rows})
+	case strings.HasPrefix(r.URL.Path, "/dashboard/api/recovery/"):
+		s.dashboardRecovery(w, r)
 	case r.URL.Path == "/dashboard/api/jobs" && r.Method == http.MethodPost:
 		s.dashboardAdd(w, r)
 	default:

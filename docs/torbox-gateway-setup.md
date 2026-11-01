@@ -1,4 +1,4 @@
-# Direct TorBox gateway (v0.7.7 playground)
+# Direct TorBox gateway (v0.7.8 playground)
 
 Rehydrator accepts torrents and NZBs, submits them directly to TorBox, and exposes
 one read-only WebDAV catalog for CSI-rclone. Decypharr is not used in this mode.

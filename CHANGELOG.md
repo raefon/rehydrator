@@ -1,3 +1,10 @@
+# Rehydrator v0.7.8 — Recovery and diagnostics dashboard (unreleased)
+
+- Add tenant-scoped torrent-hash/job lookup, retained-source validation, provider IDs, scheduled checks, attempt budgets, and matching library records.
+- Add bounded observation-only provider checks and guarded recovery scheduling through the existing worker. Unknown submissions, failed jobs, exhausted budgets, disabled recovery and unavailable sources cannot be force-retried.
+- Show retained download history even after Arr hides jobs from its client queue. Pre-gateway downloads added directly to TorBox are not imported as historical jobs.
+- No schema migration required.
+
 # Rehydrator v0.7.7 — Native OIDC dashboard login (unreleased)
 
 - Add Authentik-compatible OIDC discovery, authorization code with PKCE, ID-token verification, nonce/state binding and optional group restrictions.

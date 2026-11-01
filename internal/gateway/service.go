@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/raefon/rehydrator/internal/config"
@@ -33,6 +34,8 @@ type TorrentProvider interface {
 	Link(context.Context, int64, int64) (string, error)
 }
 type Service struct {
+	diagnosticMu          sync.Mutex
+	diagnosticChecks      map[string]time.Time
 	dashboardOIDC         *dashboardauth.Auth
 	dashboardExternalAuth bool
 	direct                bool

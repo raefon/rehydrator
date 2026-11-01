@@ -25,12 +25,13 @@ import (
 	"github.com/raefon/rehydrator/internal/seerr"
 	"github.com/raefon/rehydrator/internal/syncer"
 	"github.com/raefon/rehydrator/internal/torbox"
+	"github.com/raefon/rehydrator/internal/webui"
 	"net/http"
 )
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.7.5"
+var version = "0.7.7"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
@@ -98,7 +99,8 @@ func main() {
 		torboxHealth = torbox.NewHealthClient(cfg.TorBoxHealth.APIKey)
 	}
 	var cloud *cloudusenet.Service
-	var cloudSAB, cloudDAV, gatewayQB, gatewaySAB, gatewayDAV http.HandlerFunc
+	var cloudSAB, cloudDAV, gatewayQB, gatewaySAB, gatewayDAV, gatewayDashboard http.HandlerFunc
+	var gatewayUI http.Handler
 	if cfg.Gateway.Enabled {
 		gatewayConfig := cfg.Gateway
 		gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
@@ -111,6 +113,13 @@ func main() {
 			gatewayQB = cloud.QBittorrent
 			gatewaySAB = cloud.SAB
 			gatewayDAV = cloud.DAV
+			gatewayDashboard = cloud.Dashboard
+			var err error
+			gatewayUI, err = cloud.ConfigureDashboard(ctx, cfg.Gateway.OIDC, webui.Handler())
+			if err != nil {
+				slog.Error("dashboard OIDC initialization failed", "error", err)
+				os.Exit(1)
+			}
 			go cloud.Run(ctx)
 		}
 	}
@@ -353,7 +362,7 @@ func main() {
 	var healthServer *health.Server
 	if cfg.APIEnabled {
 		healthServer = health.NewAPIServer(health.APIOptions{
-			CloudSAB: cloudSAB, CloudDAV: cloudDAV, GatewayQB: gatewayQB, GatewaySAB: gatewaySAB, GatewayDAV: gatewayDAV,
+			CloudSAB: cloudSAB, CloudDAV: cloudDAV, GatewayQB: gatewayQB, GatewaySAB: gatewaySAB, GatewayDAV: gatewayDAV, GatewayDashboard: gatewayDashboard, GatewayUI: gatewayUI,
 			Readiness: func(ctx context.Context) error {
 				if cfg.Gateway.Enabled {
 					return repo.GatewayCatalogReady(ctx, cfg.Tenant)
@@ -416,7 +425,12 @@ func runGateway(ctx context.Context, cfg config.Config, repo *db.Repo) {
 	gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
 	service := gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
 	service.SetRole(config.RoleGateway)
-	server := health.NewAPIServer(health.APIOptions{Addr: cfg.HealthAddr, GatewayQB: service.QBittorrent, GatewaySAB: service.SAB, GatewayDAV: service.DAV, Readiness: func(ctx context.Context) error { return repo.GatewayCatalogReady(ctx, cfg.Tenant) }})
+	ui, err := service.ConfigureDashboard(ctx, cfg.Gateway.OIDC, webui.Handler())
+	if err != nil {
+		slog.Error("dashboard OIDC initialization failed", "error", err)
+		os.Exit(1)
+	}
+	server := health.NewAPIServer(health.APIOptions{Addr: cfg.HealthAddr, GatewayQB: service.QBittorrent, GatewaySAB: service.SAB, GatewayDAV: service.DAV, GatewayDashboard: service.Dashboard, GatewayUI: ui, Readiness: func(ctx context.Context) error { return repo.GatewayCatalogReady(ctx, cfg.Tenant) }})
 	slog.Info("standalone gateway starting", "tenant", cfg.Tenant, "role", cfg.Role, "addr", cfg.HealthAddr)
 	go service.Run(ctx)
 	server.Run(ctx)

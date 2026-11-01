@@ -1,2 +1,6 @@
 .DS_Store
 .qodo
+# Frontend build artifacts
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo

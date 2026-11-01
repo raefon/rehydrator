@@ -1,0 +1,50 @@
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { addDownload, login, logout, snapshot } from './api';
+import type { Job, Snapshot, Protocol } from './model';
+
+type View = 'overview' | 'files' | 'health';
+const label = (value: string) => value[0].toUpperCase() + value.slice(1);
+const size = (bytes: number) => bytes ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : '—';
+const available = (job: Job) => job.status === 'Completed' || job.status === 'Mounting';
+
+function DownloadTable({ jobs }: { jobs: Job[] }) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
+  const filtered = jobs.filter(j => !j.hidden && (filter === 'all' || j.protocol === filter) && j.name.toLowerCase().includes(search.toLowerCase()));
+  return <><div className="sectionhead"><h2>Download activity</h2><div className="toolbar"><input type="search" aria-label="Search downloads" placeholder="Search downloads…" value={search} onChange={e => setSearch(e.target.value)} /><select aria-label="Filter protocol" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All protocols</option><option value="torrent">Torrent</option><option value="usenet">Usenet</option></select></div></div><div className="tablewrap"><table><thead><tr>{['Name / destination','Protocol','State','Attempts','Catalog size'].map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>{filtered.map(j => <tr key={j.id}><td><strong>{j.name}</strong><small>{j.category} / {j.id}</small></td><td>{label(j.protocol)}</td><td><span className={`pill ${j.status === 'Completed' ? '' : 'amber'}`}>{j.status}</span></td><td>{j.attempts}</td><td>{size(j.files.reduce((sum, f) => sum + f.size, 0))}</td></tr>)}</tbody></table></div>{!filtered.length && <p className="note">No matching downloads.</p>}</>;
+}
+
+function FileBrowser({ jobs }: { jobs: Job[] }) {
+  const [folder, setFolder] = useState<Protocol | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const job = jobs.find(j => j.id === selected);
+  return <><div className="sectionhead"><h2>WebDAV / {folder === 'torrent' ? 'torrents' : folder} {job && `/ ${job.name}`}</h2><button className="secondary" onClick={() => selected ? setSelected(null) : setFolder(null)}>Back</button></div><div className="tablewrap"><table><thead><tr><th>Name</th><th>Type / size</th></tr></thead><tbody>{!folder ? (['torrent','usenet'] as Protocol[]).map(p => <tr key={p}><td><button className="textbutton" onClick={() => setFolder(p)}>{p === 'torrent' ? 'torrents' : p}</button></td><td>Folder</td></tr>) : job ? job.files.map(f => <tr key={f.path}><td>{f.name}<small style={{ display: 'block' }}>/webdav/{f.path}</small></td><td>{size(f.size)}</td></tr>) : jobs.filter(j => j.protocol === folder && available(j) && j.files.length).map(j => <tr key={j.id}><td><button className="textbutton" onClick={() => setSelected(j.id)}>{j.name}</button></td><td>{j.files.length} files · {j.status}</td></tr>)}</tbody></table></div><p className="note">Catalog metadata only. Browsing does not read media or generate provider download links.</p></>;
+}
+
+function AddDownload({ categories, close, submitted }: { categories: string[]; close: () => void; submitted: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [error, setError] = useState(''); const [pending, setPending] = useState(false);
+  useEffect(() => { ref.current?.showModal(); }, []);
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault(); const form = new FormData(e.currentTarget); const file = form.get('upload'); const magnet = String(form.get('magnet') ?? '').trim();
+    const hasFile = file instanceof File && !!file.name;
+    if ((!magnet && !hasFile) || (magnet && hasFile)) { setError('Choose exactly one magnet or file.'); return; }
+    if (!hasFile) form.delete('upload');
+    setPending(true); setError('');
+    try { await addDownload(form); submitted(); close(); } catch (e) { setError((e as Error).message); } finally { setPending(false); }
+  }
+  return <dialog ref={ref} onCancel={e => { if (pending) e.preventDefault(); else close(); }} aria-labelledby="add-title"><form onSubmit={submit}><h2 id="add-title">Add a download</h2><p>The original source is saved before the gateway submits it to TorBox.</p><label htmlFor="magnet">Magnet link</label><input id="magnet" name="magnet" disabled={pending} /><label htmlFor="upload">Or torrent / NZB file</label><input id="upload" type="file" name="upload" accept=".torrent,.nzb" disabled={pending} /><label htmlFor="category">Destination</label><select id="category" name="category" disabled={pending}>{categories.map(c => <option key={c}>{c}</option>)}</select><p role="alert">{error}</p><div className="actions"><button type="button" className="secondary" disabled={pending} onClick={close}>Cancel</button><button className="primary" disabled={pending}>{pending ? 'Saving…' : 'Submit download'}</button></div></form></dialog>;
+}
+
+export default function App() {
+  const [data, setData] = useState<Snapshot | null>(null); const [view, setView] = useState<View>('overview'); const [error, setError] = useState(''); const [auth, setAuth] = useState(false); const [revision, setRevision] = useState(0); const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
+    async function poll() { try { const result = await snapshot(controller.signal); setData(result); setError(''); setAuth(false); } catch (e) { if (controller.signal.aborted) return; const message = (e as Error).message; setError(message); if (message === 'Authentication required') { setAuth(true); setData(null); } } if (!controller.signal.aborted) timer = setTimeout(poll, 10000); }
+    void poll(); return () => { controller.abort(); clearTimeout(timer); };
+  }, [revision]);
+  function authenticate(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const form = new FormData(e.currentTarget); login(String(form.get('user')),String(form.get('password'))); e.currentTarget.reset(); setRevision(r => r + 1); }
+  if (!data) return <main style={{ margin: '0 auto', maxWidth: 540 }}><h1>Rehydrator</h1>{auth ? <form onSubmit={authenticate}><p>Sign in with the gateway qBittorrent credentials.</p><label>Username <input name="user" autoComplete="username" required /></label><label>Password <input name="password" type="password" autoComplete="current-password" required /></label><button className="primary">Sign in</button></form> : <p>Connecting to gateway…</p>}<p role="alert">{error}</p><button className="secondary" onClick={() => setRevision(r => r + 1)}>Retry</button></main>;
+  const jobs = data.jobs; const ready = jobs.filter(available); const active = jobs.filter(j => !j.hidden && !['Completed','Failed'].includes(j.status));
+  return <><aside><div className="brand"><b>↻</b>rehydrator</div><div className="eyebrow">Workspace</div><nav>{(['overview','files','health'] as View[]).map(v => <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>{label(v)}</button>)}</nav><footer>{data.tenant}<br />{data.role || 'combined'}<br />{data.authMode === 'oidc' ? <form method="post" action="/auth/logout"><button className="textbutton">Sign out</button></form> : <button className="textbutton" onClick={() => { logout(); setData(null); setRevision(r => r + 1); }}>Reconnect</button>}</footer></aside><main><header><div className="crumb">Workspace / {label(view)}</div><div className="tenant">{data.tenant}</div></header><div className="intro"><div><h1>{view === 'overview' ? 'Everything in motion.' : view === 'files' ? 'Your cloud, organized.' : 'Gateway health.'}</h1><p>Live catalog · Refreshes every 10 seconds</p></div><button className="primary" onClick={() => setOpen(true)}>＋ Add download</button></div>{error && <p role="alert">{error} · Displaying the last successful snapshot.</p>}<section className="stats">{[['In progress',active.length],['Published',ready.length],['Catalog size',size(ready.reduce((sum,j) => sum+j.files.reduce((n,f) => n+f.size,0),0))],['Needs attention',jobs.filter(j => ['Failed','SubmissionUnknown','Missing'].includes(j.status)).length]].map(([title,value]) => <div className="stat" key={title}><span className="eyebrow">{title}</span><strong>{value}</strong></div>)}</section>{view === 'overview' && <DownloadTable jobs={jobs} />}{view === 'files' && <FileBrowser jobs={jobs} />}{view === 'health' && <div className="card"><h2>Catalog connection</h2><div className="healthrow"><span>Gateway / PostgreSQL</span><span>{error ? 'Snapshot unavailable' : 'Snapshot successful'}</span></div><div className="healthrow"><span>Awaiting controller verification</span><span>{jobs.filter(j => j.status === 'Mounting').length}</span></div><p className="note">This view reports stored job state. It does not actively probe TorBox, the CSI mount, or your library services.</p></div>}<p className="note">Downloading → Mounting → Completed. Percent progress is not recorded by the gateway.</p></main>{open && <AddDownload categories={data.categories} close={() => setOpen(false)} submitted={() => setRevision(r => r + 1)} />}</>;
+}

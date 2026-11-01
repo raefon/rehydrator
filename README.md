@@ -16,8 +16,8 @@ required. UI work is deferred.
 
 For CSI deployments, use the [gateway/controller split](docs/torbox-gateway-setup.md#split-deployment-with-csi). The gateway can run in a separate namespace without tenant mounts; the controller stays inside the tenant.
 
-This draft is **v0.7.5**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.5`.
+This draft is **v0.7.7**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.7`.
 
 For hosted-NZB client configuration and the live test procedure, see
 [NZB gateway setup](docs/nzb-gateway-setup.md).
@@ -134,3 +134,7 @@ Unexpected torrent cache loss can be recovered by [periodic file health checks](
 Optional [TorBox provider-first health checks](docs/torbox-health.md) compare stored
 torrent hashes with the account's reported availability; all provider mutations
 remain in Decypharr.
+
+## Gateway dashboard
+
+The gateway serves a live dashboard at `/`, including download submissions and catalog browsing. For your existing Authentik ForwardAuth ingress, set `gateway.dashboard_external_auth: true` on the gateway. See [dashboard setup and builds](web/README.md).

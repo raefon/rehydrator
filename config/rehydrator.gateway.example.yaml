@@ -13,6 +13,14 @@ api:
 cloud_usenet:
   enabled: false
 gateway:
+  dashboard_external_auth: false # Mutually exclusive with native OIDC.
+  oidc:
+    enabled: false
+    issuer_url: "https://auth.example.com/application/o/rehydrator/"
+    client_id: ""
+    client_secret: "" # GATEWAY_OIDC_CLIENT_SECRET; keep in a Secret.
+    redirect_url: "https://rehydrator.example.com/auth/callback"
+    allowed_groups: [] # Any matching group grants dashboard access; empty allows all authorized app users.
   enabled: true
   api_key: "" # GATEWAY_API_KEY; only the gateway needs provider credentials
   qb_username: arr

@@ -721,6 +721,12 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.TorBoxHealth.APIKey = getenv("TORBOX_HEALTH_API_KEY", cfg.TorBoxHealth.APIKey)
 	cfg.TorBoxHealth.IntervalSeconds = getenvInt("TORBOX_HEALTH_INTERVAL_SECONDS", cfg.TorBoxHealth.IntervalSeconds)
 	cfg.TorBoxHealth.TimeoutSeconds = getenvInt("TORBOX_HEALTH_TIMEOUT_SECONDS", cfg.TorBoxHealth.TimeoutSeconds)
+	cfg.Gateway.OIDC.Enabled = getenvBool("GATEWAY_OIDC_ENABLED", cfg.Gateway.OIDC.Enabled)
+	cfg.Gateway.OIDC.IssuerURL = getenv("GATEWAY_OIDC_ISSUER_URL", cfg.Gateway.OIDC.IssuerURL)
+	cfg.Gateway.OIDC.ClientID = getenv("GATEWAY_OIDC_CLIENT_ID", cfg.Gateway.OIDC.ClientID)
+	cfg.Gateway.OIDC.ClientSecret = getenv("GATEWAY_OIDC_CLIENT_SECRET", cfg.Gateway.OIDC.ClientSecret)
+	cfg.Gateway.OIDC.RedirectURL = getenv("GATEWAY_OIDC_REDIRECT_URL", cfg.Gateway.OIDC.RedirectURL)
+	cfg.Gateway.DashboardExternalAuth = getenvBool("GATEWAY_DASHBOARD_EXTERNAL_AUTH", cfg.Gateway.DashboardExternalAuth)
 	cfg.Gateway.Enabled = getenvBool("GATEWAY_ENABLED", cfg.Gateway.Enabled)
 	cfg.Gateway.RecoverMissing = getenvBool("GATEWAY_RECOVER_MISSING", cfg.Gateway.RecoverMissing)
 	cfg.Gateway.APIKey = getenv("GATEWAY_API_KEY", cfg.Gateway.APIKey)
@@ -893,6 +899,12 @@ func validate(cfg Config) error {
 	}
 	if cfg.Role != RoleGateway && cfg.Jellyfin.RefreshMode != "" && cfg.Jellyfin.RefreshMode != "notification" && cfg.Jellyfin.RefreshMode != "targeted_scan" {
 		return errors.New("jellyfin.refresh_mode must be notification or targeted_scan")
+	}
+	if err := cfg.Gateway.OIDC.Validate(); err != nil {
+		return err
+	}
+	if cfg.Gateway.OIDC.Enabled && cfg.Gateway.DashboardExternalAuth {
+		return fmt.Errorf("choose OIDC or external dashboard auth, not both")
 	}
 	if cfg.Gateway.Enabled && cfg.CloudUsenet.Enabled {
 		return errors.New("enable gateway or cloud_usenet, not both")

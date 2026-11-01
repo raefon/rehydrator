@@ -1,3 +1,16 @@
+# Rehydrator v0.7.7 — Native OIDC dashboard login (unreleased)
+
+- Add Authentik-compatible OIDC discovery, authorization code with PKCE, ID-token verification, nonce/state binding and optional group restrictions.
+- Protect dashboard assets and APIs with short-lived secure sessions; support local logout and session-expiry reauthentication without falling back to Basic or proxy headers.
+- Retain mutually exclusive ForwardAuth and Basic dashboard modes. Download-client and WebDAV authentication is unchanged. No schema migration required.
+
+# Rehydrator v0.7.6 — Gateway dashboard (unreleased)
+
+- Serve an embedded React/TypeScript dashboard from the gateway, with live tenant-scoped jobs, catalog browsing, and durable magnet/torrent/NZB submissions.
+- Support existing Authentik ForwardAuth through opt-in external dashboard authentication; keep download-client and WebDAV credentials unchanged.
+- Poll stored catalog state without media reads or provider calls, and display pending controller verification without invented progress or health measurements.
+- Add a frontend build stage to the container and a release-build Make target. No schema migration required.
+
 # Rehydrator v0.7.5 — Hosted-NZB client integration checks (unreleased)
 
 - Align SAB fullstatus with the completedir field expected by Arr and explicitly report an empty sorter list, disabled sorting and retained history.

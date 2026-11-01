@@ -24,6 +24,8 @@ type Server struct {
 
 type APIOptions struct {
 	Readiness                    func(context.Context) error
+	GatewayUI                    http.Handler
+	GatewayDashboard             http.HandlerFunc
 	GatewayQB                    http.HandlerFunc
 	GatewaySAB                   http.HandlerFunc
 	GatewayDAV                   http.HandlerFunc
@@ -68,6 +70,12 @@ func newServer(opt APIOptions) *Server {
 	}
 
 	mux := http.NewServeMux()
+	if opt.GatewayUI != nil {
+		mux.Handle("/", opt.GatewayUI)
+	}
+	if opt.GatewayDashboard != nil {
+		mux.HandleFunc("/dashboard/api/", opt.GatewayDashboard)
+	}
 	if opt.GatewayQB != nil {
 		mux.HandleFunc("/api/v2/", opt.GatewayQB)
 	}

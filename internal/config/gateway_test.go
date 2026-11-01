@@ -44,3 +44,22 @@ func TestDirectGatewayConfiguration(t *testing.T) {
 		t.Fatal("env override missing")
 	}
 }
+
+func TestOIDCConfigOverridesAndModeConflict(t *testing.T) {
+	cfg := defaults()
+	t.Setenv("GATEWAY_OIDC_ENABLED", "true")
+	t.Setenv("GATEWAY_OIDC_ISSUER_URL", "https://auth.example/application/o/rehydrator/")
+	t.Setenv("GATEWAY_OIDC_CLIENT_ID", "client")
+	t.Setenv("GATEWAY_OIDC_CLIENT_SECRET", "secret")
+	t.Setenv("GATEWAY_OIDC_REDIRECT_URL", "https://gateway.example/auth/callback")
+	applyEnvOverrides(&cfg)
+	if !cfg.Gateway.OIDC.Enabled || cfg.Gateway.OIDC.ClientSecret != "secret" || cfg.Gateway.OIDC.Validate() != nil {
+		t.Fatal("OIDC environment overrides not applied")
+	}
+	cfg.PostgresURL = "postgres://example"
+	cfg.Tenant = "test"
+	cfg.Gateway.DashboardExternalAuth = true
+	if err := validate(cfg); err == nil {
+		t.Fatal("conflicting authentication modes accepted")
+	}
+}

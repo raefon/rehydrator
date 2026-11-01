@@ -12,6 +12,7 @@ import (
 
 	"github.com/raefon/rehydrator/internal/config"
 	"github.com/raefon/rehydrator/internal/csi"
+	"github.com/raefon/rehydrator/internal/dashboardauth"
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/model"
 	"github.com/raefon/rehydrator/internal/torbox"
@@ -32,17 +33,19 @@ type TorrentProvider interface {
 	Link(context.Context, int64, int64) (string, error)
 }
 type Service struct {
-	direct             bool
-	role               string
-	torrent            TorrentProvider
-	qbUser, qbPassword string
-	cfg                config.CloudUsenetConfig
-	tenant             string
-	repo               *db.Repo
-	provider           Provider
-	mountProbe         *csi.ReadProbe
-	links              linkCache
-	categories         map[string]bool
+	dashboardOIDC         *dashboardauth.Auth
+	dashboardExternalAuth bool
+	direct                bool
+	role                  string
+	torrent               TorrentProvider
+	qbUser, qbPassword    string
+	cfg                   config.CloudUsenetConfig
+	tenant                string
+	repo                  *db.Repo
+	provider              Provider
+	mountProbe            *csi.ReadProbe
+	links                 linkCache
+	categories            map[string]bool
 }
 
 func New(cfg config.CloudUsenetConfig, tenant string, repo *db.Repo, provider Provider, categories ...string) *Service {
@@ -351,6 +354,7 @@ func NewDirect(cfg config.GatewayConfig, tenant string, repo *db.Repo, torrents 
 	s := New(cfg.CloudUsenetConfig, tenant, repo, usenet, categories...)
 	s.direct = true
 	s.torrent = torrents
+	s.dashboardExternalAuth = cfg.DashboardExternalAuth
 	s.qbUser = cfg.QBUsername
 	s.qbPassword = cfg.QBPassword
 	return s

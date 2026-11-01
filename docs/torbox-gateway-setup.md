@@ -1,4 +1,4 @@
-# Direct TorBox gateway (v0.7.5 playground)
+# Direct TorBox gateway (v0.7.7 playground)
 
 Rehydrator accepts torrents and NZBs, submits them directly to TorBox, and exposes
 one read-only WebDAV catalog for CSI-rclone. Decypharr is not used in this mode.
@@ -7,7 +7,7 @@ you do not supply an NNTP server to Rehydrator or TorBox's cloud downloader.
 
 Use a fresh isolated deployment/database for the playground. Existing Decypharr
 paths are not migrated. Nothing here requires deleting the working installation.
-UI work remains deferred.
+The gateway now serves a dashboard at `/`; see [dashboard and Authentik setup](../web/README.md).
 
 ## Split deployment with CSI
 

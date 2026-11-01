@@ -69,7 +69,7 @@ func (s *Service) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.URL.Path == "/dashboard/api/snapshot" && r.Method == http.MethodGet:
-		jobs, err := s.repo.CloudNZBs(r.Context(), s.tenant)
+		jobs, err := s.repo.GatewayJobs(r.Context(), s.tenant)
 		if err != nil {
 			http.Error(w, "catalog unavailable", 503)
 			return
@@ -111,7 +111,7 @@ type dashboardJob struct {
 	CreatedAt string                 `json:"createdAt"`
 }
 
-func (s *Service) dashboardJob(j db.CloudNZBJob) dashboardJob {
+func (s *Service) dashboardJob(j db.GatewayJob) dashboardJob {
 	name := j.Name
 	if name == "" {
 		name = j.Filename

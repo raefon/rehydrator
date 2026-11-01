@@ -1,140 +1,69 @@
 # Rehydrator
 
-Rehydrator manages on-demand media cache lifecycles using Radarr/Sonarr,
-Decypharr, PostgreSQL, CSI-rclone, and **Jellyfin**. Seerr can provide request intent.
+Rehydrator sends torrents and hosted NZBs directly to TorBox, retains their original
+sources in PostgreSQL, and exposes a shared WebDAV catalog for CSI-rclone. A library
+controller stages and verifies files for Sonarr/Radarr and refreshes Jellyfin.
+Seerr and playback webhooks can request restoration of tracked releases.
 
-It records imported releases, asks Decypharr to prune expired provider placements,
-and restores archived media when Jellyfin playback or an API request asks for it.
-In legacy mode, Decypharr owns torrent mutations. Optional [TorBox cloud Usenet](docs/torbox-cloud-setup.md) submits hosted NZBs directly. Optional read-only TorBox health checks compare tracked releases with the provider account inventory.
+Current version: **v0.8.0**. Run `rehydrator --version` to inspect your binary.
 
-## Version
+## Deployment
 
-The opt-in [v0.7.0 direct TorBox gateway](docs/torbox-gateway-setup.md) handles
-torrents and hosted NZBs through one CSI-mounted WebDAV catalog without
-Decypharr. It is a fresh-start playground; live cluster acceptance remains
-required. UI work is deferred.
+| Role | Responsibilities | Mounts |
+|---|---|---|
+| Gateway | TorBox submission/polling, qBittorrent/SAB endpoints, WebDAV, dashboard | Configuration Secret only |
+| Controller | Staging, bounded mounted-file verification, Arr/Seerr/Jellyfin integration | Shared media and CSI mount |
+| Combined | Both roles for local testing | Suitable when mount startup does not depend on this process |
 
-For CSI deployments, use the [gateway/controller split](docs/torbox-gateway-setup.md#split-deployment-with-csi). The gateway can run in a separate namespace without tenant mounts; the controller stays inside the tenant.
+For Kubernetes CSI, run separate gateway/controller processes per tenant. Both
+use the same PostgreSQL database, tenant, categories and logical paths. The gateway
+must start independently of its CSI consumers.
 
-This draft is **v0.7.9**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.9`.
-
-For hosted-NZB client configuration and the live test procedure, see
-[NZB gateway setup](docs/nzb-gateway-setup.md).
+- [Gateway/controller setup](docs/torbox-gateway-setup.md)
+- [Configuration and upgrade changes](docs/configuration.md)
+- [Hosted-NZB setup](docs/nzb-gateway-setup.md) — requires TorBox Pro
+- [Dashboard, Authentik OIDC and ForwardAuth](web/README.md)
+- [Jellyfin setup](docs/jellyfin-setup.md)
+- [Seerr and Arr webhooks](docs/radarr-seerr-setup.md)
 
 ## Workflow
 
-The following describes legacy Decypharr mode. For the direct torrent/NZB
-gateway, use the [gateway setup and workflow](docs/torbox-gateway-setup.md).
+1. Arr submits a magnet/torrent via the gateway's qBittorrent API or an NZB via SAB.
+2. The exact original source is saved before the submission is acknowledged.
+3. TorBox downloads/processes the release. The gateway records provider observations.
+4. Ready files appear through WebDAV; the controller stages links and verifies a bounded read.
+5. The client reports completion for Arr to import, then Jellyfin is refreshed.
+6. Confirmed missing placements use the retained source through bounded recovery.
 
-1. Radarr/Sonarr downloads normally through Prowlarr and Decypharr.
-2. Arr grab webhooks capture the exact original source before import, with durable retries.
-3. Import webhooks attach that source by download ID, media owner, and exact file path.
-4. After the grace period, Rehydrator preserves the source and asks Decypharr to prune.
-5. Jellyfin's Playback Start webhook or a rearm API request queues restoration.
-6. Rehydrator submits the saved source to Decypharr, waits for readiness and mount
-   visibility, and notifies Jellyfin of the changed file path.
+Provider progress is distinct from library readiness: download 100% may still mean
+processing. A torrent file and magnet are separate submission forms; hashes are
+not automatically converted into magnets. Unknown submissions never authorize a
+blind duplicate upload. Automatic provider pruning is not supported.
 
-A saved source is explicitly a torrent file **or** a magnet, never both. The
-infohash identifies the release; it is not automatically converted into a magnet.
-Missing or ambiguous legacy sources require source recovery. Existing saved
-sources let routine rearm bypass Arr/Prowlarr.
+## Dashboard
 
-If Arr removes a completed queue entry, readiness can instead use the exact hash
-in Decypharr's retained library plus a successful read from the mounted media file.
-Keep **Remove Completed** enabled if that is your normal configuration.
+The gateway serves `/`: download activity and retained history, file metadata,
+provider progress, source/identity diagnostics, observation-only checks and guarded
+recovery requests. Use native Authentik OIDC, explicit ForwardAuth delegation or
+the gateway qBittorrent credentials for dashboard authentication. Provider keys
+and original source contents are not sent to the browser.
 
-## Setup
+## Build and verification
 
-1. Copy [the configuration example](config/rehydrator.example.yaml) and fill in
-   PostgreSQL, tenant, Arr, Decypharr, API authentication, and mount settings.
-2. Apply the applicable SQL migrations through **033**, or enable `db_auto_migrate`.
-3. Configure Arr webhooks for **On Grab** and **On Import**, including upgrades.
-4. Enable Jellyfin, provide its API key, and configure its Webhook plugin.
-5. Validate one movie and one episode against your running mount before broad pruning.
-
-```yaml
-jellyfin:
-  enabled: true
-  url: http://jellyfin:8096
-  api_key: YOUR_JELLYFIN_API_KEY
-  refresh_after_rearm: true
-  refresh_after_visibility: true
-  refresh_after_import: true
-  refresh_after_prune: false
-  refresh_delay_seconds: 45
-  timeout_seconds: 20
-  max_refreshes_per_run: 5
-  refresh_dedupe_minutes: 10
+```sh
+make release-build  # Node.js 22.12+ and Go 1.25; builds and embeds frontend assets
+make version
 ```
 
-Jellyfin is the sole media-server integration. It supports movie and episode
-playback, targeted automatic/manual refreshes, a manual library scan, dependency
-checks, refresh history, metrics, and periodic self-heal. Paths must match the
-Jellyfin filesystem view. A webhook arrives after playback starts, so the client
-may need to retry once restoration finishes.
+Plain `make build` uses the checked-in frontend bundle. The Dockerfile rebuilds
+frontend assets in its build stage; Node is not part of the runtime image.
+Tests that need PostgreSQL use `REHYDRATOR_TEST_POSTGRES_URL` pointing to a disposable
+database. Run `go test -race -p 1 ./...` and `go vet ./...`.
 
-## Useful endpoints
+## Upgrading
 
-Authenticated API requests accept `Authorization: Bearer <API_TOKEN>` or
-`X-Rehydrator-Token: <API_TOKEN>`.
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /api/playback/jellyfin` | Jellyfin Webhook plugin playback events |
-| `POST /api/radarr/webhook` | Movie grab/import/deletion notifications |
-| `POST /api/sonarr/webhook` | Episode grab/import and series-deletion notifications |
-| `POST /api/rearm/movie/{radarr_id}` | Request movie restoration |
-| `POST /api/rearm/series/{episode_file_id}` | Request episode-file restoration |
-| `POST /api/jellyfin/refresh/movie/{radarr_id}` | Notify the tracked movie path |
-| `POST /api/jellyfin/refresh/series/{episode_file_id}` | Notify the tracked episode path |
-| `POST /api/jellyfin/refresh/library` | Request a scan of all Jellyfin libraries |
-| `GET /api/jellyfin/refreshes/recent` | Refresh audit history |
-| `POST /api/self-heal/run` | Run a Jellyfin self-heal pass |
-| `GET /api/health/dependencies` | Check configured services |
-| `GET /metrics` | Prometheus metrics |
-
-## Documentation
-
-- [Jellyfin setup](docs/jellyfin-setup.md)
-- [Decypharr lifecycle, source capture, and recovery](docs/decypharr-rearm.md)
-- [Configuration](docs/configuration.md)
-- [API](docs/api.md)
-- [Migrations](docs/migrations.md)
-- [Changelog](CHANGELOG.md)
-
-## Validation and limits
-
-Run `go test -race ./...`. PostgreSQL integration tests additionally accept
-`REHYDRATOR_TEST_POSTGRES_URL` pointing to a disposable database.
-
-Provider deletion is asynchronous inside Decypharr: acceptance does not
-independently confirm TorBox deletion. Validate existing library links and STRM
-setups with your installed Decypharr version. Season-pack source capture supports
-multiple episode files, but group-aware provider pruning remains a limitation.
-
-Source metainfo may contain private tracker credentials; include the source tables
-in protected backups. Historical migration files and media-server audit data are
-retained, while current Jellyfin scans use their own audit table.
-
-Usenet/NZB downloads through Decypharr are supported in v0.6.0; see
-[Usenet setup](docs/usenet-setup.md). Original NZBs are captured from Arr grabs;
-automatic Usenet pruning remains disabled.
-
-Usenet can use TorBox Pro NNTP in Decypharr or the separate TorBox-hosted NZB backend. See the
-[provider configuration fragment](config/decypharr-torbox-nntp.example.json);
-[cloud Usenet setup](docs/torbox-cloud-setup.md) is a separate opt-in backend.
-
-Periodic [Jellyfin inventory reconciliation](docs/jellyfin-setup.md#periodic-movie-and-episode-reconciliation-v069)
-finds imported movies and episodes missing from Jellyfin and requests bounded
-targeted scans without routine Usenet read probes.
-
-Unexpected torrent cache loss can be recovered by [periodic file health checks](docs/file-health.md).
-
-Optional [TorBox provider-first health checks](docs/torbox-health.md) compare stored
-torrent hashes with the account's reported availability; all provider mutations
-remain in Decypharr.
-
-## Gateway dashboard
-
-The gateway serves a live dashboard at `/`, including download submissions and catalog browsing. For your existing Authentik ForwardAuth ingress, set `gateway.dashboard_external_auth: true` on the gateway. See [dashboard setup and builds](web/README.md).
+The v0.8.0 consolidation removes Decypharr, the separate cloud-NZB backend, old prune
+routes and the superseded file/provider sweep. Update your YAML and environment
+using [the migration guide](docs/configuration.md#upgrade-from-earlier-configurations).
+Unknown/removed YAML fields now fail startup. Existing sources, job IDs, database
+records, schema upgrades and WebDAV paths are preserved; no database wipe is needed.

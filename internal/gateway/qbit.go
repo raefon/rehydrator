@@ -80,7 +80,7 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 	}
 	switch endpoint {
 	case "gateway/jobs":
-		jobs, e := s.repo.CloudNZBs(r.Context(), s.tenant)
+		jobs, e := s.repo.GatewayJobs(r.Context(), s.tenant)
 		if e != nil {
 			w.WriteHeader(503)
 			return
@@ -193,7 +193,7 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = io.WriteString(w, "Ok.")
 	case "torrents/info":
-		jobs, e := s.repo.CloudNZBs(r.Context(), s.tenant)
+		jobs, e := s.repo.GatewayJobs(r.Context(), s.tenant)
 		if e != nil {
 			w.WriteHeader(503)
 			return
@@ -273,7 +273,7 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if e = s.repo.HideCloudNZB(r.Context(), s.tenant, j.ID); e != nil {
+			if e = s.repo.HideGatewayJob(r.Context(), s.tenant, j.ID); e != nil {
 				w.WriteHeader(503)
 				return
 			}
@@ -294,10 +294,10 @@ func containsHash(hashes, hash string) bool {
 
 // Delete-data affects only known staging symlinks. Catalog, cloud payload and
 // library imports remain untouched so an Arr queue cleanup cannot evict media.
-func (s *Service) removeStagedLinks(j db.CloudNZBJob) error {
+func (s *Service) removeStagedLinks(j db.GatewayJob) error {
 	for _, f := range j.Files {
 		dest := filepath.Join(s.storage(j), filepath.FromSlash(f.Name))
-		if err := safeCloudParents(s.cfg.DownloadPath, filepath.Dir(dest)); err != nil {
+		if err := safeStagingParents(s.cfg.DownloadPath, filepath.Dir(dest)); err != nil {
 			return err
 		}
 		target, err := os.Readlink(dest)
@@ -320,6 +320,6 @@ func (s *Service) removeStagedLinks(j db.CloudNZBJob) error {
 
 // qBittorrent file names are relative to save_path. The stable job directory is
 // the per-torrent content root, never the client's/category's base directory.
-func (s *Service) torrentSavePath(j db.CloudNZBJob) string {
+func (s *Service) torrentSavePath(j db.GatewayJob) string {
 	return filepath.Join(s.cfg.DownloadPath, j.Category)
 }

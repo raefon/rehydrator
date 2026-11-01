@@ -21,7 +21,6 @@ func TestHostedNZBSABClientContracts(t *testing.T) {
 	for _, category := range []string{"sonarr", "radarr"} {
 		t.Run(category, func(t *testing.T) {
 			s, p, conn := testService(t)
-			s.direct = true
 			s.SetRole(config.RoleGateway)
 			ctx := context.Background()
 			get := func(values url.Values) map[string]json.RawMessage {
@@ -132,7 +131,7 @@ func TestHostedNZBSABClientContracts(t *testing.T) {
 			if err != nil || j.State != "Mounting" {
 				t.Fatal(j, err)
 			}
-			controller := NewDirect(config.GatewayConfig{CloudUsenetConfig: s.cfg}, s.tenant, s.repo, nil, nil, "sonarr", "radarr")
+			controller := New(config.GatewayConfig{GatewayStorageConfig: s.cfg}, s.tenant, s.repo, nil, nil, "sonarr", "radarr")
 			controller.SetRole(config.RoleController)
 			mounted := filepath.Join(s.cfg.MountPath, "usenet", id, "Release", "Movie & test.mkv")
 			if err = os.MkdirAll(filepath.Dir(mounted), 0755); err != nil {

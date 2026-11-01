@@ -75,7 +75,7 @@ func testService(t *testing.T) (*Service, *fakeProvider, *pgx.Conn) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close(ctx) })
-	cfg := config.DefaultCloudUsenet()
+	cfg := config.DefaultGatewayStorage()
 	cfg.MountPath = filepath.Join(t.TempDir(), "mount")
 	cfg.DownloadPath = filepath.Join(t.TempDir(), "downloads")
 	cfg.SABAPIKey = "sab-key"
@@ -83,14 +83,14 @@ func testService(t *testing.T) (*Service, *fakeProvider, *pgx.Conn) {
 	cfg.DAVPassword = "dav-key"
 	provider := &fakeProvider{}
 	tenant := strings.ReplaceAll(t.Name(), "/", "-")
-	s := New(cfg, tenant, repo, provider, "sonarr", "radarr")
+	s := newService(cfg, tenant, repo, provider, "sonarr", "radarr")
 	t.Cleanup(func() {
 		conn.Exec(ctx, "DELETE FROM gateway_jobs WHERE tenant=$1", tenant)
 		conn.Exec(ctx, "DELETE FROM media_cache_cloud_usenet_gate WHERE tenant=$1", tenant)
 	})
 	return s, provider, conn
 }
-func addTestJob(t *testing.T, s *Service) db.CloudNZBJob {
+func addTestJob(t *testing.T, s *Service) db.GatewayJob {
 	t.Helper()
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
@@ -107,7 +107,7 @@ func addTestJob(t *testing.T, s *Service) db.CloudNZBJob {
 	if result.Code != 200 || !strings.Contains(result.Body.String(), `"status":true`) {
 		t.Fatal(result.Code, result.Body.String())
 	}
-	jobs, err := s.repo.CloudNZBs(context.Background(), s.tenant)
+	jobs, err := s.repo.GatewayJobs(context.Background(), s.tenant)
 	if err != nil || len(jobs) != 1 {
 		t.Fatal(jobs, err)
 	}
@@ -143,7 +143,7 @@ func TestCloudUploadCompletionAndSavedSource(t *testing.T) {
 	}
 	// Simulate the separately mounted DAV file; no FUSE mount or TorBox account is used.
 	p.ready = true
-	target := filepath.Join(s.cfg.MountPath, "jobs", job.ID, "Release", "Movie & test.mkv")
+	target := filepath.Join(s.cfg.MountPath, "usenet", job.ID, "Release", "Movie & test.mkv")
 	if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -158,13 +158,13 @@ func TestCloudUploadCompletionAndSavedSource(t *testing.T) {
 	if !ready || err != nil {
 		t.Fatal("not ready", ready, err)
 	}
-	stored, _ := s.repo.CloudNZBInfo(ctx, s.tenant, job.ID)
+	stored, _ := s.repo.GatewayJobCatalog(ctx, s.tenant, job.ID)
 	link := filepath.Join(s.storage(stored), "Release", "Movie & test.mkv")
 	if got, err := os.Readlink(link); err != nil || got != target {
 		t.Fatal(got, err)
 	}
 	// Removing completed queue history must preserve catalog and recovery source.
-	if err = s.repo.HideCloudNZB(ctx, s.tenant, job.ID); err != nil {
+	if err = s.repo.HideGatewayJob(ctx, s.tenant, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	source, err = s.Source(ctx, job.ID)
@@ -179,7 +179,7 @@ func TestCloudUploadCompletionAndSavedSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	recovered, _ := s.repo.CloudNZBInfo(ctx, s.tenant, job.ID)
+	recovered, _ := s.repo.GatewayJobCatalog(ctx, s.tenant, job.ID)
 	if recovered.State != "Queued" || recovered.ID != job.ID {
 		t.Fatal("recovery not queued", recovered)
 	}
@@ -221,7 +221,7 @@ func TestCloudDAVRangeAndCatalog(t *testing.T) {
 		s.DAV(w, r)
 		return w
 	}
-	pf := request("PROPFIND", DAVPath+"jobs/"+job.ID+"/Release/")
+	pf := request("PROPFIND", DAVPath+"usenet/"+job.ID+"/Release/")
 	if pf.Code != 207 {
 		t.Fatal(pf.Code, pf.Body.String())
 	}
@@ -235,7 +235,7 @@ func TestCloudDAVRangeAndCatalog(t *testing.T) {
 			t.Fatal("invalid DAV XML", err)
 		}
 	}
-	fileURL := DAVPath + "jobs/" + job.ID + "/Release/Movie%20&%20test.mkv"
+	fileURL := DAVPath + "usenet/" + job.ID + "/Release/Movie%20&%20test.mkv"
 	head := request("HEAD", fileURL)
 	if head.Code != 200 || head.Header().Get("Content-Length") != "6" || p.links != 0 {
 		t.Fatal("HEAD fetched content", head.Code, p.links)
@@ -268,7 +268,7 @@ func TestCloudSubmissionInterruptedDoesNotDuplicate(t *testing.T) {
 	if err := s.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	j, _ := s.repo.CloudNZBInfo(context.Background(), s.tenant, job.ID)
+	j, _ := s.repo.GatewayJobCatalog(context.Background(), s.tenant, job.ID)
 	if j.State != "SubmissionUnknown" || p.creates != 0 {
 		t.Fatal("uncertain submission duplicated", j, p.creates)
 	}

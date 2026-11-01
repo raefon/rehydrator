@@ -35,7 +35,6 @@ func (p *fakeTorrent) Submit(ctx context.Context, s model.TorrentMetadata) (int6
 }
 func TestDirectGatewayArrLifecycle(t *testing.T) {
 	s, provider, conn := testService(t)
-	s.direct = true
 	s.qbUser = "arr"
 	s.qbPassword = "secret"
 	torrent := &fakeTorrent{fakeProvider: provider}
@@ -70,7 +69,7 @@ func TestDirectGatewayArrLifecycle(t *testing.T) {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
-	jobs, err := s.repo.CloudNZBs(ctx, s.tenant)
+	jobs, err := s.repo.GatewayJobs(ctx, s.tenant)
 	if err != nil || len(jobs) != 1 {
 		t.Fatal(jobs, err)
 	}
@@ -128,8 +127,7 @@ func TestDirectGatewayArrLifecycle(t *testing.T) {
 		t.Fatal(w.Code, provider.links)
 	}
 	// Recreate the service as after restart; sessions and original sources survive.
-	restarted := New(s.cfg, s.tenant, s.repo, provider, "sonarr", "radarr")
-	restarted.direct = true
+	restarted := newService(s.cfg, s.tenant, s.repo, provider, "sonarr", "radarr")
 	restarted.torrent = torrent
 	restarted.qbUser = s.qbUser
 	restarted.qbPassword = s.qbPassword
@@ -208,13 +206,13 @@ func TestTorrentFileSourceRetainedAndV2Rejected(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	jobs, err := s.repo.CloudNZBs(ctx, s.tenant)
+	jobs, err := s.repo.GatewayJobs(ctx, s.tenant)
 	if err != nil || len(jobs) != 1 {
 		t.Fatal(jobs, err)
 	}
 	// Unknown submission is never reset by another client add/reconcile request.
 	jobs[0].State = "SubmissionUnknown"
-	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, jobs[0], time.Hour); err != nil {
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, jobs[0], time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Ensure(ctx, source, "radarr"); err != nil {
@@ -228,7 +226,6 @@ func TestTorrentFileSourceRetainedAndV2Rejected(t *testing.T) {
 
 func TestUnifiedDAVRoutesOverlappingProviderIDs(t *testing.T) {
 	s, usenet, _ := testService(t)
-	s.direct = true
 	torrentProvider := &fakeProvider{}
 	s.torrent = &fakeTorrent{fakeProvider: torrentProvider}
 	ctx := context.Background()
@@ -236,7 +233,7 @@ func TestUnifiedDAVRoutesOverlappingProviderIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nzb, err := s.repo.AddCloudNZB(ctx, s.tenant, "radarr", "original.nzb", []byte(testNZB))
+	nzb, err := s.repo.AddGatewayNZB(ctx, s.tenant, "radarr", "original.nzb", []byte(testNZB))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,15 +257,15 @@ func TestUnifiedDAVRoutesOverlappingProviderIDs(t *testing.T) {
 		defer server.Close()
 		p.link = server.URL
 	}
-	for _, j := range []db.CloudNZBJob{torrent, nzb} {
+	for _, j := range []db.GatewayJob{torrent, nzb} {
 		j.ProviderID = 42
 		j.State = "Completed"
 		j.Files = []torbox.UsenetFile{{ID: 0, Name: "Movie.mkv", Size: 6}}
-		if err = s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Hour); err != nil {
+		if err = s.repo.UpdateGatewayJob(ctx, s.tenant, j, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, j := range []db.CloudNZBJob{torrent, nzb} {
+	for _, j := range []db.GatewayJob{torrent, nzb} {
 		for i := 0; i < 2; i++ {
 			r := httptest.NewRequest("GET", "/webdav/"+s.catalogPath(j)+"/Movie.mkv", nil)
 			r.SetBasicAuth("dav", "dav-key")

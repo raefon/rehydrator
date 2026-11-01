@@ -48,7 +48,6 @@ func TestDashboardAuthAndOrigin(t *testing.T) {
 }
 func TestDashboardDurableUploadAndSnapshot(t *testing.T) {
 	s, _, _ := testService(t)
-	s.direct = true
 	s.dashboardExternalAuth = true
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
@@ -73,7 +72,7 @@ func TestDashboardDurableUploadAndSnapshot(t *testing.T) {
 		t.Fatal("original source not retained", err)
 	}
 	// The same service must not leak a different tenant's jobs or original source fields.
-	other, err := s.repo.AddCloudNZB(r.Context(), s.tenant+"-other", "sonarr", "other.nzb", []byte(testNZB))
+	other, err := s.repo.AddGatewayNZB(r.Context(), s.tenant+"-other", "sonarr", "other.nzb", []byte(testNZB))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +89,8 @@ func TestDashboardDurableUploadAndSnapshot(t *testing.T) {
 	}
 }
 func TestDashboardHidesStaleFiles(t *testing.T) {
-	s := &Service{direct: true}
-	j := db.CloudNZBJob{ID: "torrent-test", Protocol: "torrent", State: "Missing", Magnet: "secret"}
+	s := &Service{}
+	j := db.GatewayJob{ID: "torrent-test", Protocol: "torrent", State: "Missing", Magnet: "secret"}
 	got := s.dashboardJob(j)
 	if len(got.Files) != 0 {
 		t.Fatal("stale files published")

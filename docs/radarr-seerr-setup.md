@@ -144,7 +144,7 @@ details page after Seerr updates.
 5. Confirm the requested scope is downloaded/rearmed, the new source is saved,
    Arr imports it, and Jellyfin accepts the refresh.
 6. Requests without saved sources should be acquired by Sonarr, not repeatedly
-   sent to Decypharr by Rehydrator.
+   sent to the TorBox gateway by Rehydrator.
 
 Local integration tests cover Seerr API-shaped requests, approval gating,
 season-scoped source validation, webhook/poll replay, and Arr file ID/path

@@ -1,35 +1,15 @@
-# Torrent-file re-arm support
+# Retained torrent sources
 
-## Why this exists
+The gateway accepts exactly one magnet or `.torrent` file per submission. Original
+torrent bytes are retained before acknowledgement; they are never reconstructed
+from an infohash. NZB files use their own protocol and stable job identity.
 
-Some indexers, especially private trackers, provide a `.torrent` file rather than a magnet. Rehydrator previously reduced Arr history to an infohash/minimal magnet, which is not equivalent to forwarding the original torrent metadata.
+Rearm and confirmed provider-loss recovery use the retained original source, not
+an expiring Arr/Prowlarr download URL. A hash without a valid retained source is
+insufficient: acquire a replacement through Arr or submit the original source.
+The gateway currently supports v1 torrent metainfo; unsupported v2/hybrid sources
+are rejected rather than silently converted.
 
-## v0.4.4 behavior
-
-When Radarr/Sonarr history contains a non-magnet `downloadUrl`, Rehydrator stores it in the in-memory torrent metadata for the re-arm operation. When re-arming, the Decypharr client:
-
-1. Fetches the torrent file from the Arr/Prowlarr-provided URL.
-2. Limits the download to 50 MiB.
-3. Sends the actual bytes to `POST /api/v2/torrents/add` as the qBittorrent-compatible multipart `torrents` field.
-4. Keeps the original infohash for lifecycle/state tracking.
-
-If no usable torrent-file URL exists, the existing magnet/infohash path is used.
-
-## What is preserved
-
-The original torrent bytes are forwarded. Rehydrator does not reconstruct a torrent from the infohash, so private-tracker metadata is retained.
-
-## Initial downloads vs. re-arms
-
-This release only changes the Rehydrator-controlled **re-arm** path. Initial grabs still happen directly from Radarr/Sonarr to Decypharr. Decypharr must therefore support receiving a multipart `.torrent` upload itself for initial IPT/private-tracker downloads.
-
-## Logs
-
-A torrent-file re-arm includes:
-
-```text
-submission_mode=torrent_file
-torrent_url_present=true
-```
-
-The torrent URL itself is never logged, because it may contain an indexer/Prowlarr API key.
+The dashboard Recovery & diagnostics page shows source kind, validity, linked
+library entries and recovery eligibility without exposing original bytes, tracker
+credentials or provider keys. See [gateway setup](torbox-gateway-setup.md).

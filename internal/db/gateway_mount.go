@@ -7,13 +7,13 @@ import (
 
 // ClaimGatewayMount uses a separate lease so provider polling cannot starve
 // mount verification, and two controller replicas cannot claim the same work.
-func (r *Repo) ClaimGatewayMount(ctx context.Context, tenant string) (CloudNZBJob, bool, error) {
+func (r *Repo) ClaimGatewayMount(ctx context.Context, tenant string) (GatewayJob, bool, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return CloudNZBJob{}, false, err
+		return GatewayJob{}, false, err
 	}
 	defer tx.Rollback(ctx)
-	j, err := scanCloud(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND (state='Mounting' OR cleanup_requested) AND verify_next_at<=now() ORDER BY verify_next_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
+	j, err := scanGatewayJob(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND (state='Mounting' OR cleanup_requested) AND verify_next_at<=now() ORDER BY verify_next_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
 	if err == pgx.ErrNoRows {
 		return j, false, tx.Commit(ctx)
 	}
@@ -28,7 +28,7 @@ func (r *Repo) ClaimGatewayMount(ctx context.Context, tenant string) (CloudNZBJo
 
 // FinishGatewayMount cannot complete a stale placement/catalog after provider
 // loss or replacement. Observation and verification never overwrite each other.
-func (r *Repo) FinishGatewayMount(ctx context.Context, tenant string, j CloudNZBJob, detail string) (bool, error) {
+func (r *Repo) FinishGatewayMount(ctx context.Context, tenant string, j GatewayJob, detail string) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET state=CASE WHEN $4='' THEN 'Completed' ELSE state END,last_error=$4,updated_at=now() WHERE tenant=$1 AND id=$2 AND state='Mounting' AND catalog_revision=$3 AND NOT cleanup_requested`, tenant, j.ID, j.CatalogRevision, detail)
 	return tag.RowsAffected() > 0 && detail == "", err
 }
@@ -36,7 +36,7 @@ func (r *Repo) RequestGatewayCleanup(ctx context.Context, tenant, id string) err
 	_, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET hidden=true,cleanup_requested=true,verify_next_at=now() WHERE tenant=$1 AND id=$2`, tenant, id)
 	return err
 }
-func (r *Repo) FinishGatewayCleanup(ctx context.Context, tenant string, j CloudNZBJob) error {
+func (r *Repo) FinishGatewayCleanup(ctx context.Context, tenant string, j GatewayJob) error {
 	_, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET cleanup_requested=false WHERE tenant=$1 AND id=$2 AND catalog_revision=$3 AND hidden`, tenant, j.ID, j.CatalogRevision)
 	return err
 }

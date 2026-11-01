@@ -18,7 +18,7 @@ type GatewayLibraryEntry struct {
 	Path      string `json:"path"`
 }
 
-func (r *Repo) GatewayDiagnostics(ctx context.Context, tenant string, j CloudNZBJob) (GatewayDiagnostics, error) {
+func (r *Repo) GatewayDiagnostics(ctx context.Context, tenant string, j GatewayJob) (GatewayDiagnostics, error) {
 	d := GatewayDiagnostics{Library: []GatewayLibraryEntry{}}
 	err := r.pool.QueryRow(ctx, `SELECT next_check_at,verify_next_at,updated_at FROM gateway_jobs WHERE tenant=$1 AND id=$2`, tenant, j.ID).Scan(&d.NextCheckAt, &d.VerifyNextAt, &d.UpdatedAt)
 	if err != nil {
@@ -41,7 +41,7 @@ func (r *Repo) GatewayDiagnostics(ctx context.Context, tenant string, j CloudNZB
 
 // RequestGatewayRecovery wakes normal reconciliation; it never resets attempts,
 // fabricates absence, changes placement IDs, or directly authorizes an upload.
-func (r *Repo) RequestGatewayRecovery(ctx context.Context, tenant string, j CloudNZBJob) (bool, error) {
+func (r *Repo) RequestGatewayRecovery(ctx context.Context, tenant string, j GatewayJob) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET next_check_at=LEAST(next_check_at,now()) WHERE tenant=$1 AND id=$2 AND state='Missing' AND missing_checks>=3 AND attempts<3 AND provider_id=$3 AND catalog_revision=$4 AND NOT cleanup_requested`, tenant, j.ID, j.ProviderID, j.CatalogRevision)
 	return tag.RowsAffected() == 1, err
 }

@@ -1,6 +1,6 @@
 package config
 
-type CloudUsenetConfig struct {
+type GatewayStorageConfig struct {
 	RecoverMissing        bool   `yaml:"recover_missing"`
 	Enabled               bool   `yaml:"enabled"`
 	APIKey                string `yaml:"api_key"`
@@ -12,6 +12,6 @@ type CloudUsenetConfig struct {
 	SubmitIntervalSeconds int    `yaml:"submit_interval_seconds"`
 }
 
-func DefaultCloudUsenet() CloudUsenetConfig {
-	return CloudUsenetConfig{RecoverMissing: true, MountPath: "/storage/torbox-cloud", DownloadPath: "/storage/media/downloads/torbox-usenet", SubmitIntervalSeconds: 120}
+func DefaultGatewayStorage() GatewayStorageConfig {
+	return GatewayStorageConfig{RecoverMissing: true, MountPath: "/storage/torbox", DownloadPath: "/storage/media/downloads/rehydrator", SubmitIntervalSeconds: 120}
 }

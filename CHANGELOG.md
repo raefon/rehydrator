@@ -1,3 +1,17 @@
+# Rehydrator v0.8.0 — Direct gateway consolidation (unreleased)
+
+- Remove Decypharr clients and lifecycle operations, the separate cloud-NZB backend/routes, provider pruning APIs, and the superseded periodic file/provider-health worker.
+- Keep gateway/controller roles plus combined mode on one direct TorBox backend for torrents and hosted NZBs. Rename current gateway internals to protocol-neutral names.
+- Move categories to gateway.radarr_category / gateway.sonarr_category with GATEWAY_RADARR_CATEGORY / GATEWAY_SONARR_CATEGORY overrides.
+- Replace legacy configs, environment samples, Kubernetes examples and setup guides. Unknown/removed YAML fields and nonempty retired environment variables now fail with migration guidance.
+- Preserve the Arr missing-file canary safeguard, original sources, stable job IDs, current WebDAV paths, database records and all historical SQL migrations. No schema migration beyond 034 is required; no tables or provider data are deleted.
+
+# Rehydrator v0.7.10 — Configurable active provider polling (unreleased)
+
+- Add gateway.active_poll_interval_seconds / GATEWAY_ACTIVE_POLL_INTERVAL_SECONDS, default 30 seconds, with a 15–3600 second range.
+- Apply the interval after submission and while torrents/NZBs download or process. Preserve completed-job checks, mount verification, error delays, and submission spacing.
+- Log the effective interval at worker startup. No schema migration beyond 034 is required.
+
 # Rehydrator v0.7.9 — TorBox provider progress (unreleased)
 
 - Persist whitelisted provider observations from existing polling: original state, optional download fraction, speed, size, downloaded bytes and completion/presence/cache flags.

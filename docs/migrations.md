@@ -22,7 +22,7 @@ Apply `025_usenet_sources.sql` after prior migrations (or use startup schema
 initialization). It adds explicit protocols, original NZB bytes/filenames, opaque
 runtime job IDs, and a shared season-pack job mapping. Existing torrent payloads
 remain separate. Usenet is excluded from automatic pruning. See
-[Usenet setup](usenet-setup.md).
+[Hosted-NZB setup](nzb-gateway-setup.md).
 
 ## v0.6.1: File-health observations
 
@@ -35,8 +35,8 @@ initialization includes it. See [file-health recovery](file-health.md).
 
 `027_provider_health.sql` adds per-tenant/provider/hash observations, confirmation
 counts, and shared recovery cooldown timestamps. Applying it does not reconcile
-or delete media. Direct read-only TorBox checking remains opt-in. See
-[TorBox health](torbox-health.md).
+or delete media. The old provider sweep has been superseded by gateway polling. See
+historical provider observations.
 
 ## v0.7.0: Direct gateway
 
@@ -56,3 +56,15 @@ revision and deferred staging cleanup to gateway jobs. Apply it after 032, befor
 starting either new role. Run migrations once before controllers start (or let
 the gateway run `db_auto_migrate: true` first); controllers should use false.
 It does not submit provider jobs or modify library paths.
+
+## v0.7.9: Provider telemetry
+
+`034_provider_status.sql` adds nullable provider observations to gateway jobs.
+Apply it before rolling out new gateway/controller binaries.
+
+## v0.8.0: Gateway-only consolidation
+
+No new migration is required beyond 034. Old tables and historical migrations are
+retained so existing databases and source payloads can still be upgraded. Update
+removed YAML/environment settings using [configuration](configuration.md); do not
+drop tables or delete old source records as part of this upgrade.

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/raefon/rehydrator/internal/cloudusenet"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
@@ -16,7 +15,7 @@ func (c *Controller) resolveRearmTorrent(ctx context.Context, item model.MediaCa
 			id = item.SourceDownloadID
 		}
 		if id != "" {
-			source, err := c.opt.CloudUsenet.Source(ctx, id)
+			source, err := c.opt.Gateway.Source(ctx, id)
 			if err == nil {
 				return source, nil
 			}
@@ -47,52 +46,5 @@ func (c *Controller) resolveRearmTorrent(ctx context.Context, item model.MediaCa
 			return saved.ValidateSource()
 		}
 	}
-	if c.opt.CloudUsenet != nil && cloudusenet.IsJob(item.SourceDownloadID) {
-		return c.opt.CloudUsenet.Source(ctx, item.SourceDownloadID)
-	}
-	if c.directGateway() {
-		return model.TorrentMetadata{}, model.ErrSourceRecoveryRequired
-	}
-	// Legacy hash/magnet columns do not establish source provenance. Recover the
-	// original source from Arr instead of guessing how this release was submitted.
-	client, err := c.arrClientFor(item.MediaType)
-	if err != nil {
-		return model.TorrentMetadata{}, fmt.Errorf("%w: %v", model.ErrSourceRecoveryRequired, err)
-	}
-	if !client.Configured() {
-		return model.TorrentMetadata{}, model.ErrSourceRecoveryRequired
-	}
-	torrent, err := client.LatestGrabbedTorrentForState(ctx, item)
-	if err != nil {
-		return torrent, fmt.Errorf("%w: %v", model.ErrSourceRecoveryRequired, err)
-	}
-	if c.opt.Decypharr == nil {
-		return torrent, model.ErrSourceRecoveryRequired
-	}
-	if torrent.Protocol == model.ProtocolUsenet && cloudusenet.IsJob(torrent.DownloadID) {
-		if c.opt.CloudUsenet == nil {
-			return torrent, fmt.Errorf("cloud Usenet backend is disabled")
-		}
-		return c.opt.CloudUsenet.Source(ctx, torrent.DownloadID)
-	}
-	recovered, err := c.opt.Decypharr.PrepareTorrent(ctx, torrent)
-	if err != nil {
-		return recovered, err
-	}
-	if known := strings.TrimSpace(valueOrEmpty(item.InfoHash)); known != "" && !strings.EqualFold(known, recovered.InfoHash) {
-		return recovered, fmt.Errorf("%w: Arr returned a different release identity", model.ErrSourceRecoveryRequired)
-	}
-	if recovered.Protocol == model.ProtocolUsenet && item.SourceDownloadID != "" && model.DownloadKey(recovered.DownloadID) != item.SourceDownloadID {
-		return recovered, fmt.Errorf("%w: Arr returned a different NZB import identity", model.ErrSourceRecoveryRequired)
-	}
-	return recovered, nil
-}
-
-// Preserve the original submission source before removing its provider placement.
-func (c *Controller) captureRearmMetadata(ctx context.Context, item model.MediaCacheState) error {
-	torrent, err := c.resolveRearmTorrent(ctx, item)
-	if err != nil {
-		return err
-	}
-	return c.opt.Repo.SaveTorrentMetadata(ctx, item.ID, torrent, c.categoryFor(item.MediaType))
+	return model.TorrentMetadata{}, model.ErrSourceRecoveryRequired
 }

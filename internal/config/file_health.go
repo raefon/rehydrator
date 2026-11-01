@@ -1,18 +1,9 @@
 package config
 
-// FileHealthConfig controls a rolling availability sweep, not provider keepalive.
+// FileHealthConfig retains the same-mount canary used for confirmed missing-file updates.
+// Gateway polling owns provider availability and recovery.
 type FileHealthConfig struct {
-	RecoverArchived      bool   `yaml:"recover_archived"`
-	CanaryPath           string `yaml:"canary_path"`
-	Enabled              bool   `yaml:"enabled"`
-	IntervalSeconds      int    `yaml:"interval_seconds"`
-	BatchSize            int    `yaml:"batch_size"`
-	FailureThreshold     int    `yaml:"failure_threshold"`
-	MaxRearmsPerRun      int    `yaml:"max_rearms_per_run"`
-	ProbeTimeoutSeconds  int    `yaml:"probe_timeout_seconds"`
-	OutageFailurePercent int    `yaml:"outage_failure_percent"`
+	CanaryPath string `yaml:"canary_path"`
 }
 
-func DefaultFileHealth() FileHealthConfig {
-	return FileHealthConfig{Enabled: true, IntervalSeconds: 300, BatchSize: 20, FailureThreshold: 3, MaxRearmsPerRun: 2, ProbeTimeoutSeconds: 5, OutageFailurePercent: 50}
-}
+func DefaultFileHealth() FileHealthConfig { return FileHealthConfig{} }

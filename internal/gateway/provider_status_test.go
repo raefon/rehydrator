@@ -10,7 +10,6 @@ import (
 
 func TestProviderObservationStoredWithoutChangingWorkflow(t *testing.T) {
 	s, _, conn := testService(t)
-	s.direct = true
 	ctx := context.Background()
 	j := addTestJob(t, s)
 	if err := s.Reconcile(ctx); err != nil {
@@ -38,14 +37,14 @@ func TestProviderObservationStoredWithoutChangingWorkflow(t *testing.T) {
 	if err = s.repo.RecordProviderStatus(ctx, s.tenant+"-other", current, torbox.ProviderStatus{}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.repo.CloudNZBs(ctx, s.tenant)
+	rows, err := s.repo.GatewayJobs(ctx, s.tenant)
 	if err != nil || len(rows) != 1 || rows[0].ProviderStatus.State != "Direct Unpack: Completed" {
 		t.Fatal(rows, err)
 	}
 	// Replacement IDs clear old placement telemetry, and late writes cannot restore it.
 	replacement := stored
 	replacement.ProviderID++
-	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, replacement, time.Minute); err != nil {
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, replacement, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.repo.RecordProviderStatus(ctx, s.tenant, current, observation); err != nil {

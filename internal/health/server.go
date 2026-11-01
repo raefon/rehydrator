@@ -23,14 +23,13 @@ type Server struct {
 }
 
 type APIOptions struct {
-	Readiness                    func(context.Context) error
-	GatewayUI                    http.Handler
-	GatewayDashboard             http.HandlerFunc
-	GatewayQB                    http.HandlerFunc
-	GatewaySAB                   http.HandlerFunc
-	GatewayDAV                   http.HandlerFunc
-	CloudSAB                     http.HandlerFunc
-	CloudDAV                     http.HandlerFunc
+	Readiness        func(context.Context) error
+	GatewayUI        http.Handler
+	GatewayDashboard http.HandlerFunc
+	GatewayQB        http.HandlerFunc
+	GatewaySAB       http.HandlerFunc
+	GatewayDAV       http.HandlerFunc
+
 	CaptureGrab                  func(context.Context, model.GrabSource) error
 	RecordGrabImport             func(context.Context, model.GrabSource, string) error
 	JellyfinItemPath             func(context.Context, string, string) (string, error)
@@ -85,12 +84,6 @@ func newServer(opt APIOptions) *Server {
 	if opt.GatewayDAV != nil {
 		mux.HandleFunc("/webdav/", opt.GatewayDAV)
 	}
-	if opt.CloudSAB != nil {
-		mux.HandleFunc("/sabnzbd-cloud/api", opt.CloudSAB)
-	}
-	if opt.CloudDAV != nil {
-		mux.HandleFunc("/cloud-usenet/dav/", opt.CloudDAV)
-	}
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -139,8 +132,6 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/metrics", api.handleMetrics)
 		mux.HandleFunc("/api/state/movie/", api.handleStateMovie)
 		mux.HandleFunc("/api/state/series/", api.handleStateSeries)
-		mux.HandleFunc("/api/prune/movie/", api.handlePruneMovie)
-		mux.HandleFunc("/api/prune/series/", api.handlePruneSeries)
 		mux.HandleFunc("/api/rearm/movie/tmdb/", api.handleRearmMovieTMDB)
 		mux.HandleFunc("/api/rearm/movie/", api.handleRearmMovie)
 		mux.HandleFunc("/api/rearm/series/", api.handleRearmSeries)
@@ -165,7 +156,6 @@ func newServer(opt APIOptions) *Server {
 		mux.HandleFunc("/api/playback/jellyfin", api.handleJellyfinPlayback)
 		mux.HandleFunc("/api/playback/event", api.handleGenericPlayback)
 		mux.HandleFunc("/api/state", api.handleState)
-		mux.HandleFunc("/api/health/torbox", api.handleTorBoxHealth)
 	}
 
 	return &Server{
@@ -329,74 +319,6 @@ func (h *apiHandler) handleRearmMovieTMDB(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusAccepted, rearmResponse(item, "manual_tmdb_id"))
-}
-
-func (h *apiHandler) handlePruneMovie(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
-	if !h.authorized(r) {
-		unauthorized(w)
-		return
-	}
-	arrID, ok := idFromPath(w, r.URL.Path, "/api/prune/movie/")
-	if !ok {
-		return
-	}
-	if r.URL.Query().Get("dry_run") == "true" {
-		item, found, err := h.repo.GetState(r.Context(), h.tenant, model.MediaMovie, arrID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if !found {
-			http.Error(w, "movie row not found", http.StatusNotFound)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "dry_run": true, "would_prune": item.State == model.StateAvailable, "item": item})
-		return
-	}
-	item, err := h.repo.RequestPrune(r.Context(), h.tenant, model.MediaMovie, arrID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "source": "manual_prune", "item": item})
-}
-
-func (h *apiHandler) handlePruneSeries(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
-	if !h.authorized(r) {
-		unauthorized(w)
-		return
-	}
-	episodeFileID, ok := idFromPath(w, r.URL.Path, "/api/prune/series/")
-	if !ok {
-		return
-	}
-	if r.URL.Query().Get("dry_run") == "true" {
-		item, found, err := h.repo.GetState(r.Context(), h.tenant, model.MediaSeries, episodeFileID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if !found {
-			http.Error(w, "series row not found", http.StatusNotFound)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "dry_run": true, "would_prune": item.State == model.StateAvailable, "item": item})
-		return
-	}
-	item, err := h.repo.RequestPrune(r.Context(), h.tenant, model.MediaSeries, episodeFileID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "source": "manual_series_prune", "item": item})
 }
 
 func (h *apiHandler) handleStateSummary(w http.ResponseWriter, r *http.Request) {

@@ -26,7 +26,6 @@ func TestQbitImportPathsMeetSonarrContracts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, _ := testService(t)
-			s.direct = true
 			s.qbUser = "arr"
 			s.qbPassword = "secret"
 			ctx := context.Background()
@@ -38,7 +37,7 @@ func TestQbitImportPathsMeetSonarrContracts(t *testing.T) {
 			j.ProviderID = 42
 			j.Name = "Show.S01.Release"
 			j.Files = tc.files
-			if err = s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Hour); err != nil {
+			if err = s.repo.UpdateGatewayJob(ctx, s.tenant, j, time.Hour); err != nil {
 				t.Fatal(err)
 			}
 			if err = s.createLinks(j); err != nil {

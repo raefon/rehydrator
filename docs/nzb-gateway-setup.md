@@ -15,10 +15,6 @@ Keep the direct gateway configuration:
 
 ```yaml
 role: gateway
-prune_enabled: false
-rearm_backend: torbox
-cloud_usenet:
-  enabled: false
 gateway:
   enabled: true
   api_key: ""     # Existing TorBox Pro API key, supplied through your Secret
@@ -27,12 +23,11 @@ gateway:
 
 This is a fragment; retain the existing database, tenant, qBittorrent and DAV
 settings. `GATEWAY_SAB_API_KEY` overrides `gateway.sab_api_key`. Restart the gateway
-after updating its configuration Secret. Keep `cloud_usenet.enabled: false`:
-that setting selects the earlier separate backend, not this shared gateway.
+after updating its configuration Secret.
 The controller needs no additional credentials for hosted NZBs.
 
 For the tightened SAB client responses and acceptance logs, deploy v0.7.5 or
-later. No schema changes beyond the existing migration 033 are needed.
+later. Apply the current schema through migration 034.
 
 ## Sonarr and Radarr
 

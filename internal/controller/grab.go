@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/raefon/rehydrator/internal/cloudusenet"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
@@ -45,51 +44,14 @@ func (c *Controller) RecordGrabImport(ctx context.Context, g model.GrabSource, p
 }
 
 func (c *Controller) captureGrabSource(ctx context.Context, g model.GrabSource) error {
-	t := g.Torrent
-	if c.directGateway() {
-		source, err := c.opt.CloudUsenet.Source(ctx, g.DownloadID)
-		if err != nil {
-			return err
-		}
-		g.Torrent = source
-		return c.opt.Repo.CompleteGrabSource(ctx, g)
+	if c.opt.Gateway == nil {
+		return model.ErrSourceRecoveryRequired
 	}
-	if cloudusenet.IsJob(g.DownloadID) {
-		if c.opt.CloudUsenet == nil {
-			return fmt.Errorf("cloud Usenet source backend is disabled")
-		}
-		source, err := c.opt.CloudUsenet.Source(ctx, g.DownloadID)
-		if err != nil {
-			return err
-		}
-		g.Torrent = source
-		return c.opt.Repo.CompleteGrabSource(ctx, g)
-	}
-	if t.Kind == model.SourceRecoveryRequired || (t.TorrentURL == "" && t.Magnet == "" && len(t.NZBFile) == 0 && len(t.TorrentFile) == 0) {
-		mt := model.MediaMovie
-		if g.Arr == "sonarr" {
-			mt = model.MediaSeries
-		}
-		client, err := c.arrClientFor(mt)
-		if err != nil {
-			return err
-		}
-		if !client.Configured() {
-			return fmt.Errorf("Arr client is not configured for source capture")
-		}
-		t, err = client.GrabbedTorrentByDownloadID(ctx, g.OwnerID, mt, g.DownloadID)
-		if err != nil {
-			return err
-		}
-	}
-	if t.Protocol == model.ProtocolUsenet {
-		t.DownloadID = g.DownloadID
-	}
-	t, err := c.opt.Decypharr.PrepareTorrent(ctx, t)
+	source, err := c.opt.Gateway.Source(ctx, g.DownloadID)
 	if err != nil {
 		return err
 	}
-	g.Torrent = t
+	g.Torrent = source
 	return c.opt.Repo.CompleteGrabSource(ctx, g)
 }
 

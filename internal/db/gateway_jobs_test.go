@@ -28,7 +28,7 @@ func TestCloudUploadReservationSurvivesDuplicateRequests(t *testing.T) {
 	tenant := fmt.Sprintf("cloud-reservation-%d", time.Now().UnixNano())
 	defer r.pool.Exec(ctx, "DELETE FROM gateway_jobs WHERE tenant=$1", tenant)
 	defer r.pool.Exec(ctx, "DELETE FROM media_cache_cloud_usenet_gate WHERE tenant=$1", tenant)
-	j, err := r.AddCloudNZB(ctx, tenant, "sonarr", "source.nzb", []byte(nzbData))
+	j, err := r.AddGatewayNZB(ctx, tenant, "sonarr", "source.nzb", []byte(nzbData))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestCloudUploadReservationSurvivesDuplicateRequests(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, found, err := r.ClaimCloudNZB(ctx, tenant, 2*time.Minute)
+			_, found, err := r.ClaimGatewayJob(ctx, tenant, 2*time.Minute)
 			if err != nil {
 				t.Error(err)
 			}
@@ -51,22 +51,22 @@ func TestCloudUploadReservationSurvivesDuplicateRequests(t *testing.T) {
 	if claims.Load() != 1 {
 		t.Fatal("duplicate upload reservations", claims.Load())
 	}
-	if _, err = r.AddCloudNZB(ctx, tenant, "sonarr", "source.nzb", []byte(nzbData)); err != nil {
+	if _, err = r.AddGatewayNZB(ctx, tenant, "sonarr", "source.nzb", []byte(nzbData)); err != nil {
 		t.Fatal(err)
 	}
 	// The duplicate must not expire an in-flight submission lease.
-	if _, found, err := r.ClaimCloudNZB(ctx, tenant, 2*time.Minute); err != nil || found {
+	if _, found, err := r.ClaimGatewayJob(ctx, tenant, 2*time.Minute); err != nil || found {
 		t.Fatal("duplicate expired submission lease", found, err)
 	}
-	current, err := r.CloudNZB(ctx, tenant, j.ID)
+	current, err := r.GatewayJobByID(ctx, tenant, j.ID)
 	if err != nil || current.State != "Submitting" || current.Attempts != 1 {
 		t.Fatal(current, err)
 	}
 	// A separate job cannot bypass the shared account submission gap.
-	if _, err = r.AddCloudNZB(ctx, tenant, "radarr", "other.nzb", []byte(nzbData)); err != nil {
+	if _, err = r.AddGatewayNZB(ctx, tenant, "radarr", "other.nzb", []byte(nzbData)); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := r.ClaimCloudNZB(ctx, tenant, 2*time.Minute); err != nil || found {
+	if _, found, err := r.ClaimGatewayJob(ctx, tenant, 2*time.Minute); err != nil || found {
 		t.Fatal("upload gate bypassed", found, err)
 	}
 }

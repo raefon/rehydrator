@@ -1,59 +1,18 @@
-# Lifecycle
+# Download lifecycle
 
-Rehydrator tracks each movie in `media_cache_state`.
+1. Arr sends a magnet/torrent through qBittorrent API or an NZB through SAB API.
+2. The gateway saves the original source and a stable job before acknowledging it.
+3. The bounded worker submits to TorBox and polls provider state.
+4. Ready provider files appear in the shared read-only WebDAV catalog.
+5. The controller stages links and verifies mounted-file readability.
+6. Only then does the gateway report Completed for Arr to import.
+7. Import/playback/inventory hooks update library state and request Jellyfin refreshes.
 
-## Main states
+The gateway owns provider-loss recovery. Three missing observations and an exact
+retained source are required; unknown submissions never authorize a blind upload.
+Attempts and submission spacing remain bounded. Torrent and NZB identities stay
+separate. Library rearm requests use that same gateway source/catalog rather than
+re-fetching an old Prowlarr URL.
 
-| State | Meaning |
-|---|---|
-| `REQUESTED` | Placeholder from Seerr or early request intent |
-| `AVAILABLE` | Imported and visible/expected to be playable |
-| `ARCHIVED` | Provider cache has been pruned; library entry remains |
-| `REARMING` | Re-arm has been requested and Decypharr add is in progress |
-| `WAITING_FOR_VISIBILITY` | Provider add succeeded, waiting for CSI-rclone path visibility |
-| `FAILED` / `BROKEN` | Real failure requiring attention |
-
-## Normal prune flow
-
-```text
-AVAILABLE
-→ cached_until expires
-→ TorBox torrent deleted by infohash
-→ ARCHIVED
-```
-
-Rehydrator does not require CSI-rclone to stop showing the path after prune, because the mount can be stale.
-
-## Normal re-arm flow
-
-```text
-ARCHIVED
-→ playback intent or API rearm
-→ REARMING
-→ Decypharr add succeeds
-→ WAITING_FOR_VISIBILITY
-→ CSI path appears
-→ AVAILABLE
-```
-
-If the CSI path is slow, Rehydrator retries visibility checks without duplicate Decypharr add calls.
-
-## Jellyfin hygiene flow
-
-```text
-WAITING_FOR_VISIBILITY → AVAILABLE
-→ delayed Jellyfin refresh
-→ Jellyfin clears stale unavailable/trash icon
-```
-
-Do not enable Jellyfin automatic trash emptying.
-
-## Event-driven seeding
-
-Seerr and Radarr events reduce the race where playback happens before Rehydrator has a DB row:
-
-```text
-Seerr request → REQUESTED placeholder
-Radarr import/webhook → real Radarr arr_id/path/infohash
-Jellyfin playback → tracked play intent and optional re-arm
-```
+No automatic provider pruning is performed. The local cached-until timestamp is
+informational; it does not delete a TorBox placement.

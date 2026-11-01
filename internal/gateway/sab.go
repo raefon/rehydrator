@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-const SABPath = "/sabnzbd-cloud/api"
-const DAVPath = "/cloud-usenet/dav/"
+const SABPath = "/sabnzbd/api"
+const DAVPath = "/webdav/"
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -77,7 +77,7 @@ func (s *Service) SAB(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"status": false, "error": "invalid NZB source"})
 			return
 		}
-		job, err := s.repo.AddCloudNZB(r.Context(), s.tenant, category, source.NZBFilename, source.NZBFile)
+		job, err := s.repo.AddGatewayNZB(r.Context(), s.tenant, category, source.NZBFilename, source.NZBFile)
 		if err != nil {
 			http.Error(w, "could not persist cloud NZB", 500)
 			return
@@ -91,14 +91,14 @@ func (s *Service) SAB(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, map[string]any{"status": false})
 				return
 			}
-			if err := s.repo.HideCloudNZB(r.Context(), s.tenant, strings.ToLower(id)); err != nil {
+			if err := s.repo.HideGatewayJob(r.Context(), s.tenant, strings.ToLower(id)); err != nil {
 				http.Error(w, "queue update failed", 500)
 				return
 			}
 			writeJSON(w, map[string]any{"status": true})
 			return
 		}
-		jobs, err := s.repo.CloudNZBs(r.Context(), s.tenant)
+		jobs, err := s.repo.GatewayJobs(r.Context(), s.tenant)
 		if err != nil {
 			http.Error(w, "cloud status unavailable", 500)
 			return

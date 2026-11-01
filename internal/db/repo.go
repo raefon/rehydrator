@@ -201,7 +201,7 @@ func (r *Repo) CountFullRearmCandidates(ctx context.Context, tenant string) (int
 
 // QueueFullRearm marks all eligible tracked media for the existing re-arm worker.
 // It never deletes provider-side torrents or rows. CSI-visible items are short-circuited
-// by the normal re-arm handler when configured; missing items use the normal Arr/Decypharr path.
+// by the normal re-arm handler when configured; missing items use the normal Arr/gateway path.
 func (r *Repo) QueueFullRearm(ctx context.Context, tenant string) (int64, error) {
 	tag, err := r.pool.Exec(ctx, `
         UPDATE media_cache_state
@@ -261,7 +261,7 @@ func (r *Repo) PruneWorkItems(ctx context.Context, limit int) ([]model.MediaCach
 	return scanItems(rows)
 }
 
-// VisibilityWorkItems atomically claims rows that already re-added through Decypharr
+// VisibilityWorkItems atomically claims rows that already re-added through gateway
 // but are waiting for the CSI/rclone mount to expose the file path.
 func (r *Repo) VisibilityWorkItems(ctx context.Context, limit int) ([]model.MediaCacheState, error) {
 	if limit <= 0 {
@@ -303,7 +303,7 @@ func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int
             UPDATE media_cache_state m
             SET arr_id = $2,
                 symlink_path = $3,
-                download_client = CASE WHEN m.download_client='torbox_gateway' THEN 'torbox_gateway' WHEN m.source_protocol='usenet' AND m.source_download_id LIKE 'cloud-nzb-%' THEN 'torbox_cloud' ELSE 'decypharr' END,
+                download_client = CASE WHEN m.download_client='torbox_gateway' THEN 'torbox_gateway' WHEN m.source_protocol='usenet' AND m.source_download_id LIKE 'cloud-nzb-%' THEN 'torbox_gateway' ELSE 'torbox_gateway' END,
                 download_category = NULLIF($5, ''),
                 arr_title = COALESCE(NULLIF($6, ''), m.arr_title),
                 tmdb_id = NULLIF($7, 0),
@@ -346,11 +346,11 @@ func (r *Repo) UpsertImportedMovie(ctx context.Context, tenant string, arrID int
             cached_until, download_client, download_category, arr_title, tmdb_id, tvdb_id,
             retry_count, next_retry_at, last_error, last_checked
         )
-        VALUES ($1, 'movie', $2, $3, 'AVAILABLE', false, $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0), NULLIF($8, 0), 0, NULL, NULL, now())
+        VALUES ($1, 'movie', $2, $3, 'AVAILABLE', false, $4, 'torbox_gateway', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0), NULLIF($8, 0), 0, NULL, NULL, now())
         ON CONFLICT (tenant, media_type, arr_id)
         DO UPDATE SET
             symlink_path = EXCLUDED.symlink_path,
-            download_client = CASE WHEN media_cache_state.download_client='torbox_gateway' THEN 'torbox_gateway' WHEN media_cache_state.source_protocol='usenet' AND media_cache_state.source_download_id LIKE 'cloud-nzb-%' THEN 'torbox_cloud' ELSE 'decypharr' END,
+            download_client = CASE WHEN media_cache_state.download_client='torbox_gateway' THEN 'torbox_gateway' WHEN media_cache_state.source_protocol='usenet' AND media_cache_state.source_download_id LIKE 'cloud-nzb-%' THEN 'torbox_gateway' ELSE 'torbox_gateway' END,
             download_category = COALESCE(EXCLUDED.download_category, media_cache_state.download_category),
             arr_title = COALESCE(EXCLUDED.arr_title, media_cache_state.arr_title),
             tmdb_id = COALESCE(EXCLUDED.tmdb_id, media_cache_state.tmdb_id),
@@ -394,7 +394,7 @@ func (r *Repo) UpsertImportedEpisode(ctx context.Context, tenant string, seriesI
         )
         VALUES (
             $1, 'series', $2, $3, 'AVAILABLE', false,
-            $4, 'decypharr', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0),
+            $4, 'torbox_gateway', NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, 0),
             NULLIF($8, 0), NULLIF($9, 0), NULLIF($2, 0), NULLIF($10, 0), NULLIF($11, 0),
             NULLIF($6, ''), NULLIF($12, ''), NULLIF($13, ''),
             0, NULL, NULL, now()
@@ -402,7 +402,7 @@ func (r *Repo) UpsertImportedEpisode(ctx context.Context, tenant string, seriesI
         ON CONFLICT (tenant, media_type, arr_id)
         DO UPDATE SET
             symlink_path = EXCLUDED.symlink_path,
-            download_client = CASE WHEN media_cache_state.download_client='torbox_gateway' THEN 'torbox_gateway' WHEN media_cache_state.source_protocol='usenet' AND media_cache_state.source_download_id LIKE 'cloud-nzb-%' THEN 'torbox_cloud' ELSE 'decypharr' END,
+            download_client = CASE WHEN media_cache_state.download_client='torbox_gateway' THEN 'torbox_gateway' WHEN media_cache_state.source_protocol='usenet' AND media_cache_state.source_download_id LIKE 'cloud-nzb-%' THEN 'torbox_gateway' ELSE 'torbox_gateway' END,
             download_category = COALESCE(EXCLUDED.download_category, media_cache_state.download_category),
             arr_title = COALESCE(EXCLUDED.arr_title, media_cache_state.arr_title),
             tvdb_id = COALESCE(EXCLUDED.tvdb_id, media_cache_state.tvdb_id),
@@ -474,7 +474,7 @@ func (r *Repo) UpsertRequestedMoviePlaceholder(ctx context.Context, tenant strin
             cached_until, download_client, download_category, arr_title, tmdb_id,
             retry_count, next_retry_at, last_error, last_checked
         )
-        VALUES ($1, 'movie', $2, '', 'REQUESTED', false, NULL, 'decypharr', 'radarr', NULLIF($3, ''), $4, 0, NULL, NULL, now())
+        VALUES ($1, 'movie', $2, '', 'REQUESTED', false, NULL, 'torbox_gateway', 'radarr', NULLIF($3, ''), $4, 0, NULL, NULL, now())
         ON CONFLICT (tenant, media_type, arr_id)
         DO UPDATE SET
             arr_title = COALESCE(NULLIF($3, ''), media_cache_state.arr_title),
@@ -528,7 +528,7 @@ func (r *Repo) UpsertRequestedRadarrMovie(ctx context.Context, tenant string, ar
             retry_count, next_retry_at, last_error, last_checked
         ) VALUES (
             $1, 'movie', $2, '', 'REQUESTED', false,
-            NULL, 'decypharr', 'radarr', NULLIF($3, ''), NULLIF($4, 0),
+            NULL, 'torbox_gateway', 'radarr', NULLIF($3, ''), NULLIF($4, 0),
             0, NULL, NULL, now()
         )
         ON CONFLICT (tenant, media_type, arr_id)
@@ -942,7 +942,7 @@ func (r *Repo) SaveTorrentMetadata(ctx context.Context, id string, torrent model
  source_protocol=$6, download_job_id=CASE WHEN $6='usenet' THEN CASE WHEN source_download_id=$7 AND download_job_id<>'' THEN download_job_id ELSE $7 END ELSE '' END,
  source_download_id=CASE WHEN $6='usenet' THEN $7 ELSE source_download_id END,
             magnet = NULLIF($3, ''),
-            download_client = CASE WHEN EXISTS(SELECT 1 FROM gateway_jobs g WHERE g.tenant=media_cache_state.tenant AND g.protocol='torrent' AND g.infohash=$2) THEN 'torbox_gateway' WHEN $6='usenet' AND lower($7) LIKE 'cloud-nzb-%' THEN 'torbox_cloud' ELSE 'decypharr' END,
+            download_client = CASE WHEN EXISTS(SELECT 1 FROM gateway_jobs g WHERE g.tenant=media_cache_state.tenant AND g.protocol='torrent' AND g.infohash=$2) THEN 'torbox_gateway' WHEN $6='usenet' AND lower($7) LIKE 'cloud-nzb-%' THEN 'torbox_gateway' ELSE 'torbox_gateway' END,
             download_category = NULLIF($4, ''),
             source_title = NULLIF($5, ''),
             last_checked = now()

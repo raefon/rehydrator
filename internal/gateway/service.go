@@ -34,15 +34,15 @@ type TorrentProvider interface {
 	Link(context.Context, int64, int64) (string, error)
 }
 type Service struct {
+	activePollInterval    time.Duration
 	diagnosticMu          sync.Mutex
 	diagnosticChecks      map[string]time.Time
 	dashboardOIDC         *dashboardauth.Auth
 	dashboardExternalAuth bool
-	direct                bool
 	role                  string
 	torrent               TorrentProvider
 	qbUser, qbPassword    string
-	cfg                   config.CloudUsenetConfig
+	cfg                   config.GatewayStorageConfig
 	tenant                string
 	repo                  *db.Repo
 	provider              Provider
@@ -51,12 +51,12 @@ type Service struct {
 	categories            map[string]bool
 }
 
-func New(cfg config.CloudUsenetConfig, tenant string, repo *db.Repo, provider Provider, categories ...string) *Service {
+func newService(cfg config.GatewayStorageConfig, tenant string, repo *db.Repo, provider Provider, categories ...string) *Service {
 	allowed := map[string]bool{}
 	for _, cat := range categories {
 		allowed[cat] = true
 	}
-	return &Service{cfg: cfg, tenant: tenant, repo: repo, provider: provider, categories: allowed, mountProbe: csi.NewReadProbeWithLimit(csi.NewChecker(cfg.MountPath), 1)}
+	return &Service{activePollInterval: 30 * time.Second, cfg: cfg, tenant: tenant, repo: repo, provider: provider, categories: allowed, mountProbe: csi.NewReadProbeWithLimit(csi.NewChecker(cfg.MountPath), 1)}
 }
 func (s *Service) Source(ctx context.Context, id string) (model.TorrentMetadata, error) {
 	j, err := s.repo.GatewayJob(ctx, s.tenant, strings.ToLower(id))
@@ -66,7 +66,7 @@ func (s *Service) Source(ctx context.Context, id string) (model.TorrentMetadata,
 	if j.Protocol == model.ProtocolTorrent {
 		return (model.TorrentMetadata{Protocol: model.ProtocolTorrent, Kind: model.SourceKind(j.SourceKind), InfoHash: j.InfoHash, Magnet: j.Magnet, TorrentFile: j.TorrentFile, TorrentFilename: j.Filename, DownloadID: j.InfoHash, SourceTitle: j.Name, Source: "torbox_gateway"}).ValidateSource()
 	}
-	return (model.TorrentMetadata{Protocol: model.ProtocolUsenet, Kind: model.SourceNZBFile, NZBFile: j.NZB, NZBFilename: j.Filename, DownloadID: j.ID, SourceTitle: j.Name, Source: "torbox_cloud"}).ValidateSource()
+	return (model.TorrentMetadata{Protocol: model.ProtocolUsenet, Kind: model.SourceNZBFile, NZBFile: j.NZB, NZBFilename: j.Filename, DownloadID: j.ID, SourceTitle: j.Name, Source: "torbox_gateway"}).ValidateSource()
 }
 func (s *Service) Ready(ctx context.Context, id string) (bool, error) {
 	j, err := s.repo.GatewayJob(ctx, s.tenant, strings.ToLower(id))
@@ -79,7 +79,7 @@ func (s *Service) Ready(ctx context.Context, id string) (bool, error) {
 	return j.State == "Completed", nil
 }
 func (s *Service) Run(ctx context.Context) {
-	slog.Info("TorBox gateway worker starting", "mount_path", s.cfg.MountPath, "submit_interval_seconds", s.cfg.SubmitIntervalSeconds)
+	slog.Info("TorBox gateway worker starting", "mount_path", s.cfg.MountPath, "submit_interval_seconds", s.cfg.SubmitIntervalSeconds, "active_poll_interval_seconds", s.activePollInterval.Seconds())
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -104,7 +104,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	}
 	if lookup, ok := s.torrent.(interface {
 		FindActive(context.Context, string) (int64, error)
-	}); ok && s.direct {
+	}); ok {
 		j, claimed, err := s.repo.ClaimUnknownGatewayTorrent(ctx, s.tenant)
 		if err != nil {
 			return err
@@ -129,10 +129,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	}
 
 	protocol := ""
-	if !s.direct {
-		protocol = model.ProtocolUsenet
-	}
-	j, claimed, err := s.repo.ClaimCloudNZB(ctx, s.tenant, time.Duration(s.cfg.SubmitIntervalSeconds)*time.Second, protocol)
+
+	j, claimed, err := s.repo.ClaimGatewayJob(ctx, s.tenant, time.Duration(s.cfg.SubmitIntervalSeconds)*time.Second, protocol)
 	if err != nil || !claimed {
 		return err
 	}
@@ -162,7 +160,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			j.MissingChecks = 0
 		}
 		slog.Info("TorBox gateway submission result", "protocol", j.Protocol, "job_id", j.ID, "provider_id", j.ProviderID, "state", j.State)
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, s.activePollInterval)
 	}
 	var download torbox.UsenetDownload
 	var found bool
@@ -177,7 +175,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		}
 		j.LastError = err.Error()
 		j.MissingChecks = 0
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 5*time.Minute)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, 5*time.Minute)
 	}
 	if err = s.repo.RecordProviderStatus(ctx, s.tenant, j, download.Status(j.ProviderID, found)); err != nil {
 		return err
@@ -195,13 +193,13 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			} else {
 				j.State = "Queued"
 				j.LastError = "confirmed missing cloud placement; saved source queued for recovery"
-				if err := s.repo.CloudNZBRecoveryWaiting(ctx, s.tenant, j.ID); err != nil {
+				if err := s.repo.GatewayRecoveryWaiting(ctx, s.tenant, j.ID); err != nil {
 					return err
 				}
 
 			}
 		}
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 5*time.Minute)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, 5*time.Minute)
 	}
 	j.MissingChecks = 0
 	if download.Name != "" {
@@ -210,12 +208,12 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if strings.EqualFold(download.State, "failed") {
 		j.State = "Failed"
 		j.LastError = "TorBox provider download failed; acquire a replacement through Arr"
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Hour)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, time.Hour)
 	}
 	if !download.Ready() {
 		j.State = "Downloading"
 		j.LastError = ""
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, s.activePollInterval)
 	}
 	if err = torbox.ValidateUsenetFiles(download.Files); err != nil {
 		return err
@@ -223,18 +221,18 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if len(j.Files) > 0 && !sameCatalog(j.Files, download.Files) {
 		j.State = "Failed"
 		j.LastError = "provider catalog changed; original import paths cannot be restored safely"
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Hour)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, time.Hour)
 	}
 	if j.State == "Completed" {
 		j.Files = download.Files
 		j.LastError = ""
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 15*time.Minute)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, 15*time.Minute)
 	}
 	j.Files = download.Files
 	j.State = "Mounting"
 	j.LastError = ""
 	// Publish the virtual catalog before checking its rclone mount.
-	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute); err != nil {
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, j, time.Minute); err != nil {
 		return err
 	}
 	if s.role == config.RoleGateway {
@@ -248,7 +246,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return s.verifyMount(ctx, j)
 }
 
-func (s *Service) verifyMount(ctx context.Context, j db.CloudNZBJob) error {
+func (s *Service) verifyMount(ctx context.Context, j db.GatewayJob) error {
 	var err error
 
 	if !j.Hidden {
@@ -299,17 +297,17 @@ func (s *Service) verifyMount(ctx context.Context, j db.CloudNZBJob) error {
 	return err
 }
 
-func (s *Service) storage(j db.CloudNZBJob) string {
+func (s *Service) storage(j db.GatewayJob) string {
 	return filepath.Join(s.cfg.DownloadPath, j.Category, j.ID)
 }
-func (s *Service) createLinks(j db.CloudNZBJob) error {
+func (s *Service) createLinks(j db.GatewayJob) error {
 	if !s.categories[j.Category] {
 		return fmt.Errorf("unconfigured cloud category")
 	}
 	for _, f := range j.Files {
 		dest := filepath.Join(s.storage(j), filepath.FromSlash(f.Name))
 		target := filepath.Join(s.cfg.MountPath, s.catalogPath(j), filepath.FromSlash(f.Name))
-		if err := safeCloudParents(s.cfg.DownloadPath, filepath.Dir(dest)); err != nil {
+		if err := safeStagingParents(s.cfg.DownloadPath, filepath.Dir(dest)); err != nil {
 			return err
 		}
 		existing, err := os.Readlink(dest)
@@ -331,7 +329,7 @@ func (s *Service) createLinks(j db.CloudNZBJob) error {
 
 // Only the configured root is trusted; provider-supplied subdirectories must
 // never traverse existing symlinks in the local download tree.
-func safeCloudParents(root, directory string) error {
+func safeStagingParents(root, directory string) error {
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return err
 	}
@@ -359,34 +357,28 @@ func safeCloudParents(root, directory string) error {
 	return nil
 }
 
-func NewDirect(cfg config.GatewayConfig, tenant string, repo *db.Repo, torrents TorrentProvider, usenet Provider, categories ...string) *Service {
-	s := New(cfg.CloudUsenetConfig, tenant, repo, usenet, categories...)
-	s.direct = true
+func New(cfg config.GatewayConfig, tenant string, repo *db.Repo, torrents TorrentProvider, usenet Provider, categories ...string) *Service {
+	s := newService(cfg.GatewayStorageConfig, tenant, repo, usenet, categories...)
+
+	s.activePollInterval = 30 * time.Second
+	if cfg.ActivePollIntervalSeconds >= 15 && cfg.ActivePollIntervalSeconds <= 3600 {
+		s.activePollInterval = time.Duration(cfg.ActivePollIntervalSeconds) * time.Second
+	}
 	s.torrent = torrents
 	s.dashboardExternalAuth = cfg.DashboardExternalAuth
 	s.qbUser = cfg.QBUsername
 	s.qbPassword = cfg.QBPassword
 	return s
 }
-func (s *Service) catalogPath(j db.CloudNZBJob) string {
-	if !s.direct {
-		return "jobs/" + j.ID
-	}
+func (s *Service) catalogPath(j db.GatewayJob) string {
+
 	if j.Protocol == model.ProtocolTorrent {
 		return "torrents/" + j.ID
 	}
 	return "usenet/" + j.ID
 }
-func (s *Service) DAVRoot() string {
-	if s.direct {
-		return "/webdav/"
-	}
-	return DAVPath
-}
-func (s *Service) Direct() bool { return s.direct }
+func (s *Service) DAVRoot() string { return DAVPath }
 
-// Ensure retains source identity and wakes observation without resetting retry
-// budgets or authorizing another upload after an ambiguous submission.
 func (s *Service) Ensure(ctx context.Context, source model.TorrentMetadata, category string) (string, error) {
 	j, err := s.repo.AddGatewaySource(ctx, s.tenant, category, source)
 	if err != nil {

@@ -2,21 +2,17 @@ package syncer
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/raefon/rehydrator/internal/arr"
 	"github.com/raefon/rehydrator/internal/db"
-	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
 type RadarrSyncer struct {
 	sourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
-	decypharr    *decypharr.Client
 	repo         *db.Repo
 	radarr       *arr.Client
 	tenant       string
@@ -29,7 +25,6 @@ type RadarrSyncer struct {
 
 type RadarrOptions struct {
 	SourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
-	Decypharr    *decypharr.Client
 	Repo         *db.Repo
 	Radarr       *arr.Client
 	Tenant       string
@@ -52,7 +47,6 @@ func NewRadarr(opt RadarrOptions) *RadarrSyncer {
 	}
 	return &RadarrSyncer{
 		sourceLookup: opt.SourceLookup,
-		decypharr:    opt.Decypharr,
 		repo:         opt.Repo,
 		radarr:       opt.Radarr,
 		tenant:       opt.Tenant,
@@ -151,35 +145,7 @@ func (s *RadarrSyncer) SyncOnce(ctx context.Context) error {
 			}
 			continue
 		}
-		if item.SourceProtocol != model.ProtocolUsenet && (item.InfoHash == nil || *item.InfoHash == "") {
-			torrent, err := s.radarr.LatestGrabbedTorrent(ctx, movie.ID, model.MediaMovie)
-			if err != nil {
-				slog.Warn("radarr seed sync could not resolve torrent metadata", "movie_id", movie.ID, "title", movie.Title, "error", err)
-				continue
-			}
-			if s.decypharr != nil {
-				prepared, err := s.decypharr.PrepareTorrent(ctx, torrent)
-				if err != nil {
-					slog.Warn("could not preserve original torrent source; metadata capture will retry", "error", err)
-					continue
-				}
-				torrent = prepared
-			}
-			if err := s.repo.SaveTorrentMetadata(ctx, item.ID, torrent, s.category); err != nil {
-				slog.Warn("radarr seed sync failed to save torrent metadata", "movie_id", movie.ID, "title", movie.Title, "error", err)
-				continue
-			}
-			payload, _ := json.Marshal(map[string]string{
-				"arr":          "radarr",
-				"arr_title":    movie.Title,
-				"tmdb_id":      fmt.Sprintf("%d", movie.TMDBID),
-				"infohash":     torrent.InfoHash,
-				"source_title": torrent.SourceTitle,
-				"category":     s.category,
-			})
-			_ = s.repo.Event(ctx, item.ID, "radarr_seed_metadata_resolved", string(payload))
-			metadataResolved++
-		}
+
 	}
 
 	pruned, pruneErr := s.repo.ReconcileRadarrInventory(ctx, s.tenant, movieIDs)

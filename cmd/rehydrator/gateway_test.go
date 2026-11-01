@@ -34,7 +34,7 @@ func TestStandaloneGatewayStartsWithoutTenantFilesystemOrIntegrations(t *testing
 	}
 	addr := listener.Addr().String()
 	listener.Close()
-	cfg := config.Config{Role: config.RoleGateway, Tenant: fmt.Sprintf("gateway-main-%d", time.Now().UnixNano()), HealthAddr: addr, Gateway: config.DefaultGateway(), DecypharrSonarrCategory: "sonarr", DecypharrRadarrCategory: "radarr"}
+	cfg := config.Config{Role: config.RoleGateway, Tenant: fmt.Sprintf("gateway-main-%d", time.Now().UnixNano()), HealthAddr: addr, Gateway: config.DefaultGateway()}
 	cfg.Gateway.APIKey = "unused-no-jobs"
 	cfg.Gateway.DAVUsername = "dav"
 	cfg.Gateway.DAVPassword = "secret"

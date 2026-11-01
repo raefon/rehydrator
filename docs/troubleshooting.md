@@ -1,125 +1,23 @@
 # Troubleshooting
 
-## CSI path did not appear quickly
+Start with the gateway dashboard's Recovery & diagnostics page. Look up the exact
+torrent hash or gateway job ID to inspect retained-source validity, provider ID,
+workflow state, next checks and linked library rows.
 
-If logs show:
+- **Queued:** waiting for the shared submission gate or worker capacity.
+- **SubmissionUnknown:** inspect TorBox; do not reset attempts or blindly resubmit.
+- **TorBox processing at 100%:** transfer completion is not provider readiness.
+- **Mounting:** check controller logs, shared mount visibility and staging permissions.
+- **Completed but not imported:** check the Arr queue warning and client polling task.
+- **Missing:** scheduled confirmations precede retained-source recovery.
+- **Failed:** inspect the failure; acquire a replacement through Arr when recovery is blocked.
+- **No saved source:** regrab through Arr or upload the original torrent/NZB/magnet.
 
-```text
-CSI path did not appear within ...
-```
+Hidden Arr history is retained in the dashboard. Downloads added directly to TorBox
+before this gateway aren't automatically gateway history. Old symlinks using a
+different remote layout do not become valid just by changing the WebDAV URL.
 
-The provider add may have succeeded, but CSI-rclone has not refreshed yet. With v0.2.9+ this should move to `WAITING_FOR_VISIBILITY` and retry visibility checks.
-
-Check state:
-
-```sql
-SELECT arr_id, arr_title, state, last_error, updated_at
-FROM media_cache_state
-WHERE tenant = 'tenet-nofear101'
-ORDER BY updated_at DESC;
-```
-
-## TorBox/WebDAV 429
-
-If CSI-rclone logs show:
-
-```text
-HTTP 429 Too Many Requests
-```
-
-Reduce readers and concurrency:
-
-```yaml
-concurrent_workers: 2
-max_rearms_per_run: 3
-max_prunes_per_run: 5
-```
-
-Keep Jellyfin heavy analysis off:
-
-```text
-Video preview thumbnails: Never
-Chapter thumbnails: Never
-Extensive analysis: Off
-```
-
-## Jellyfin shows trash/unavailable icon
-
-This means Jellyfin has noticed the backing path is unavailable. Do not enable automatic trash emptying.
-
-After rehydration, Rehydrator can refresh Jellyfin:
-
-```bash
-curl -X POST \
-  -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/jellyfin/refresh/movie/4
-```
-
-## Pre-roll creates unmatched playback events
-
-Make sure ignored titles are configured:
-
-```yaml
-playback:
-  ignored_titles:
-    - rehydrator-preroll
-  ignored_title_contains:
-    - preroll
-    - pre-roll
-```
-
-## Movie does not re-arm on play
-
-Check:
-
-1. Jellyfin webhook URL includes the correct token.
-2. Rehydrator has a row for the movie.
-3. TMDb ID is present.
-4. State is `ARCHIVED`.
-5. Cooldown is not suppressing repeat playback events.
-
-## Useful SQL
-
-State summary:
-
-```sql
-SELECT state, count(*)
-FROM media_cache_state
-WHERE tenant = 'tenet-nofear101'
-GROUP BY state
-ORDER BY state;
-```
-
-Recent errors:
-
-```sql
-SELECT arr_id, arr_title, state, last_error, updated_at
-FROM media_cache_state
-WHERE tenant = 'tenet-nofear101'
-  AND last_error IS NOT NULL
-  AND last_error <> ''
-ORDER BY updated_at DESC
-LIMIT 20;
-```
-
-## Metadata guardrails
-
-`REQUESTED` rows are pending import metadata. They should not be re-armed until Radarr imports a real file and Rehydrator has a non-empty `symlink_path`.
-
-Useful checks:
-
-```sql
-SELECT arr_id, arr_title, tmdb_id, state, symlink_path, infohash, last_error, updated_at
-FROM media_cache_state
-WHERE tenant = 'tenet-nofear101'
-  AND media_type = 'movie'
-  AND state = 'REQUESTED'
-ORDER BY updated_at DESC;
-```
-
-```bash
-curl -s -H "Authorization: Bearer $API_TOKEN" \
-  http://localhost:8080/api/admin/invalid-rows | jq
-```
-
-The retry endpoint intentionally skips rows with empty `symlink_path` so incomplete request placeholders are not promoted into `REARMING`.
+If startup rejects config, compare against the current role-specific examples and
+remove retired keys/environment variables; see [configuration](configuration.md).
+No database wipe is required. Upgrade the schema through migration 034 before new
+processes start.

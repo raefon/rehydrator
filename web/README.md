@@ -162,9 +162,8 @@ Unknown progress is not displayed as zero; invalid/negative metrics are discarde
 Only provider-supplied bytes and speed are displayed. No unpack percentage is
 inferred, and no source URL/credential is retained in these observations.
 
-Provider polling frequency is unchanged: active jobs are usually scheduled about
-a minute apart and completed jobs about fifteen minutes apart, subject to worker
-capacity and errors. The dashboard polls PostgreSQL every ten seconds, not TorBox.
+Active provider jobs default to checks thirty seconds apart; completed jobs are
+checked about fifteen minutes apart, subject to worker capacity and errors. The dashboard polls PostgreSQL every ten seconds, not TorBox.
 It shows observation age and marks the last reading stale after a provider error.
 TorBox itself may cache API responses, so these are observations, not a live stream.
 A missing placement clears its old progress; replacement provider IDs discard
@@ -172,3 +171,23 @@ observations for the previous placement.
 
 References: [TorBox API](https://api-docs.torbox.app/) and
 [official Usenet SDK model](https://github.com/TorBox-App/torbox-sdk-py/blob/main/src/torbox_api/models/get_usenet_list_ok_response.py).
+
+## Active polling interval
+
+```yaml
+gateway:
+  active_poll_interval_seconds: 30
+  submit_interval_seconds: 120
+```
+
+Environment override: `GATEWAY_ACTIVE_POLL_INTERVAL_SECONDS=30`. Values must be
+15–3600 seconds. This schedules the first status check after submission and later
+checks while either torrents or NZBs are downloading/processing. Existing jobs use
+the new interval after their next due check; configuration requires a restart.
+
+Provider checks while awaiting mount verification remain one minute apart;
+completed placements stay at fifteen minutes and provider errors/missing placement
+checks retain five-minute delays. Submission spacing remains independent. This does not change
+Sonarr/Radarr's download-client polling, the controller's 15-second worker tick, or
+the dashboard's 10-second database refresh. Due times are scheduling targets; the
+worker's bounded capacity and provider response times can delay execution.

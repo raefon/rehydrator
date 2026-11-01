@@ -1,217 +1,56 @@
 # Configuration
 
-This file explains the main `rehydrator.yaml` sections. Start with `config/rehydrator.example.yaml`.
+Rehydrator uses the direct TorBox gateway for torrents and hosted NZBs. TorBox Pro
+is required for hosted NZBs; no NNTP provider credentials belong in Rehydrator.
 
-## Core
+Use these examples:
 
-```yaml
-postgres_url: "postgres://<USER>:<PASSWORD>@<POSTGRES_HOST>:5432/<DATABASE>?sslmode=disable"
-tenant: tenet-nofear101
-health_addr: ":8080"
-db_auto_migrate: true
-csi_path: /storage/media
-```
+- [Gateway](../config/rehydrator.gateway.example.yaml): provider credentials, download-client endpoints, dashboard and WebDAV. Mount only its configuration Secret.
+- [Controller](../config/rehydrator.controller.example.yaml): Arr/Seerr/Jellyfin integrations, CSI and shared media mounts. Uses the same database and tenant as the gateway.
+- [Combined](../config/rehydrator.example.yaml): local/testing deployments where mounting WebDAV does not depend on this process starting.
 
-`tenant` is stored on every row and should match the namespace/customer you are running.
-
-## Reconcile and safety limits
+Configure categories under `gateway` in both processes:
 
 ```yaml
-reconcile_interval_seconds: 30
-cache_grace_hours: 24
-max_retries: 10
-concurrent_workers: 2
-prune_enabled: true
-rearm_enabled: true
-max_prunes_per_run: 5
-max_rearms_per_run: 3
-provider_cooldown_seconds: 900
-```
-
-Keep these conservative for TorBox/WebDAV. Large bursts can cause rate limits or slow CSI-rclone visibility.
-
-## CSI visibility
-
-```yaml
-csi_wait_seconds: 900
-csi:
-  visibility_timeout_seconds: 900
-  visibility_poll_seconds: 10
-  visibility_retry_seconds: 60
-```
-
-After provider add, Rehydrator uses `WAITING_FOR_VISIBILITY` to retry provider readiness and visibility checks instead of re-adding the torrent.
-
-## Radarr
-
-```yaml
-radarr:
-  url: http://tenet-radarr.tenet-nofear101.svc.cluster.local:7878
-  api_key: "<RADARR_API_KEY>"
-
-radarr_sync:
+gateway:
   enabled: true
-  interval_seconds: 60
-```
-
-Radarr is the source of imported movie paths, TMDb IDs, and download history used to resolve infohash/magnet metadata.
-
-## Decypharr
-
-```yaml
-decypharr:
-  url: http://tenet-decypharr.tenet-nofear101.svc.cluster.local:8282
-  username: ""
-  password: ""
-  api_token: ""
   radarr_category: radarr
   sonarr_category: sonarr
-  delete_files_on_prune: false # Legacy option; local links are preserved.
+  active_poll_interval_seconds: 30
+  submit_interval_seconds: 120
 ```
 
-Use Decypharr for initial imports, rearm, and provider deletion. Supply the API token from Settings → Auth when authentication is enabled; qBittorrent username/password login alone does not authenticate the provider-deletion REST endpoint.
+The environment overrides are `GATEWAY_RADARR_CATEGORY`, `GATEWAY_SONARR_CATEGORY`,
+`GATEWAY_ACTIVE_POLL_INTERVAL_SECONDS`, and `GATEWAY_SUBMIT_INTERVAL_SECONDS`.
+See [.env.example](../.env.example) for the supported overrides. CLI `--role`
+overrides `REHYDRATOR_ROLE`, which overrides YAML. All configs are strict: unknown
+or removed YAML fields fail startup instead of being silently ignored.
 
-## Provider configuration
+## Upgrade from earlier configurations
 
-Configure TorBox and its API key inside Decypharr. Rehydrator does not require a
-TorBox API key and makes no direct TorBox calls. Both rearm and provider removal
-use Decypharr. See [Decypharr lifecycle](decypharr-rearm.md).
+Remove `decypharr`, `cloud_usenet`, `torbox_health`, `rearm_backend`, all prune
+settings, `rearm_short_circuit_if_csi_visible`, `csi_wait_seconds`, and
+`provider_cooldown_seconds`. Remove the corresponding environment variables too.
+Move category values from the removed Decypharr block to `gateway.radarr_category`
+and `gateway.sonarr_category`. Remove `jellyfin.refresh_after_prune`.
 
-## Seerr
+The old periodic filesystem/provider-health sweep is superseded by gateway
+placement polling and retained-source recovery. Under `file_health`, keep only
+`canary_path` if you use Jellyfin inventory's `mark_missing_in_arr` option. That
+same-mount read safeguard remains enforced before changing Arr file records.
 
-```yaml
-seerr:
-  url: http://tenet-seerr.tenet-nofear101.svc.cluster.local:5055
-  api_key: "<SEERR_API_KEY>"
-  sync:
-    enabled: true
-    interval_seconds: 300
-    limit: 100
-```
+The old `/sabnzbd-cloud/api`, `/cloud-usenet/dav/`, and `/api/prune/*` routes are
+removed. Use `/sabnzbd/api` for hosted NZBs, `/api/v2/` for torrents, and `/webdav/`
+for the shared catalog. Automatic provider pruning is not supported.
 
-Seerr provides request/watchlist intent and can create placeholder rows before Radarr import completes.
+This upgrade does not delete PostgreSQL records, retained source payloads,
+provider placements, or media links. Historical SQL migrations and table names
+remain for upgrade compatibility, and existing `cloud-nzb-…` job IDs stay stable.
+Old library links pointing to another WebDAV layout are not automatically migrated.
+Use a database backup and reconcile those paths deliberately.
 
-## Playback
+Apply schema through 034 before new binaries, or start the gateway with
+`db_auto_migrate: true` before upgrading the controller. No cleanup migration or
+manual table drop is necessary for this consolidation.
 
-```yaml
-playback:
-  enabled: true
-  rearm_on_play: true
-  cooldown_seconds: 60
-  ignored_titles: []
-  ignored_title_contains: []
-```
-
-Optional title exclusions apply to playback events before matching.
-
-## Jellyfin refresh and self-heal
-
-See [Jellyfin setup](jellyfin-setup.md) for playback webhooks and API credentials.
-
-```yaml
-jellyfin:
-  enabled: true
-  url: http://jellyfin:8096
-  api_key: "<JELLYFIN_API_KEY>"
-  refresh_after_rearm: true
-  refresh_after_visibility: true
-  refresh_after_import: true
-  refresh_after_prune: false
-  refresh_delay_seconds: 45
-  timeout_seconds: 20
-  max_refreshes_per_run: 5
-  refresh_dedupe_minutes: 10
-self_heal:
-  enabled: true
-  interval_seconds: 300
-  refresh_available: true
-  recent_hours: 24
-  max_refreshes_per_run: 5
-```
-
-Self-heal retries targeted Jellyfin notifications for recently restored media
-without a successful refresh audit. Dedupe uses Jellyfin's independent audit log.
-
-## Secrets
-
-Do not commit live values for:
-
-```text
-postgres_url
-radarr.api_key
-decypharr.api_token
-seerr.api_key
-api.token
-jellyfin.api_key
-```
-
-## Self-heal worker
-
-```yaml
-self_heal:
-  enabled: true
-  interval_seconds: 300
-  jellyfin_refresh_available: true
-  jellyfin_recent_hours: 24
-  max_jellyfin_refreshes_per_run: 5
-```
-
-The self-heal worker periodically queues targeted Jellyfin refreshes for recently rehydrated or recently played `AVAILABLE` movies that have not had a successful Jellyfin refresh since that event. In v0.3.4, Jellyfin refresh dedupe prevents `rehydration_complete` and `self_heal_available` from refreshing the same movie folder within the configured cooldown window.
-
-It does not scan the whole library, and it does not refresh after prune.
-
-## Sonarr / series support
-
-```yaml
-sonarr:
-  url: http://tenet-sonarr.tenet-nofear101.svc.cluster.local:8989
-  api_key: "<SONARR_API_KEY>"
-
-sonarr_sync:
-  enabled: true
-  interval_seconds: 60
-
-decypharr:
-  sonarr_category: sonarr
-
-jellyfin:
-  tv_section_id: 0
-```
-
-Environment equivalents:
-
-```text
-SONARR_URL=http://tenet-sonarr:8989
-SONARR_API_KEY=replace_me
-SONARR_SYNC_ENABLED=true
-SONARR_SYNC_INTERVAL_SECONDS=60
-DECYPHARR_SONARR_CATEGORY=sonarr
-JELLYFIN_TV_SECTION_ID=0
-```
-
-## Jellyfin
-
-Optional Jellyfin settings and environment overrides are documented in
-[Jellyfin setup](jellyfin-setup.md). Enable `jellyfin.enabled` and supply
-`jellyfin.url` and `jellyfin.api_key` to use automatic library notifications.
-
-## Rearm and saved torrent sources
-
-```yaml
-rearm_backend: decypharr
-```
-
-`REARM_BACKEND=decypharr` is the supported backend. Native TorBox is not selected.
-Apply migrations `020_saved_torrent_sources.sql`, `021_grab_source_capture.sql`,
-`022_explicit_torrent_source_kinds.sql`, and `023_jellyfin_refresh_audit.sql`,
-or enable `db_auto_migrate`. Enable On Grab and On Import in Arr webhook connections.
-Sources are explicitly `torrent_file` or `magnet` with exactly one payload.
-Hashes are identity only; missing/ambiguous sources require recovery from Arr
-history or a new source capture, never automatic hash-to-magnet conversion. See [Decypharr setup](decypharr-rearm.md).
-
-## Periodic file health (v0.6.1)
-
-`file_health` controls rolling readability checks and bounded automatic recovery
-of unexpectedly unreadable AVAILABLE media. See [file-health recovery](file-health.md)
-for defaults, outage protection, canary configuration, and the distinction between
-TorBox inactivity retention and Rehydrator's local prune policy.
+For native Authentik OIDC and ForwardAuth, see [dashboard setup](../web/README.md).

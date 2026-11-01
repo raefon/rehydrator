@@ -3,18 +3,16 @@ role: controller
 tenant: tenet-nofear101
 postgres_url: "" # POSTGRES_URL; same database/tenant as its gateway
 health_addr: ":8080"
-db_auto_migrate: false # Gateway/migration job must apply schema through 033 first.
+db_auto_migrate: false # Gateway/migration job must apply schema through 034 first.
 csi_path: /storage/media
-prune_enabled: false
 rearm_enabled: true
-rearm_backend: torbox
 api:
   enabled: true
   require_token: true
   token: "" # API_TOKEN for Arr/Seerr/Jellyfin webhooks and controller APIs
-cloud_usenet:
-  enabled: false
 gateway:
+  radarr_category: radarr
+  sonarr_category: sonarr
   enabled: true
   # No TorBox, qBittorrent, SAB or DAV credentials needed by this role.
   mount_path: /storage/torbox

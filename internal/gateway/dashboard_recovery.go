@@ -24,7 +24,7 @@ type recoveryDetail struct {
 	Database       db.GatewayDiagnostics `json:"database"`
 }
 
-func (s *Service) recoveryReason(ctx context.Context, j db.CloudNZBJob) (bool, bool, string) {
+func (s *Service) recoveryReason(ctx context.Context, j db.GatewayJob) (bool, bool, string) {
 	_, err := s.Source(ctx, j.ID)
 	retained := err == nil
 	if !retained {

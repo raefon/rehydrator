@@ -11,12 +11,10 @@ import (
 	"time"
 
 	"github.com/raefon/rehydrator/internal/arr"
-	"github.com/raefon/rehydrator/internal/cloudusenet"
 	"github.com/raefon/rehydrator/internal/config"
 	"github.com/raefon/rehydrator/internal/controller"
 	"github.com/raefon/rehydrator/internal/csi"
 	"github.com/raefon/rehydrator/internal/db"
-	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/gateway"
 	"github.com/raefon/rehydrator/internal/health"
 	"github.com/raefon/rehydrator/internal/jellyfin"
@@ -31,7 +29,7 @@ import (
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.7.9"
+var version = "0.8.0"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
@@ -83,7 +81,6 @@ func main() {
 
 	radarrClient := arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey)
 	sonarrClient := arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey)
-	decypharrClient := decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword, cfg.DecypharrAPIToken)
 	seerrClient := seerr.NewClient(cfg.SeerrURL, cfg.SeerrAPIKey)
 	var rcloneClient *rclone.Client
 	if cfg.RcloneRCEnabled {
@@ -94,22 +91,18 @@ func main() {
 		jellyfinClient = jellyfin.NewClient(cfg.Jellyfin.URL, cfg.Jellyfin.APIKey, time.Duration(cfg.Jellyfin.TimeoutSeconds)*time.Second, cfg.Jellyfin.RefreshMode)
 	}
 
-	var torboxHealth *torbox.HealthClient
-	if cfg.TorBoxHealth.Enabled && cfg.Role != config.RoleController {
-		torboxHealth = torbox.NewHealthClient(cfg.TorBoxHealth.APIKey)
-	}
-	var cloud *cloudusenet.Service
-	var cloudSAB, cloudDAV, gatewayQB, gatewaySAB, gatewayDAV, gatewayDashboard http.HandlerFunc
+	var cloud *gateway.Service
+	var gatewayQB, gatewaySAB, gatewayDAV, gatewayDashboard http.HandlerFunc
 	var gatewayUI http.Handler
 	if cfg.Gateway.Enabled {
 		gatewayConfig := cfg.Gateway
 		gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
 		if cfg.Role == config.RoleController {
-			cloud = gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, nil, nil, cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
+			cloud = gateway.New(gatewayConfig, cfg.Tenant, repo, nil, nil, cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory)
 			cloud.SetRole(config.RoleController)
 			go cloud.RunMountWorker(ctx)
 		} else {
-			cloud = gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
+			cloud = gateway.New(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory)
 			gatewayQB = cloud.QBittorrent
 			gatewaySAB = cloud.SAB
 			gatewayDAV = cloud.DAV
@@ -123,36 +116,22 @@ func main() {
 			go cloud.Run(ctx)
 		}
 	}
-	if cfg.CloudUsenet.Enabled {
-		cloudConfig := cfg.CloudUsenet
-		cloudConfig.RecoverMissing = cloudConfig.RecoverMissing && cfg.RearmEnabled
-		cloud = cloudusenet.New(cloudConfig, cfg.Tenant, repo, torbox.NewUsenetClient(cfg.CloudUsenet.APIKey), cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
-		cloudSAB = cloud.SAB
-		cloudDAV = cloud.DAV
-		go cloud.Run(ctx)
-	}
+
 	ctrl := controller.New(controller.Options{
-		CloudUsenet:  cloud,
-		TorBoxHealth: cfg.TorBoxHealth, TorBoxHealthClient: torboxHealth,
+		Gateway:                    cloud,
 		FileHealth:                 cfg.FileHealth,
 		Tenant:                     cfg.Tenant,
 		Repo:                       repo,
 		Radarr:                     radarrClient,
 		Sonarr:                     sonarrClient,
-		Decypharr:                  decypharrClient,
 		CSI:                        csi.NewChecker(cfg.CSIPath),
 		Rclone:                     rcloneClient,
 		Jellyfin:                   jellyfinClient,
 		JellyfinConfig:             cfg.Jellyfin,
-		RadarrCategory:             cfg.DecypharrRadarrCategory,
-		SonarrCategory:             cfg.DecypharrSonarrCategory,
-		DeleteFilesOnPrune:         cfg.DecypharrDeleteFilesOnPrune,
-		PruneEnabled:               cfg.PruneEnabled,
+		RadarrCategory:             cfg.Gateway.RadarrCategory,
+		SonarrCategory:             cfg.Gateway.SonarrCategory,
 		RearmEnabled:               cfg.RearmEnabled,
-		MaxPrunesPerRun:            cfg.MaxPrunesPerRun,
 		MaxRearmsPerRun:            cfg.MaxRearmsPerRun,
-		PruneWaitForCSIGone:        cfg.PruneWaitForCSIGone,
-		RearmShortCircuitIfVisible: cfg.RearmShortCircuitIfCSIVisible,
 		RcloneRefreshAfterRearm:    cfg.RcloneRCRefreshAfterRearm,
 		SelfHealEnabled:            cfg.SelfHealEnabled,
 		SelfHealInterval:           cfg.SelfHealInterval,
@@ -160,11 +139,9 @@ func main() {
 		SelfHealRecentHours:        cfg.SelfHealRecentHours,
 		SelfHealMaxRefreshesPerRun: cfg.SelfHealMaxRefreshesPerRun,
 		Interval:                   cfg.ReconcileInterval,
-		CSIWait:                    cfg.CSIWait,
 		CSIVisibilityTimeout:       cfg.CSIVisibilityTimeout,
 		CSIVisibilityPoll:          cfg.CSIVisibilityPoll,
 		CSIVisibilityRetry:         cfg.CSIVisibilityRetry,
-		ProviderCooldown:           cfg.ProviderCooldown,
 		CacheGrace:                 cfg.CacheGrace,
 		MaxRetries:                 cfg.MaxRetries,
 		ConcurrentWorkers:          cfg.ConcurrentWorkers,
@@ -177,33 +154,14 @@ func main() {
 		"interval", cfg.ReconcileInterval.String(),
 		"cache_grace", cfg.CacheGrace.String(),
 		"csi_path", cfg.CSIPath,
-		"decypharr_url", cfg.DecypharrURL,
-		"radarr_category", cfg.DecypharrRadarrCategory,
-		"sonarr_category", cfg.DecypharrSonarrCategory,
-		"delete_path", func() string {
-			if cfg.Gateway.Enabled {
-				return "disabled"
-			}
-			return "decypharr"
-		}(),
-		"rearm_backend", func() string {
-			if cfg.Gateway.Enabled {
-				return "torbox_gateway"
-			}
-			return "decypharr"
-		}(),
-		"cloud_usenet_enabled", cfg.CloudUsenet.Enabled,
-		"gateway_enabled", cfg.Gateway.Enabled,
-		"prune_enabled", cfg.PruneEnabled,
+		"radarr_category", cfg.Gateway.RadarrCategory,
+		"sonarr_category", cfg.Gateway.SonarrCategory,
+		"rearm_backend", "torbox_gateway",
 		"rearm_enabled", cfg.RearmEnabled,
-		"max_prunes_per_run", cfg.MaxPrunesPerRun,
 		"max_rearms_per_run", cfg.MaxRearmsPerRun,
-		"prune_wait_for_csi_gone", cfg.PruneWaitForCSIGone,
-		"rearm_short_circuit_if_csi_visible", cfg.RearmShortCircuitIfCSIVisible,
 		"csi_visibility_timeout", cfg.CSIVisibilityTimeout.String(),
 		"csi_visibility_poll", cfg.CSIVisibilityPoll.String(),
 		"csi_visibility_retry", cfg.CSIVisibilityRetry.String(),
-		"provider_cooldown", cfg.ProviderCooldown.String(),
 		"rclone_rc_enabled", cfg.RcloneRCEnabled,
 		"rclone_rc_refresh_after_rearm", cfg.RcloneRCRefreshAfterRearm,
 		"jellyfin_enabled", cfg.Jellyfin.Enabled,
@@ -244,14 +202,12 @@ func main() {
 	if cfg.RadarrSyncEnabled {
 		radarrSyncer = syncer.NewRadarr(syncer.RadarrOptions{
 			SourceLookup: sourceLookup,
-			Decypharr:    decypharrClient,
 			Repo:         repo,
 			Radarr:       radarrClient,
 			Tenant:       cfg.Tenant,
-			Category:     cfg.DecypharrRadarrCategory,
+			Category:     cfg.Gateway.RadarrCategory,
 			Interval:     cfg.RadarrSyncInterval,
 			CacheGrace:   cfg.CacheGrace,
-			OnObserved:   ctrl.ReconcileImportedRecovery,
 			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
 				ctrl.ScheduleInitialImportJellyfinRefresh(ctx, item, "radarr_"+reason)
 			},
@@ -261,14 +217,12 @@ func main() {
 	if cfg.SonarrSyncEnabled {
 		sonarrSyncer = syncer.NewSonarr(syncer.SonarrOptions{
 			SourceLookup: sourceLookup,
-			Decypharr:    decypharrClient,
 			Repo:         repo,
 			Sonarr:       sonarrClient,
 			Tenant:       cfg.Tenant,
-			Category:     cfg.DecypharrSonarrCategory,
+			Category:     cfg.Gateway.SonarrCategory,
 			Interval:     cfg.SonarrSyncInterval,
 			CacheGrace:   cfg.CacheGrace,
-			OnObserved:   ctrl.ReconcileImportedRecovery,
 			OnImported: func(syncCtx context.Context, item model.MediaCacheState, reason string) {
 				ctrl.ScheduleInitialImportJellyfinRefresh(ctx, item, "sonarr_"+reason)
 			},
@@ -348,9 +302,7 @@ func main() {
 	if sonarrClient != nil && sonarrClient.Configured() {
 		dependencyChecks["sonarr"] = sonarrClient.Ping
 	}
-	if !cfg.Gateway.Enabled && decypharrClient != nil && decypharrClient.Configured() {
-		dependencyChecks["decypharr"] = decypharrClient.Ping
-	}
+
 	if seerrClient != nil && seerrClient.Configured() {
 		dependencyChecks["seerr"] = func(ctx context.Context) error { _, err := seerrClient.Requests(ctx, 1); return err }
 	}
@@ -362,7 +314,7 @@ func main() {
 	var healthServer *health.Server
 	if cfg.APIEnabled {
 		healthServer = health.NewAPIServer(health.APIOptions{
-			CloudSAB: cloudSAB, CloudDAV: cloudDAV, GatewayQB: gatewayQB, GatewaySAB: gatewaySAB, GatewayDAV: gatewayDAV, GatewayDashboard: gatewayDashboard, GatewayUI: gatewayUI,
+			GatewayQB: gatewayQB, GatewaySAB: gatewaySAB, GatewayDAV: gatewayDAV, GatewayDashboard: gatewayDashboard, GatewayUI: gatewayUI,
 			Readiness: func(ctx context.Context) error {
 				if cfg.Gateway.Enabled {
 					return repo.GatewayCatalogReady(ctx, cfg.Tenant)
@@ -423,7 +375,7 @@ func main() {
 func runGateway(ctx context.Context, cfg config.Config, repo *db.Repo) {
 	gatewayConfig := cfg.Gateway
 	gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
-	service := gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
+	service := gateway.New(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory)
 	service.SetRole(config.RoleGateway)
 	ui, err := service.ConfigureDashboard(ctx, cfg.Gateway.OIDC, webui.Handler())
 	if err != nil {

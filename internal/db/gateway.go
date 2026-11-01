@@ -10,14 +10,14 @@ import (
 )
 
 // AddGatewaySource commits the original submission before acknowledging a client.
-func (r *Repo) AddGatewaySource(ctx context.Context, tenant, category string, source model.TorrentMetadata) (CloudNZBJob, error) {
+func (r *Repo) AddGatewaySource(ctx context.Context, tenant, category string, source model.TorrentMetadata) (GatewayJob, error) {
 	s, err := source.ValidateSource()
 	if err != nil {
-		return CloudNZBJob{}, err
+		return GatewayJob{}, err
 	}
 	if s.Kind == model.SourceTorrentFile {
 		if err = model.ValidateGatewayTorrent(s.TorrentFile); err != nil {
-			return CloudNZBJob{}, err
+			return GatewayJob{}, err
 		}
 	}
 	payload := s.NZBFile
@@ -33,13 +33,13 @@ func (r *Repo) AddGatewaySource(ctx context.Context, tenant, category string, so
 	fingerprint := hex.EncodeToString(digest[:])
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return CloudNZBJob{}, err
+		return GatewayJob{}, err
 	}
 	defer tx.Rollback(ctx)
 	var sid string
 	err = tx.QueryRow(ctx, `INSERT INTO gateway_sources(tenant,protocol,kind,fingerprint,filename,payload,magnet,infohash) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(tenant,protocol,fingerprint) DO UPDATE SET fingerprint=EXCLUDED.fingerprint RETURNING id`, tenant, s.Protocol, string(s.Kind), fingerprint, filename, payload, s.Magnet, s.InfoHash).Scan(&sid)
 	if err != nil {
-		return CloudNZBJob{}, err
+		return GatewayJob{}, err
 	}
 	nzb := s.NZBFile
 	if nzb == nil {
@@ -52,15 +52,15 @@ func (r *Repo) AddGatewaySource(ctx context.Context, tenant, category string, so
 		err = tx.QueryRow(ctx, `INSERT INTO gateway_jobs(tenant,category,fingerprint,filename,nzb,name,source_id) VALUES($1,$2,$3,$4,$5,$4,$6) ON CONFLICT(tenant,category,fingerprint) DO UPDATE SET hidden=false,cleanup_requested=false RETURNING id`, tenant, category, fingerprint, filename, nzb, sid).Scan(&id)
 	}
 	if err != nil {
-		return CloudNZBJob{}, err
+		return GatewayJob{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return CloudNZBJob{}, err
+		return GatewayJob{}, err
 	}
-	return r.CloudNZB(ctx, tenant, id)
+	return r.GatewayJobByID(ctx, tenant, id)
 }
-func (r *Repo) GatewayJob(ctx context.Context, tenant, id string) (CloudNZBJob, error) {
-	return scanCloud(r.pool.QueryRow(ctx, "SELECT "+cloudColumns+" FROM gateway_jobs WHERE tenant=$1 AND (id=$2 OR (protocol='torrent' AND infohash=lower($2)))", tenant, id))
+func (r *Repo) GatewayJob(ctx context.Context, tenant, id string) (GatewayJob, error) {
+	return scanGatewayJob(r.pool.QueryRow(ctx, "SELECT "+gatewayColumns+" FROM gateway_jobs WHERE tenant=$1 AND (id=$2 OR (protocol='torrent' AND infohash=lower($2)))", tenant, id))
 }
 func (r *Repo) GatewayCategory(ctx context.Context, tenant, hash, category string) error {
 	tag, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET category=$3 WHERE tenant=$1 AND infohash=$2 AND (category=$3 OR (state='Queued' AND attempts=0))`, tenant, hash, category)
@@ -100,13 +100,13 @@ func (r *Repo) DeferGatewaySubmission(ctx context.Context, tenant, id, reason st
 
 // Unknown outcomes are observation-only. Claiming never resets the submission
 // budget or authorizes a second upload.
-func (r *Repo) ClaimUnknownGatewayTorrent(ctx context.Context, tenant string) (CloudNZBJob, bool, error) {
+func (r *Repo) ClaimUnknownGatewayTorrent(ctx context.Context, tenant string) (GatewayJob, bool, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return CloudNZBJob{}, false, err
+		return GatewayJob{}, false, err
 	}
 	defer tx.Rollback(ctx)
-	j, err := scanCloud(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND protocol='torrent' AND state='SubmissionUnknown' AND provider_id=0 AND next_check_at<=now() ORDER BY next_check_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
+	j, err := scanGatewayJob(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND protocol='torrent' AND state='SubmissionUnknown' AND provider_id=0 AND next_check_at<=now() ORDER BY next_check_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
 	if err == pgx.ErrNoRows {
 		return j, false, tx.Commit(ctx)
 	}
@@ -118,7 +118,7 @@ func (r *Repo) ClaimUnknownGatewayTorrent(ctx context.Context, tenant string) (C
 	}
 	return j, true, tx.Commit(ctx)
 }
-func (r *Repo) ResolveUnknownGatewayTorrent(ctx context.Context, tenant string, j CloudNZBJob, id int64) (bool, error) {
+func (r *Repo) ResolveUnknownGatewayTorrent(ctx context.Context, tenant string, j GatewayJob, id int64) (bool, error) {
 	if id <= 0 {
 		return false, fmt.Errorf("active torrent ID required")
 	}

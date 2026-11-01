@@ -1,11 +1,13 @@
-# Rehydrator config
+# Configuration examples
 
-Canonical config file for the deployment is `rehydrator.yaml`.
+- `rehydrator.gateway.example.yaml`: provider gateway; Secret mount only.
+- `rehydrator.controller.example.yaml`: library controller; CSI and shared media mounts.
+- `rehydrator.example.yaml`: combined local/testing configuration.
+- `torbox-gateway-rclone.example.conf`: shared CSI-rclone WebDAV remote.
 
-This ZIP includes:
+Examples contain placeholders, not live credentials. Supply secrets through your
+Secret/config renderer or environment overrides. Gateway and controller must use
+the same tenant, database, categories, and logical paths.
 
-- `rehydrator.yaml` at the repository root
-- `config/rehydrator.yaml` for mounting to `/config/rehydrator.yaml`
-- `.yml` copies for compatibility
-
-The file contains live credentials from the provided test config. Do not commit this ZIP to a public repository.
+See [configuration and upgrades](../docs/configuration.md). Do not mount the CSI
+volume into the gateway: its WebDAV endpoint must start before consumers can mount.

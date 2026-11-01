@@ -2,7 +2,7 @@
 
 Jellyfin is Rehydrator's media-server integration for playback, targeted refreshes,
 manual library scans, dependency checks, refresh metrics, and periodic self-heal.
-Decypharr owns torrent rearming; see [rearm setup](decypharr-rearm.md).
+The TorBox gateway owns provider recovery; see [gateway setup](torbox-gateway-setup.md).
 
 ## Configuration
 
@@ -16,7 +16,6 @@ jellyfin:
   refresh_after_rearm: true
   refresh_after_visibility: true
   refresh_after_import: true
-  refresh_after_prune: false
   refresh_delay_seconds: 45
   timeout_seconds: 20
   max_refreshes_per_run: 5

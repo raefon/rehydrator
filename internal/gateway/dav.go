@@ -90,26 +90,24 @@ func (s *Service) DAV(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid path", 400)
 		return
 	}
-	jobs, err := s.repo.CloudNZBs(r.Context(), s.tenant)
+	jobs, err := s.repo.GatewayJobs(r.Context(), s.tenant)
 	if err != nil {
 		http.Error(w, "catalog unavailable", 503)
 		return
 	}
 	entries := map[string]davEntry{"": {directory: true}, "jobs": {name: "jobs", directory: true}}
-	if s.direct {
+	{
 		delete(entries, "jobs")
 		entries["torrents"] = davEntry{name: "torrents", directory: true}
 		entries["usenet"] = davEntry{name: "usenet", directory: true}
 	}
 	for _, job := range jobs {
-		if !s.direct && job.Protocol == "torrent" {
-			continue
-		}
+
 		if len(job.Files) == 0 {
 			continue
 		}
 		base := s.catalogPath(job)
-		if s.direct {
+		{
 			root := strings.Split(base, "/")[0]
 			entries[root] = davEntry{name: root, directory: true}
 			delete(entries, "jobs")

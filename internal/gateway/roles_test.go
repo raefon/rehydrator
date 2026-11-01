@@ -12,7 +12,6 @@ import (
 
 func TestGatewayPublishesWithoutMountAndControllerCompletes(t *testing.T) {
 	s, p, conn := testService(t)
-	s.direct = true
 	s.SetRole(config.RoleGateway)
 	ctx := context.Background()
 	j := addTestJob(t, s)
@@ -48,8 +47,8 @@ func TestGatewayPublishesWithoutMountAndControllerCompletes(t *testing.T) {
 	if w.Code != 207 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	cfg := config.GatewayConfig{CloudUsenetConfig: s.cfg}
-	controller := NewDirect(cfg, s.tenant, s.repo, nil, nil, "sonarr", "radarr")
+	cfg := config.GatewayConfig{GatewayStorageConfig: s.cfg}
+	controller := New(cfg, s.tenant, s.repo, nil, nil, "sonarr", "radarr")
 	controller.SetRole(config.RoleController)
 	if err = controller.ReconcileMount(ctx); err != nil {
 		t.Fatal(err)
@@ -80,7 +79,7 @@ func TestGatewayPublishesWithoutMountAndControllerCompletes(t *testing.T) {
 	// A late provider poll from the prior Mounting snapshot cannot undo completion.
 	stale := current
 	stale.State = "Mounting"
-	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, stale, 0); err != nil {
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, stale, 0); err != nil {
 		t.Fatal(err)
 	}
 	current, _ = s.repo.GatewayJob(ctx, s.tenant, j.ID)
@@ -113,7 +112,7 @@ func TestStaleMountVerificationCannotCompleteReplacement(t *testing.T) {
 	j := addTestJob(t, s)
 	j.State = "Mounting"
 	j.ProviderID = 123
-	if err := s.repo.UpdateCloudNZB(ctx, s.tenant, j, 0); err != nil {
+	if err := s.repo.UpdateGatewayJob(ctx, s.tenant, j, 0); err != nil {
 		t.Fatal(err)
 	}
 	old, ok, err := s.repo.ClaimGatewayMount(ctx, s.tenant)
@@ -125,7 +124,7 @@ func TestStaleMountVerificationCannotCompleteReplacement(t *testing.T) {
 	}
 	replacement := old
 	replacement.ProviderID = 456
-	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, replacement, 0); err != nil {
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, replacement, 0); err != nil {
 		t.Fatal(err)
 	}
 	if completed, err := s.repo.FinishGatewayMount(ctx, s.tenant, old, ""); err != nil || completed {
@@ -149,7 +148,6 @@ func (p *observingTorrent) FindActive(ctx context.Context, hash string) (int64, 
 }
 func TestUnknownTorrentAdoptsOnlyExistingPlacementWithoutResubmission(t *testing.T) {
 	s, p, conn := testService(t)
-	s.direct = true
 	lookup := &observingTorrent{fakeTorrent: &fakeTorrent{fakeProvider: p}}
 	s.torrent = lookup
 	ctx := context.Background()
@@ -159,7 +157,7 @@ func TestUnknownTorrentAdoptsOnlyExistingPlacementWithoutResubmission(t *testing
 	}
 	j.State = "SubmissionUnknown"
 	j.LastError = "add outcome unknown"
-	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, j, 0); err != nil {
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, j, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Reconcile(ctx); err != nil {

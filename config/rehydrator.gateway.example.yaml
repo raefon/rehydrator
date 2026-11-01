@@ -5,14 +5,12 @@ tenant: tenet-nofear101
 postgres_url: "" # POSTGRES_URL; same database/tenant as the controller
 health_addr: ":8080"
 db_auto_migrate: true # Start gateway/apply schema before controller rollout.
-prune_enabled: false
 rearm_enabled: true
-rearm_backend: torbox
 api:
   enabled: true
-cloud_usenet:
-  enabled: false
 gateway:
+  radarr_category: radarr
+  sonarr_category: sonarr
   dashboard_external_auth: false # Mutually exclusive with native OIDC.
   oidc:
     enabled: false
@@ -32,4 +30,5 @@ gateway:
   mount_path: /storage/torbox
   download_path: /storage/media/downloads/rehydrator
   submit_interval_seconds: 120
+  active_poll_interval_seconds: 30 # Active TorBox status checks; 15–3600 seconds.
   recover_missing: true

@@ -10,7 +10,6 @@ func TestSplitRoleConfiguration(t *testing.T) {
 	cfg := defaults()
 	cfg.Role = RoleGateway
 	cfg.Gateway.Enabled = true
-	cfg.PruneEnabled = false
 	cfg.PostgresURL = "postgres://example"
 	cfg.Tenant = "tenant"
 	cfg.Gateway.APIKey = "provider"
@@ -30,8 +29,6 @@ func TestSplitRoleConfiguration(t *testing.T) {
 	cfg.RadarrAPIKey = "arr"
 	cfg.CSIPath = "/storage/media"
 	cfg.APIToken = "admin"
-	cfg.TorBoxHealth.Enabled = true // Legacy provider health is not run by the direct controller.
-	cfg.TorBoxHealth.APIKey = ""
 	cfg.Gateway.APIKey = ""
 	cfg.Gateway.QBPassword = ""
 	cfg.Gateway.SABAPIKey = ""
@@ -50,7 +47,7 @@ func TestSplitRoleConfiguration(t *testing.T) {
 }
 func TestCommandLineRoleOverridesFileAndEnvironment(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.yaml")
-	err := os.WriteFile(file, []byte("role: controller\npostgres_url: postgres://example\ntenant: tenant\nprune_enabled: false\ngateway:\n  enabled: true\n  api_key: provider\n  qb_username: arr\n  qb_password: secret\n  sab_api_key: sab\n  dav_username: dav\n  dav_password: secret\n"), 0600)
+	err := os.WriteFile(file, []byte("role: controller\npostgres_url: postgres://example\ntenant: tenant\ngateway:\n  enabled: true\n  api_key: provider\n  qb_username: arr\n  qb_password: secret\n  sab_api_key: sab\n  dav_username: dav\n  dav_password: secret\n"), 0600)
 	if err != nil {
 		t.Fatal(err)
 	}

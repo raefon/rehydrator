@@ -1,10 +1,10 @@
 # Rehydrator example config
 # Copy to /config/rehydrator.yaml and fill secrets from Kubernetes Secrets or your deployment tooling.
 
-postgres_url: "postgres://<USER>:<PASSWORD>@<POSTGRES_HOST>:5432/<DATABASE>?sslmode=disable"
+postgres_url: "" # POSTGRES_URL
 tenant: tenet-nofear101
 
-# combined preserves legacy deployments. CSI deployments use separate gateway/controller pods.
+# Combined runs both roles for local setups. CSI uses separate gateway/controller pods.
 # See rehydrator.gateway.example.yaml and rehydrator.controller.example.yaml.
 role: combined
 
@@ -15,29 +15,18 @@ csi_path: /storage/media
 
 # Main reconcile loop
 reconcile_interval_seconds: 30
-cache_grace_hours: 24 # Local pruning policy, not TorBox retention.
+cache_grace_hours: 24 # Informational local availability window; does not delete provider files.
 max_retries: 10
 concurrent_workers: 2
 
-# Legacy mode: Decypharr owns rearm/provider deletion.
-# Direct TorBox mode: set rearm_backend: torbox, gateway.enabled: true and prune_enabled: false.
-rearm_backend: decypharr
-
-# Re-arm / prune safety limits
-prune_enabled: true
+# Library rearm limits
 rearm_enabled: true
-max_prunes_per_run: 5
 max_rearms_per_run: 3
-
-# Provider deletion runs asynchronously through Decypharr. CSI/rclone may show stale paths.
-prune_wait_for_csi_gone: false
 
 # Archived content must be restored even if CSI still shows a stale path.
 # Keep false to avoid treating stale mount entries as restored media.
-rearm_short_circuit_if_csi_visible: false
 
 # Compatibility alias. Keep aligned with csi.visibility_timeout_seconds.
-csi_wait_seconds: 900
 
 radarr:
   url: http://tenet-radarr.tenet-nofear101.svc.cluster.local:7878
@@ -54,15 +43,6 @@ sonarr:
 sonarr_sync:
   enabled: false
   interval_seconds: 60
-
-decypharr:
-  url: http://tenet-decypharr.tenet-nofear101.svc.cluster.local:8282
-  username: ""
-  password: ""
-  api_token: "" # Decypharr Settings > Auth; required for authenticated provider pruning
-  radarr_category: radarr
-  sonarr_category: sonarr
-  delete_files_on_prune: false # Legacy setting; prune always preserves local links.
 
 seerr:
   url: http://tenet-seerr.tenet-nofear101.svc.cluster.local:5055
@@ -92,8 +72,6 @@ csi:
   visibility_poll_seconds: 10
   visibility_retry_seconds: 60
 
-provider_cooldown_seconds: 900
-
 rclone_rc:
   enabled: false
   url: http://localhost:5572
@@ -117,7 +95,6 @@ jellyfin:
   refresh_after_rearm: true
   refresh_after_visibility: true
   refresh_after_import: true
-  refresh_after_prune: false
   refresh_delay_seconds: 45
   timeout_seconds: 20
   max_refreshes_per_run: 5
@@ -133,38 +110,13 @@ self_heal:
 # Torrent-only cache loss recovery; NZB/Usenet files are excluded.
 # Intentionally ARCHIVED items stay archived.
 file_health:
-  recover_archived: false # Opt-in: current Arr torrent imports with saved sources; requires pruning disabled and TorBox health enabled.
-  enabled: true
-  interval_seconds: 300
-  batch_size: 20
-  failure_threshold: 3
-  max_rearms_per_run: 2
-  probe_timeout_seconds: 5
-  outage_failure_percent: 50
-  canary_path: "" # Optional known-readable file on the same remote mount.
+  canary_path: "" # Same-mount readable file, only for opt-in Arr missing-file updates.
 
-# Separate TorBox Pro hosted-NZB backend. Existing NNTP/torrent routes stay in Decypharr.
-cloud_usenet:
-  enabled: false
-  api_key: "" # CLOUD_USENET_API_KEY: TorBox API key, not NNTP credentials.
-  sab_api_key: "" # CLOUD_USENET_SAB_API_KEY: separate key for the Arr client.
-  dav_username: "" # CLOUD_USENET_DAV_USERNAME
-  dav_password: "" # CLOUD_USENET_DAV_PASSWORD
-  mount_path: /storage/torbox-cloud
-  download_path: /storage/media/downloads/torbox-usenet
-  submit_interval_seconds: 120 # Shared tenant gate; at least 60 seconds.
-  recover_missing: true # Also requires rearm_enabled.
-
-torbox_health:
-  enabled: false # Opt-in read-only account checks; requires the same TorBox account as Decypharr.
-  api_key: "" # Prefer TORBOX_HEALTH_API_KEY from a Secret.
-  interval_seconds: 900
-  timeout_seconds: 20
-
-# Direct v0.7.0 playground; see docs/torbox-gateway-setup.md.
-# Requires prune_enabled: false, API enabled, and cloud_usenet.enabled: false.
+# Direct TorBox gateway. For CSI use the separate gateway/controller examples.
 gateway:
-  enabled: false
+  enabled: true
+  radarr_category: radarr
+  sonarr_category: sonarr
   api_key: ""
   qb_username: arr
   qb_password: ""
@@ -174,4 +126,5 @@ gateway:
   mount_path: /storage/torbox
   download_path: /storage/media/downloads/rehydrator
   submit_interval_seconds: 120
+  active_poll_interval_seconds: 30 # Active TorBox status checks; 15–3600 seconds.
   recover_missing: true

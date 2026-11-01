@@ -2,21 +2,17 @@ package syncer
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/raefon/rehydrator/internal/arr"
 	"github.com/raefon/rehydrator/internal/db"
-	"github.com/raefon/rehydrator/internal/decypharr"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
 type SonarrSyncer struct {
 	sourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
-	decypharr    *decypharr.Client
 	repo         *db.Repo
 	sonarr       *arr.Client
 	tenant       string
@@ -36,7 +32,6 @@ type SonarrSyncer struct {
 
 type SonarrOptions struct {
 	SourceLookup func(context.Context, model.MediaCacheState) (model.TorrentMetadata, error)
-	Decypharr    *decypharr.Client
 	Repo         *db.Repo
 	Sonarr       *arr.Client
 	Tenant       string
@@ -63,7 +58,6 @@ func NewSonarr(opt SonarrOptions) *SonarrSyncer {
 	}
 	return &SonarrSyncer{
 		sourceLookup: opt.SourceLookup,
-		decypharr:    opt.Decypharr,
 		repo:         opt.Repo,
 		sonarr:       opt.Sonarr,
 		tenant:       opt.Tenant,
@@ -245,41 +239,7 @@ func (s *SonarrSyncer) syncOnceUnlocked(ctx context.Context, source string) erro
 				}
 				continue
 			}
-			if item.SourceProtocol != model.ProtocolUsenet && (item.InfoHash == nil || *item.InfoHash == "") {
-				torrent, err := s.sonarr.LatestGrabbedTorrentForState(ctx, item)
-				if err != nil {
-					slog.Debug("sonarr seed sync could not resolve torrent metadata", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "episode_title", episodeTitle, "error", err)
-					continue
-				}
-				if s.decypharr != nil {
-					prepared, err := s.decypharr.PrepareTorrent(ctx, torrent)
-					if err != nil {
-						slog.Warn("could not preserve original torrent source; metadata capture will retry", "error", err)
-						continue
-					}
-					torrent = prepared
-				}
-				if err := s.repo.SaveTorrentMetadata(ctx, item.ID, torrent, s.category); err != nil {
-					slog.Warn("sonarr seed sync failed to save torrent metadata", "source", source, "series_id", show.ID, "episode_file_id", episodeFile.ID, "series_title", show.Title, "error", err)
-					continue
-				}
-				payload, _ := json.Marshal(map[string]string{
-					"arr":             "sonarr",
-					"series_title":    show.Title,
-					"episode_title":   episodeTitle,
-					"series_id":       fmt.Sprintf("%d", show.ID),
-					"episode_id":      fmt.Sprintf("%d", episodeID),
-					"episode_file_id": fmt.Sprintf("%d", episodeFile.ID),
-					"season_number":   fmt.Sprintf("%d", seasonNumber),
-					"episode_number":  fmt.Sprintf("%d", episodeNumber),
-					"tvdb_id":         fmt.Sprintf("%d", show.TVDBID),
-					"infohash":        torrent.InfoHash,
-					"source_title":    torrent.SourceTitle,
-					"category":        s.category,
-				})
-				_ = s.repo.Event(ctx, item.ID, "sonarr_seed_metadata_resolved", string(payload))
-				metadataResolved++
-			}
+
 		}
 	}
 

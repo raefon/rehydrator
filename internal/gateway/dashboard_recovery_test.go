@@ -12,7 +12,6 @@ import (
 
 func TestRecoveryLookupCheckAndGuardedRearm(t *testing.T) {
 	s, p, conn := testService(t)
-	s.direct = true
 	s.dashboardExternalAuth = true
 	s.cfg.RecoverMissing = true
 	ctx := context.Background()
@@ -98,7 +97,6 @@ func TestRecoveryLookupCheckAndGuardedRearm(t *testing.T) {
 }
 func TestRecoveryTorrentHashLookup(t *testing.T) {
 	s, _, _ := testService(t)
-	s.direct = true
 	s.dashboardExternalAuth = true
 	hash := "0123456789012345678901234567890123456789"
 	j, err := s.repo.AddGatewaySource(context.Background(), s.tenant, "sonarr", model.TorrentMetadata{Kind: model.SourceMagnet, Magnet: "magnet:?xt=urn:btih:" + hash})

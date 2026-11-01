@@ -1,156 +1,20 @@
 package config
 
 import (
+	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
-const DefaultConfigYAML = `# Use gateway/controller roles in separate pods when mounting this gateway through CSI.
-role: combined
-postgres_url: ""
-tenant: ""
-
-radarr:
-  url: http://radarr:7878
-  api_key: ""
-
-sonarr:
-  url: http://sonarr:8989
-  api_key: ""
-
-seerr:
-  url: http://seerr:5055
-  api_key: ""
-  sync:
-    enabled: false
-    interval_seconds: 120
-    limit: 100
-
-decypharr:
-  url: http://decypharr:8282
-  username: ""
-  password: ""
-  api_token: ""
-  radarr_category: radarr
-  sonarr_category: sonarr
-  delete_files_on_prune: false # Legacy option; provider pruning preserves local links.
-
-# Decypharr owns all provider add/delete operations.
-rearm_backend: decypharr
-
-csi_path: /storage/media
-health_addr: ":8080"
-
-api:
-  enabled: true
-  token: ""
-  require_token: true
-
-metrics:
-  enabled: true
-
-playback:
-  enabled: true
-  rearm_on_play: true
-  cooldown_seconds: 60
-  # Optional playback title exclusions.
-  ignored_titles: []
-  ignored_title_contains: []
-
-jellyfin:
-  enabled: false
-  url: http://jellyfin:8096
-  api_key: ""
-  refresh_after_rearm: true
-  refresh_after_visibility: true
-  refresh_after_import: true
-  refresh_after_prune: false
-  refresh_delay_seconds: 45
-  timeout_seconds: 20
-  max_refreshes_per_run: 5
-  refresh_dedupe_minutes: 10
-
-self_heal:
-  enabled: true
-  interval_seconds: 300
-  refresh_available: true
-  recent_hours: 24
-  max_refreshes_per_run: 5
-
-radarr_sync:
-  enabled: true
-  interval_seconds: 60
-
-sonarr_sync:
-  enabled: false
-  interval_seconds: 60
-
-prune_enabled: true
-rearm_enabled: true
-max_prunes_per_run: 25
-max_rearms_per_run: 25
-
-# Prune records Decypharr acceptance; provider deletion is asynchronous. CSI/rclone can show stale paths.
-prune_wait_for_csi_gone: false
-# Leave false: stale mount entries must not bypass rearm.
-rearm_short_circuit_if_csi_visible: false
-
-reconcile_interval_seconds: 30
-# Compatibility setting used as the default visibility timeout when csi.visibility_timeout_seconds is unset.
-csi_wait_seconds: 900
-csi:
-  visibility_timeout_seconds: 900
-  visibility_poll_seconds: 10
-  visibility_retry_seconds: 60
-provider_cooldown_seconds: 900
-rclone_rc:
-  enabled: false
-  url: http://localhost:5572
-  username: ""
-  password: ""
-  refresh_after_rearm: false
-  timeout_seconds: 10
-file_health:
-  enabled: true
-  interval_seconds: 300
-  batch_size: 20
-  failure_threshold: 3
-  max_rearms_per_run: 2
-  probe_timeout_seconds: 5
-  outage_failure_percent: 50
-  canary_path: "" # Optional known-readable file on the same remote mount.
-torbox_health:
-  enabled: false # Opt-in read-only account checks; requires the same TorBox account as Decypharr.
-  api_key: "" # Prefer TORBOX_HEALTH_API_KEY from a Secret.
-  interval_seconds: 900
-  timeout_seconds: 20
-cache_grace_hours: 24
-max_retries: 10
-concurrent_workers: 2
-db_auto_migrate: false
-
-# Direct v0.7.0 playground; see docs/torbox-gateway-setup.md.
-# Requires prune_enabled: false, API enabled, and cloud_usenet.enabled: false.
-gateway:
-  enabled: false
-  api_key: ""
-  qb_username: arr
-  qb_password: ""
-  sab_api_key: ""
-  dav_username: rclone
-  dav_password: ""
-  mount_path: /storage/torbox
-  download_path: /storage/media/downloads/rehydrator
-  submit_interval_seconds: 120
-  recover_missing: true
-`
+//go:embed default.yaml
+var DefaultConfigYAML string
 
 type JellyfinInventoryConfig struct {
 	MarkMissingInArr   bool              `yaml:"mark_missing_in_arr"`
@@ -172,19 +36,16 @@ type JellyfinConfig struct {
 	RefreshAfterRearm      bool                    `yaml:"refresh_after_rearm"`
 	RefreshAfterVisibility bool                    `yaml:"refresh_after_visibility"`
 	RefreshAfterImport     bool                    `yaml:"refresh_after_import"`
-	RefreshAfterPrune      bool                    `yaml:"refresh_after_prune"`
-	RefreshDelaySeconds    int                     `yaml:"refresh_delay_seconds"`
-	TimeoutSeconds         int                     `yaml:"timeout_seconds"`
+
+	RefreshDelaySeconds int `yaml:"refresh_delay_seconds"`
+	TimeoutSeconds      int `yaml:"timeout_seconds"`
 }
 
 type Config struct {
-	Role         string
-	Gateway      GatewayConfig `yaml:"gateway"`
-	CloudUsenet  CloudUsenetConfig
-	TorBoxHealth TorBoxHealthConfig
-	FileHealth   FileHealthConfig
-	RearmBackend string
-	Jellyfin     JellyfinConfig
+	Role       string
+	Gateway    GatewayConfig `yaml:"gateway"`
+	FileHealth FileHealthConfig
+	Jellyfin   JellyfinConfig
 
 	PostgresURL string
 	Tenant      string
@@ -202,14 +63,6 @@ type Config struct {
 	SeerrSyncIntervalSeconds int
 	SeerrSyncLimit           int
 	SeerrSyncInterval        time.Duration
-
-	DecypharrURL                string
-	DecypharrUsername           string
-	DecypharrAPIToken           string
-	DecypharrPassword           string
-	DecypharrRadarrCategory     string
-	DecypharrSonarrCategory     string
-	DecypharrDeleteFilesOnPrune bool
 
 	CSIPath    string
 	HealthAddr string
@@ -242,19 +95,13 @@ type Config struct {
 	SonarrSyncIntervalSeconds int
 	SonarrSyncInterval        time.Duration
 
-	PruneEnabled                  bool
-	RearmEnabled                  bool
-	MaxPrunesPerRun               int
-	MaxRearmsPerRun               int
-	PruneWaitForCSIGone           bool
-	RearmShortCircuitIfCSIVisible bool
+	RearmEnabled    bool
+	MaxRearmsPerRun int
 
 	ReconcileIntervalSeconds    int
-	CSIWaitSeconds              int
 	CSIVisibilityTimeoutSeconds int
 	CSIVisibilityPollSeconds    int
 	CSIVisibilityRetrySeconds   int
-	ProviderCooldownSeconds     int
 
 	RcloneRCEnabled           bool
 	RcloneRCURL               string
@@ -266,11 +113,9 @@ type Config struct {
 	CacheGraceHours int
 
 	ReconcileInterval    time.Duration
-	CSIWait              time.Duration
 	CSIVisibilityTimeout time.Duration
 	CSIVisibilityPoll    time.Duration
 	CSIVisibilityRetry   time.Duration
-	ProviderCooldown     time.Duration
 	RcloneRCTimeout      time.Duration
 	CacheGrace           time.Duration
 
@@ -283,15 +128,12 @@ type Config struct {
 }
 
 type fileConfig struct {
-	Role         string             `yaml:"role"`
-	Gateway      GatewayConfig      `yaml:"gateway"`
-	CloudUsenet  CloudUsenetConfig  `yaml:"cloud_usenet"`
-	TorBoxHealth TorBoxHealthConfig `yaml:"torbox_health"`
-	FileHealth   FileHealthConfig   `yaml:"file_health"`
-	RearmBackend string             `yaml:"rearm_backend"`
-	Jellyfin     JellyfinConfig     `yaml:"jellyfin"`
-	PostgresURL  string             `yaml:"postgres_url"`
-	Tenant       string             `yaml:"tenant"`
+	Role        string           `yaml:"role"`
+	Gateway     GatewayConfig    `yaml:"gateway"`
+	FileHealth  FileHealthConfig `yaml:"file_health"`
+	Jellyfin    JellyfinConfig   `yaml:"jellyfin"`
+	PostgresURL string           `yaml:"postgres_url"`
+	Tenant      string           `yaml:"tenant"`
 
 	Radarr struct {
 		URL    string `yaml:"url"`
@@ -312,16 +154,6 @@ type fileConfig struct {
 			Limit           int   `yaml:"limit"`
 		} `yaml:"sync"`
 	} `yaml:"seerr"`
-
-	Decypharr struct {
-		URL                string `yaml:"url"`
-		Username           string `yaml:"username"`
-		Password           string `yaml:"password"`
-		APIToken           string `yaml:"api_token"`
-		RadarrCategory     string `yaml:"radarr_category"`
-		SonarrCategory     string `yaml:"sonarr_category"`
-		DeleteFilesOnPrune *bool  `yaml:"delete_files_on_prune"`
-	} `yaml:"decypharr"`
 
 	CSIPath    string `yaml:"csi_path"`
 	HealthAddr string `yaml:"health_addr"`
@@ -362,22 +194,16 @@ type fileConfig struct {
 		IntervalSeconds int   `yaml:"interval_seconds"`
 	} `yaml:"sonarr_sync"`
 
-	PruneEnabled                  *bool `yaml:"prune_enabled"`
-	RearmEnabled                  *bool `yaml:"rearm_enabled"`
-	MaxPrunesPerRun               int   `yaml:"max_prunes_per_run"`
-	MaxRearmsPerRun               int   `yaml:"max_rearms_per_run"`
-	PruneWaitForCSIGone           bool  `yaml:"prune_wait_for_csi_gone"`
-	RearmShortCircuitIfCSIVisible bool  `yaml:"rearm_short_circuit_if_csi_visible"`
+	RearmEnabled    *bool `yaml:"rearm_enabled"`
+	MaxRearmsPerRun int   `yaml:"max_rearms_per_run"`
 
 	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds"`
-	CSIWaitSeconds           int `yaml:"csi_wait_seconds"`
 	CSI                      struct {
 		VisibilityTimeoutSeconds int `yaml:"visibility_timeout_seconds"`
 		VisibilityPollSeconds    int `yaml:"visibility_poll_seconds"`
 		VisibilityRetrySeconds   int `yaml:"visibility_retry_seconds"`
 	} `yaml:"csi"`
-	ProviderCooldownSeconds int `yaml:"provider_cooldown_seconds"`
-	RcloneRC                struct {
+	RcloneRC struct {
 		Enabled           *bool  `yaml:"enabled"`
 		URL               string `yaml:"url"`
 		Username          string `yaml:"username"`
@@ -412,6 +238,9 @@ func LoadWithRole(configPath, role string) (Config, error) {
 		applyFileConfig(&cfg, fc)
 	}
 
+	if err := rejectRetiredEnvironment(); err != nil {
+		return cfg, err
+	}
 	applyEnvOverrides(&cfg)
 	if role != "" {
 		cfg.Role = role
@@ -430,60 +259,47 @@ func LoadWithRole(configPath, role string) (Config, error) {
 
 func defaults() Config {
 	return Config{
-		Role:                          RoleCombined,
-		TorBoxHealth:                  DefaultTorBoxHealth(),
-		FileHealth:                    DefaultFileHealth(),
-		Gateway:                       DefaultGateway(),
-		CloudUsenet:                   DefaultCloudUsenet(),
-		RearmBackend:                  "decypharr",
-		Jellyfin:                      JellyfinConfig{InventorySync: JellyfinInventoryConfig{Enabled: true, IntervalSeconds: 1800, MaxRefreshesPerRun: 5, CooldownMinutes: 360}, MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
-		RadarrURL:                     "http://radarr:7878",
-		SonarrURL:                     "http://sonarr:8989",
-		DecypharrURL:                  "http://decypharr:8282",
-		DecypharrRadarrCategory:       "radarr",
-		DecypharrSonarrCategory:       "sonarr",
-		DecypharrDeleteFilesOnPrune:   false,
-		CSIPath:                       "/storage/media",
-		HealthAddr:                    ":8080",
-		APIEnabled:                    true,
-		APIRequireToken:               true,
-		MetricsEnabled:                true,
-		PlaybackEnabled:               true,
-		PlaybackRearmOnPlay:           true,
-		PlaybackCooldownSeconds:       60,
-		PlaybackIgnoredTitles:         nil,
-		PlaybackIgnoredTitleContains:  nil,
-		SelfHealEnabled:               true,
-		SelfHealIntervalSeconds:       300,
-		SelfHealRefreshAvailable:      true,
-		SelfHealRecentHours:           24,
-		SelfHealMaxRefreshesPerRun:    5,
-		RadarrSyncEnabled:             true,
-		RadarrSyncIntervalSeconds:     60,
-		SonarrSyncEnabled:             false,
-		SonarrSyncIntervalSeconds:     60,
-		SeerrURL:                      "http://seerr:5055",
-		SeerrSyncEnabled:              false,
-		SeerrSyncIntervalSeconds:      120,
-		SeerrSyncLimit:                100,
-		PruneEnabled:                  true,
-		RearmEnabled:                  true,
-		MaxPrunesPerRun:               5,
-		MaxRearmsPerRun:               3,
-		PruneWaitForCSIGone:           false,
-		RearmShortCircuitIfCSIVisible: false,
-		ReconcileIntervalSeconds:      30,
-		CSIWaitSeconds:                900,
-		CSIVisibilityTimeoutSeconds:   900,
-		CSIVisibilityPollSeconds:      10,
-		CSIVisibilityRetrySeconds:     60,
-		ProviderCooldownSeconds:       900,
-		RcloneRCURL:                   "http://localhost:5572",
-		RcloneRCTimeoutSeconds:        10,
-		CacheGraceHours:               24,
-		MaxRetries:                    10,
-		ConcurrentWorkers:             2,
-		DBAutoMigrate:                 false,
+		Role:                         RoleCombined,
+		FileHealth:                   DefaultFileHealth(),
+		Gateway:                      DefaultGateway(),
+		Jellyfin:                     JellyfinConfig{InventorySync: JellyfinInventoryConfig{Enabled: true, IntervalSeconds: 1800, MaxRefreshesPerRun: 5, CooldownMinutes: 360}, MaxRefreshesPerRun: 5, RefreshDedupeMinutes: 10, URL: "http://jellyfin:8096", RefreshAfterRearm: true, RefreshAfterVisibility: true, RefreshAfterImport: true, RefreshDelaySeconds: 45, TimeoutSeconds: 20},
+		RadarrURL:                    "http://radarr:7878",
+		SonarrURL:                    "http://sonarr:8989",
+		CSIPath:                      "/storage/media",
+		HealthAddr:                   ":8080",
+		APIEnabled:                   true,
+		APIRequireToken:              true,
+		MetricsEnabled:               true,
+		PlaybackEnabled:              true,
+		PlaybackRearmOnPlay:          true,
+		PlaybackCooldownSeconds:      60,
+		PlaybackIgnoredTitles:        nil,
+		PlaybackIgnoredTitleContains: nil,
+		SelfHealEnabled:              true,
+		SelfHealIntervalSeconds:      300,
+		SelfHealRefreshAvailable:     true,
+		SelfHealRecentHours:          24,
+		SelfHealMaxRefreshesPerRun:   5,
+		RadarrSyncEnabled:            true,
+		RadarrSyncIntervalSeconds:    60,
+		SonarrSyncEnabled:            false,
+		SonarrSyncIntervalSeconds:    60,
+		SeerrURL:                     "http://seerr:5055",
+		SeerrSyncEnabled:             false,
+		SeerrSyncIntervalSeconds:     120,
+		SeerrSyncLimit:               100,
+		RearmEnabled:                 true,
+		MaxRearmsPerRun:              3,
+		ReconcileIntervalSeconds:     30,
+		CSIVisibilityTimeoutSeconds:  900,
+		CSIVisibilityPollSeconds:     10,
+		CSIVisibilityRetrySeconds:    60,
+		RcloneRCURL:                  "http://localhost:5572",
+		RcloneRCTimeoutSeconds:       10,
+		CacheGraceHours:              24,
+		MaxRetries:                   10,
+		ConcurrentWorkers:            2,
+		DBAutoMigrate:                false,
 	}
 }
 
@@ -509,15 +325,17 @@ func ensureConfigFile(path string) (bool, error) {
 }
 
 func readFileConfig(path string) (fileConfig, error) {
-	fc := fileConfig{Gateway: DefaultGateway(), CloudUsenet: DefaultCloudUsenet(), TorBoxHealth: DefaultTorBoxHealth(), Jellyfin: defaults().Jellyfin, FileHealth: DefaultFileHealth()}
+	fc := fileConfig{Gateway: DefaultGateway(), Jellyfin: defaults().Jellyfin, FileHealth: DefaultFileHealth()}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fc, err
 	}
 
-	if err := yaml.Unmarshal(data, &fc); err != nil {
-		return fc, err
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&fc); err != nil {
+		return fc, fmt.Errorf("invalid or removed configuration; see docs/configuration.md: %w", err)
 	}
 
 	return fc, nil
@@ -527,14 +345,9 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.Role != "" {
 		cfg.Role = fc.Role
 	}
-	cfg.CloudUsenet = fc.CloudUsenet
 	cfg.Gateway = fc.Gateway
-	cfg.TorBoxHealth = fc.TorBoxHealth
 	cfg.FileHealth = fc.FileHealth
-	cfg.DecypharrAPIToken = fc.Decypharr.APIToken
-	if fc.RearmBackend != "" {
-		cfg.RearmBackend = strings.ToLower(strings.TrimSpace(fc.RearmBackend))
-	}
+
 	cfg.Jellyfin = fc.Jellyfin
 	if fc.PostgresURL != "" {
 		cfg.PostgresURL = fc.PostgresURL
@@ -571,25 +384,6 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	}
 	if fc.Seerr.Sync.Limit > 0 {
 		cfg.SeerrSyncLimit = fc.Seerr.Sync.Limit
-	}
-
-	if fc.Decypharr.URL != "" {
-		cfg.DecypharrURL = fc.Decypharr.URL
-	}
-	if fc.Decypharr.Username != "" {
-		cfg.DecypharrUsername = fc.Decypharr.Username
-	}
-	if fc.Decypharr.Password != "" {
-		cfg.DecypharrPassword = fc.Decypharr.Password
-	}
-	if fc.Decypharr.RadarrCategory != "" {
-		cfg.DecypharrRadarrCategory = fc.Decypharr.RadarrCategory
-	}
-	if fc.Decypharr.SonarrCategory != "" {
-		cfg.DecypharrSonarrCategory = fc.Decypharr.SonarrCategory
-	}
-	if fc.Decypharr.DeleteFilesOnPrune != nil {
-		cfg.DecypharrDeleteFilesOnPrune = *fc.Decypharr.DeleteFilesOnPrune
 	}
 
 	if fc.CSIPath != "" {
@@ -652,26 +446,18 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.SonarrSync.IntervalSeconds > 0 {
 		cfg.SonarrSyncIntervalSeconds = fc.SonarrSync.IntervalSeconds
 	}
-	if fc.PruneEnabled != nil {
-		cfg.PruneEnabled = *fc.PruneEnabled
-	}
+
 	if fc.RearmEnabled != nil {
 		cfg.RearmEnabled = *fc.RearmEnabled
 	}
-	if fc.MaxPrunesPerRun > 0 {
-		cfg.MaxPrunesPerRun = fc.MaxPrunesPerRun
-	}
+
 	if fc.MaxRearmsPerRun > 0 {
 		cfg.MaxRearmsPerRun = fc.MaxRearmsPerRun
 	}
-	cfg.PruneWaitForCSIGone = fc.PruneWaitForCSIGone
-	cfg.RearmShortCircuitIfCSIVisible = fc.RearmShortCircuitIfCSIVisible
 	if fc.ReconcileIntervalSeconds > 0 {
 		cfg.ReconcileIntervalSeconds = fc.ReconcileIntervalSeconds
 	}
-	if fc.CSIWaitSeconds > 0 {
-		cfg.CSIWaitSeconds = fc.CSIWaitSeconds
-	}
+
 	if fc.CSI.VisibilityTimeoutSeconds > 0 {
 		cfg.CSIVisibilityTimeoutSeconds = fc.CSI.VisibilityTimeoutSeconds
 	}
@@ -680,9 +466,6 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	}
 	if fc.CSI.VisibilityRetrySeconds > 0 {
 		cfg.CSIVisibilityRetrySeconds = fc.CSI.VisibilityRetrySeconds
-	}
-	if fc.ProviderCooldownSeconds > 0 {
-		cfg.ProviderCooldownSeconds = fc.ProviderCooldownSeconds
 	}
 	if fc.RcloneRC.Enabled != nil {
 		cfg.RcloneRCEnabled = *fc.RcloneRC.Enabled
@@ -717,10 +500,8 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 
 func applyEnvOverrides(cfg *Config) {
 	cfg.Role = getenv("REHYDRATOR_ROLE", cfg.Role)
-	cfg.TorBoxHealth.Enabled = getenvBool("TORBOX_HEALTH_ENABLED", cfg.TorBoxHealth.Enabled)
-	cfg.TorBoxHealth.APIKey = getenv("TORBOX_HEALTH_API_KEY", cfg.TorBoxHealth.APIKey)
-	cfg.TorBoxHealth.IntervalSeconds = getenvInt("TORBOX_HEALTH_INTERVAL_SECONDS", cfg.TorBoxHealth.IntervalSeconds)
-	cfg.TorBoxHealth.TimeoutSeconds = getenvInt("TORBOX_HEALTH_TIMEOUT_SECONDS", cfg.TorBoxHealth.TimeoutSeconds)
+	cfg.Gateway.RadarrCategory = getenv("GATEWAY_RADARR_CATEGORY", cfg.Gateway.RadarrCategory)
+	cfg.Gateway.SonarrCategory = getenv("GATEWAY_SONARR_CATEGORY", cfg.Gateway.SonarrCategory)
 	cfg.Gateway.OIDC.Enabled = getenvBool("GATEWAY_OIDC_ENABLED", cfg.Gateway.OIDC.Enabled)
 	cfg.Gateway.OIDC.IssuerURL = getenv("GATEWAY_OIDC_ISSUER_URL", cfg.Gateway.OIDC.IssuerURL)
 	cfg.Gateway.OIDC.ClientID = getenv("GATEWAY_OIDC_CLIENT_ID", cfg.Gateway.OIDC.ClientID)
@@ -737,28 +518,11 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Gateway.DAVPassword = getenv("GATEWAY_DAV_PASSWORD", cfg.Gateway.DAVPassword)
 	cfg.Gateway.MountPath = getenv("GATEWAY_MOUNT_PATH", cfg.Gateway.MountPath)
 	cfg.Gateway.DownloadPath = getenv("GATEWAY_DOWNLOAD_PATH", cfg.Gateway.DownloadPath)
+	cfg.Gateway.ActivePollIntervalSeconds = getenvInt("GATEWAY_ACTIVE_POLL_INTERVAL_SECONDS", cfg.Gateway.ActivePollIntervalSeconds)
 	cfg.Gateway.SubmitIntervalSeconds = getenvInt("GATEWAY_SUBMIT_INTERVAL_SECONDS", cfg.Gateway.SubmitIntervalSeconds)
-	cfg.CloudUsenet.RecoverMissing = getenvBool("CLOUD_USENET_RECOVER_MISSING", cfg.CloudUsenet.RecoverMissing)
-	cfg.CloudUsenet.Enabled = getenvBool("CLOUD_USENET_ENABLED", cfg.CloudUsenet.Enabled)
-	cfg.CloudUsenet.APIKey = getenv("CLOUD_USENET_API_KEY", cfg.CloudUsenet.APIKey)
-	cfg.CloudUsenet.SABAPIKey = getenv("CLOUD_USENET_SAB_API_KEY", cfg.CloudUsenet.SABAPIKey)
-	cfg.CloudUsenet.DAVUsername = getenv("CLOUD_USENET_DAV_USERNAME", cfg.CloudUsenet.DAVUsername)
-	cfg.CloudUsenet.DAVPassword = getenv("CLOUD_USENET_DAV_PASSWORD", cfg.CloudUsenet.DAVPassword)
-	cfg.CloudUsenet.MountPath = getenv("CLOUD_USENET_MOUNT_PATH", cfg.CloudUsenet.MountPath)
-	cfg.CloudUsenet.DownloadPath = getenv("CLOUD_USENET_DOWNLOAD_PATH", cfg.CloudUsenet.DownloadPath)
-	cfg.CloudUsenet.SubmitIntervalSeconds = getenvInt("CLOUD_USENET_SUBMIT_INTERVAL_SECONDS", cfg.CloudUsenet.SubmitIntervalSeconds)
 	cfg.FileHealth.CanaryPath = getenv("FILE_HEALTH_CANARY_PATH", cfg.FileHealth.CanaryPath)
-	cfg.FileHealth.RecoverArchived = getenvBool("FILE_HEALTH_RECOVER_ARCHIVED", cfg.FileHealth.RecoverArchived)
-	cfg.FileHealth.Enabled = getenvBool("FILE_HEALTH_ENABLED", cfg.FileHealth.Enabled)
-	cfg.FileHealth.IntervalSeconds = getenvInt("FILE_HEALTH_INTERVAL_SECONDS", cfg.FileHealth.IntervalSeconds)
-	cfg.FileHealth.BatchSize = getenvInt("FILE_HEALTH_BATCH_SIZE", cfg.FileHealth.BatchSize)
-	cfg.FileHealth.FailureThreshold = getenvInt("FILE_HEALTH_FAILURE_THRESHOLD", cfg.FileHealth.FailureThreshold)
-	cfg.FileHealth.MaxRearmsPerRun = getenvInt("FILE_HEALTH_MAX_REARMS_PER_RUN", cfg.FileHealth.MaxRearmsPerRun)
-	cfg.FileHealth.ProbeTimeoutSeconds = getenvInt("FILE_HEALTH_PROBE_TIMEOUT_SECONDS", cfg.FileHealth.ProbeTimeoutSeconds)
-	cfg.FileHealth.OutageFailurePercent = getenvInt("FILE_HEALTH_OUTAGE_FAILURE_PERCENT", cfg.FileHealth.OutageFailurePercent)
 	cfg.Jellyfin.MaxRefreshesPerRun = getenvInt("JELLYFIN_MAX_REFRESHES_PER_RUN", cfg.Jellyfin.MaxRefreshesPerRun)
 	cfg.Jellyfin.RefreshDedupeMinutes = getenvInt("JELLYFIN_REFRESH_DEDUPE_MINUTES", cfg.Jellyfin.RefreshDedupeMinutes)
-	cfg.RearmBackend = strings.ToLower(strings.TrimSpace(getenv("REARM_BACKEND", cfg.RearmBackend)))
 	cfg.Jellyfin.RefreshMode = getenv("JELLYFIN_REFRESH_MODE", cfg.Jellyfin.RefreshMode)
 	cfg.Jellyfin.Enabled = getenvBool("JELLYFIN_ENABLED", cfg.Jellyfin.Enabled)
 	cfg.Jellyfin.URL = getenv("JELLYFIN_URL", cfg.Jellyfin.URL)
@@ -766,7 +530,6 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Jellyfin.RefreshAfterRearm = getenvBool("JELLYFIN_REFRESH_AFTER_REARM", cfg.Jellyfin.RefreshAfterRearm)
 	cfg.Jellyfin.RefreshAfterVisibility = getenvBool("JELLYFIN_REFRESH_AFTER_VISIBILITY", cfg.Jellyfin.RefreshAfterVisibility)
 	cfg.Jellyfin.RefreshAfterImport = getenvBool("JELLYFIN_REFRESH_AFTER_IMPORT", cfg.Jellyfin.RefreshAfterImport)
-	cfg.Jellyfin.RefreshAfterPrune = getenvBool("JELLYFIN_REFRESH_AFTER_PRUNE", cfg.Jellyfin.RefreshAfterPrune)
 	cfg.Jellyfin.RefreshDelaySeconds = getenvInt("JELLYFIN_REFRESH_DELAY_SECONDS", cfg.Jellyfin.RefreshDelaySeconds)
 	cfg.Jellyfin.InventorySync.MarkMissingInArr = getenvBool("JELLYFIN_INVENTORY_SYNC_MARK_MISSING_IN_ARR", cfg.Jellyfin.InventorySync.MarkMissingInArr)
 	cfg.Jellyfin.InventorySync.Enabled = getenvBool("JELLYFIN_INVENTORY_SYNC_ENABLED", cfg.Jellyfin.InventorySync.Enabled)
@@ -790,14 +553,6 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.SeerrSyncIntervalSeconds = getenvInt("SEERR_SYNC_INTERVAL_SECONDS", cfg.SeerrSyncIntervalSeconds)
 	cfg.SeerrSyncLimit = getenvInt("SEERR_SYNC_LIMIT", cfg.SeerrSyncLimit)
 
-	cfg.DecypharrAPIToken = getenv("DECYPHARR_API_TOKEN", cfg.DecypharrAPIToken)
-	cfg.DecypharrURL = getenv("DECYPHARR_URL", cfg.DecypharrURL)
-	cfg.DecypharrUsername = getenv("DECYPHARR_USERNAME", cfg.DecypharrUsername)
-	cfg.DecypharrPassword = getenv("DECYPHARR_PASSWORD", cfg.DecypharrPassword)
-	cfg.DecypharrRadarrCategory = getenv("DECYPHARR_RADARR_CATEGORY", cfg.DecypharrRadarrCategory)
-	cfg.DecypharrSonarrCategory = getenv("DECYPHARR_SONARR_CATEGORY", cfg.DecypharrSonarrCategory)
-	cfg.DecypharrDeleteFilesOnPrune = getenvBool("DECYPHARR_DELETE_FILES_ON_PRUNE", cfg.DecypharrDeleteFilesOnPrune)
-
 	cfg.CSIPath = getenv("CSI_PATH", cfg.CSIPath)
 	cfg.HealthAddr = getenv("HEALTH_ADDR", cfg.HealthAddr)
 	cfg.APIEnabled = getenvBool("API_ENABLED", cfg.APIEnabled)
@@ -818,19 +573,13 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.RadarrSyncIntervalSeconds = getenvInt("RADARR_SYNC_INTERVAL_SECONDS", cfg.RadarrSyncIntervalSeconds)
 	cfg.SonarrSyncEnabled = getenvBool("SONARR_SYNC_ENABLED", cfg.SonarrSyncEnabled)
 	cfg.SonarrSyncIntervalSeconds = getenvInt("SONARR_SYNC_INTERVAL_SECONDS", cfg.SonarrSyncIntervalSeconds)
-	cfg.PruneEnabled = getenvBool("PRUNE_ENABLED", cfg.PruneEnabled)
 	cfg.RearmEnabled = getenvBool("REARM_ENABLED", cfg.RearmEnabled)
-	cfg.MaxPrunesPerRun = getenvInt("MAX_PRUNES_PER_RUN", cfg.MaxPrunesPerRun)
 	cfg.MaxRearmsPerRun = getenvInt("MAX_REARMS_PER_RUN", cfg.MaxRearmsPerRun)
-	cfg.PruneWaitForCSIGone = getenvBool("PRUNE_WAIT_FOR_CSI_GONE", cfg.PruneWaitForCSIGone)
-	cfg.RearmShortCircuitIfCSIVisible = getenvBool("REARM_SHORT_CIRCUIT_IF_CSI_VISIBLE", cfg.RearmShortCircuitIfCSIVisible)
 
 	cfg.ReconcileIntervalSeconds = getenvInt("RECONCILE_INTERVAL_SECONDS", cfg.ReconcileIntervalSeconds)
-	cfg.CSIWaitSeconds = getenvInt("CSI_WAIT_SECONDS", cfg.CSIWaitSeconds)
 	cfg.CSIVisibilityTimeoutSeconds = getenvInt("CSI_VISIBILITY_TIMEOUT_SECONDS", cfg.CSIVisibilityTimeoutSeconds)
 	cfg.CSIVisibilityPollSeconds = getenvInt("CSI_VISIBILITY_POLL_SECONDS", cfg.CSIVisibilityPollSeconds)
 	cfg.CSIVisibilityRetrySeconds = getenvInt("CSI_VISIBILITY_RETRY_SECONDS", cfg.CSIVisibilityRetrySeconds)
-	cfg.ProviderCooldownSeconds = getenvInt("PROVIDER_COOLDOWN_SECONDS", cfg.ProviderCooldownSeconds)
 	cfg.RcloneRCEnabled = getenvBool("RCLONE_RC_ENABLED", cfg.RcloneRCEnabled)
 	cfg.RcloneRCURL = getenv("RCLONE_RC_URL", cfg.RcloneRCURL)
 	cfg.RcloneRCUsername = getenv("RCLONE_RC_USERNAME", cfg.RcloneRCUsername)
@@ -845,9 +594,8 @@ func applyEnvOverrides(cfg *Config) {
 
 func hydrateDurations(cfg *Config) {
 	cfg.ReconcileInterval = time.Duration(cfg.ReconcileIntervalSeconds) * time.Second
-	cfg.CSIWait = time.Duration(cfg.CSIWaitSeconds) * time.Second
 	if cfg.CSIVisibilityTimeoutSeconds <= 0 {
-		cfg.CSIVisibilityTimeoutSeconds = cfg.CSIWaitSeconds
+		cfg.CSIVisibilityTimeoutSeconds = 900
 	}
 	if cfg.CSIVisibilityPollSeconds <= 0 {
 		cfg.CSIVisibilityPollSeconds = 10
@@ -855,16 +603,13 @@ func hydrateDurations(cfg *Config) {
 	if cfg.CSIVisibilityRetrySeconds <= 0 {
 		cfg.CSIVisibilityRetrySeconds = 60
 	}
-	if cfg.ProviderCooldownSeconds <= 0 {
-		cfg.ProviderCooldownSeconds = 900
-	}
+
 	if cfg.RcloneRCTimeoutSeconds <= 0 {
 		cfg.RcloneRCTimeoutSeconds = 10
 	}
 	cfg.CSIVisibilityTimeout = time.Duration(cfg.CSIVisibilityTimeoutSeconds) * time.Second
 	cfg.CSIVisibilityPoll = time.Duration(cfg.CSIVisibilityPollSeconds) * time.Second
 	cfg.CSIVisibilityRetry = time.Duration(cfg.CSIVisibilityRetrySeconds) * time.Second
-	cfg.ProviderCooldown = time.Duration(cfg.ProviderCooldownSeconds) * time.Second
 	cfg.RcloneRCTimeout = time.Duration(cfg.RcloneRCTimeoutSeconds) * time.Second
 	cfg.CacheGrace = time.Duration(cfg.CacheGraceHours) * time.Hour
 	cfg.RadarrSyncInterval = time.Duration(cfg.RadarrSyncIntervalSeconds) * time.Second
@@ -887,16 +632,10 @@ func validate(cfg Config) error {
 	if cfg.Role != "" && cfg.Role != RoleCombined && cfg.Role != RoleGateway && cfg.Role != RoleController {
 		return errors.New("role must be combined, gateway or controller")
 	}
-	if (cfg.Role == RoleGateway || cfg.Role == RoleController) && (!cfg.Gateway.Enabled || cfg.CloudUsenet.Enabled) {
-		return errors.New("split roles require gateway.enabled and cloud_usenet.enabled=false")
+	if !cfg.Gateway.Enabled {
+		return errors.New("gateway.enabled must be true; legacy backends were removed")
 	}
-	if cfg.Role != RoleGateway && cfg.Role != RoleController && cfg.TorBoxHealth.Enabled && (strings.TrimSpace(cfg.TorBoxHealth.APIKey) == "" || cfg.TorBoxHealth.IntervalSeconds < 300 || cfg.TorBoxHealth.TimeoutSeconds < 1 || cfg.TorBoxHealth.TimeoutSeconds > 120) {
-		return errors.New("torbox_health requires api_key, interval_seconds >=300 and timeout_seconds 1..120")
-	}
-	h := cfg.FileHealth
-	if cfg.Role != RoleGateway && h.Enabled && (h.IntervalSeconds < 30 || h.BatchSize < 1 || h.BatchSize > 1000 || h.FailureThreshold < 2 || h.MaxRearmsPerRun < 1 || h.MaxRearmsPerRun > h.BatchSize || h.ProbeTimeoutSeconds < 1 || h.ProbeTimeoutSeconds > 30 || h.OutageFailurePercent < 1 || h.OutageFailurePercent > 100) {
-		return errors.New("invalid file_health settings: interval >=30s, batch 1..1000, failures >=2, rearms 1..batch, timeout 1..30s, outage percent 1..100")
-	}
+
 	if cfg.Role != RoleGateway && cfg.Jellyfin.RefreshMode != "" && cfg.Jellyfin.RefreshMode != "notification" && cfg.Jellyfin.RefreshMode != "targeted_scan" {
 		return errors.New("jellyfin.refresh_mode must be notification or targeted_scan")
 	}
@@ -906,33 +645,29 @@ func validate(cfg Config) error {
 	if cfg.Gateway.OIDC.Enabled && cfg.Gateway.DashboardExternalAuth {
 		return fmt.Errorf("choose OIDC or external dashboard auth, not both")
 	}
-	if cfg.Gateway.Enabled && cfg.CloudUsenet.Enabled {
-		return errors.New("enable gateway or cloud_usenet, not both")
+	if cfg.Gateway.Enabled && (cfg.Gateway.ActivePollIntervalSeconds < 15 || cfg.Gateway.ActivePollIntervalSeconds > 3600) {
+		return fmt.Errorf("gateway.active_poll_interval_seconds must be between 15 and 3600")
 	}
+
 	if cfg.Gateway.Enabled {
-		if (cfg.Role != RoleController && (cfg.Gateway.QBUsername == "" || cfg.Gateway.QBPassword == "")) || cfg.PruneEnabled {
-			return errors.New("gateway requires qb_username/qb_password and prune_enabled=false")
+		if cfg.Role != RoleController && (cfg.Gateway.QBUsername == "" || cfg.Gateway.QBPassword == "") {
+			return errors.New("gateway requires qb_username/qb_password")
 		}
 	}
 	if cfg.Gateway.Enabled {
-		for _, category := range []string{cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory} {
+		for _, category := range []string{cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory} {
 			if category == "" || category == "." || category == ".." || strings.ContainsAny(category, "/\\") {
 				return errors.New("gateway categories must be nonempty path components")
 			}
 		}
 	}
-	if cfg.CloudUsenet.Enabled || cfg.Gateway.Enabled {
-		u := cfg.CloudUsenet
-		if cfg.Gateway.Enabled {
-			u = cfg.Gateway.CloudUsenetConfig
-		}
+	if cfg.Gateway.Enabled {
+		u := cfg.Gateway.GatewayStorageConfig
 		if !cfg.APIEnabled || (cfg.Role != RoleController && (u.APIKey == "" || u.SABAPIKey == "" || u.DAVUsername == "" || u.DAVPassword == "")) || u.SubmitIntervalSeconds < 60 || !strings.HasPrefix(u.MountPath, "/") || !strings.HasPrefix(u.DownloadPath, "/") || u.MountPath == "/" || u.DownloadPath == "/" || u.DownloadPath == u.MountPath || strings.HasPrefix(filepath.Clean(u.DownloadPath), filepath.Clean(u.MountPath)+"/") || strings.HasPrefix(filepath.Clean(u.MountPath), filepath.Clean(u.DownloadPath)+"/") {
-			return errors.New("gateway/cloud_usenet requires API enabled, TorBox/SAB keys, DAV credentials, distinct absolute mount/download paths and submit_interval_seconds >=60")
+			return errors.New("gateway requires API enabled, TorBox/SAB keys, DAV credentials, distinct absolute mount/download paths and submit_interval_seconds >=60")
 		}
 	}
-	if cfg.RearmBackend != "decypharr" && !(cfg.Gateway.Enabled && cfg.RearmBackend == "torbox") {
-		return errors.New("rearm_backend must be decypharr, or torbox with gateway.enabled")
-	}
+
 	if cfg.Role != RoleGateway && cfg.Jellyfin.Enabled && (strings.TrimSpace(cfg.Jellyfin.URL) == "" || strings.TrimSpace(cfg.Jellyfin.APIKey) == "") {
 		return errors.New("jellyfin.url and jellyfin.api_key are required when Jellyfin is enabled")
 	}
@@ -957,12 +692,6 @@ func validate(cfg Config) error {
 	}
 	if cfg.Role != RoleGateway && cfg.SeerrSyncEnabled && (cfg.SeerrURL == "" || cfg.SeerrAPIKey == "") {
 		return errors.New("SEERR_URL/SEERR_API_KEY or seerr.url/seerr.api_key are required when Seerr sync is enabled")
-	}
-	if !cfg.Gateway.Enabled && cfg.RearmBackend == "decypharr" && cfg.DecypharrURL == "" {
-		return errors.New("DECYPHARR_URL or decypharr.url is required")
-	}
-	if !cfg.Gateway.Enabled && cfg.RearmBackend == "decypharr" && cfg.DecypharrAPIToken == "" && cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {
-		return errors.New("DECYPHARR_PASSWORD is required when DECYPHARR_USERNAME is set")
 	}
 
 	if cfg.Role != RoleGateway && cfg.CSIPath == "" {

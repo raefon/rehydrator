@@ -1,3 +1,11 @@
+# Rehydrator v0.7.1 — Separate gateway and controller roles (unreleased)
+
+- Add `role: gateway|controller|combined`, `REHYDRATOR_ROLE`, and a `--role` override. Combined remains the legacy-compatible default.
+- Gateway serves provider/client APIs and WebDAV without accessing CSI or staging paths, starting Arr/Jellyfin workers, or requiring controller credentials. Readiness checks its database catalog.
+- Tenant controllers create staging links and verify mounted payloads using separate durable leases; catalog revisions prevent stale verifications from completing replaced/missing placements. Migration 033 adds verification and deferred-cleanup state.
+- Queue delete-data requests in gateway mode enqueue controller cleanup instead of touching local paths. Sources, library files and provider payloads remain retained.
+- Add per-role configuration and cross-namespace Kubernetes examples, with one gateway per tenant and shared tenant database. No central multi-tenant routing or UI.
+
 # Rehydrator v0.7.0 — TorBox gateway playground (unreleased)
 
 ## Direct gateway

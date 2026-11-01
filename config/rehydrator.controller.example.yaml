@@ -1,0 +1,29 @@
+# Tenant deployment: mount CSI at /storage/torbox and shared media at /storage/media.
+role: controller
+tenant: tenet-nofear101
+postgres_url: "" # POSTGRES_URL; same database/tenant as its gateway
+health_addr: ":8080"
+db_auto_migrate: false # Gateway/migration job must apply schema through 033 first.
+csi_path: /storage/media
+prune_enabled: false
+rearm_enabled: true
+rearm_backend: torbox
+api:
+  enabled: true
+  require_token: true
+  token: "" # API_TOKEN for Arr/Seerr/Jellyfin webhooks and controller APIs
+cloud_usenet:
+  enabled: false
+gateway:
+  enabled: true
+  # No TorBox, qBittorrent, SAB or DAV credentials needed by this role.
+  mount_path: /storage/torbox
+  download_path: /storage/media/downloads/rehydrator
+radarr:
+  url: http://tenet-radarr:7878
+  api_key: "" # RADARR_API_KEY
+sonarr:
+  url: http://tenet-sonarr:8989
+  api_key: "" # SONARR_API_KEY
+jellyfin:
+  enabled: false # Enable and configure using the main example for refreshes.

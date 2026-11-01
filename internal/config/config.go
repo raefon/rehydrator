@@ -12,7 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const DefaultConfigYAML = `postgres_url: ""
+const DefaultConfigYAML = `# Use gateway/controller roles in separate pods when mounting this gateway through CSI.
+role: combined
+postgres_url: ""
 tenant: ""
 
 radarr:
@@ -176,6 +178,7 @@ type JellyfinConfig struct {
 }
 
 type Config struct {
+	Role         string
 	Gateway      GatewayConfig `yaml:"gateway"`
 	CloudUsenet  CloudUsenetConfig
 	TorBoxHealth TorBoxHealthConfig
@@ -280,6 +283,7 @@ type Config struct {
 }
 
 type fileConfig struct {
+	Role         string             `yaml:"role"`
 	Gateway      GatewayConfig      `yaml:"gateway"`
 	CloudUsenet  CloudUsenetConfig  `yaml:"cloud_usenet"`
 	TorBoxHealth TorBoxHealthConfig `yaml:"torbox_health"`
@@ -387,7 +391,10 @@ type fileConfig struct {
 	DBAutoMigrate     bool `yaml:"db_auto_migrate"`
 }
 
-func Load(configPath string) (Config, error) {
+func Load(configPath string) (Config, error) { return LoadWithRole(configPath, "") }
+
+// LoadWithRole applies a command-line role override before role-specific validation.
+func LoadWithRole(configPath, role string) (Config, error) {
 	cfg := defaults()
 	cfg.ConfigPath = configPath
 
@@ -406,6 +413,9 @@ func Load(configPath string) (Config, error) {
 	}
 
 	applyEnvOverrides(&cfg)
+	if role != "" {
+		cfg.Role = role
+	}
 	hydrateDurations(&cfg)
 
 	if err := validate(cfg); err != nil {
@@ -420,6 +430,7 @@ func Load(configPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
+		Role:                          RoleCombined,
 		TorBoxHealth:                  DefaultTorBoxHealth(),
 		FileHealth:                    DefaultFileHealth(),
 		Gateway:                       DefaultGateway(),
@@ -513,6 +524,9 @@ func readFileConfig(path string) (fileConfig, error) {
 }
 
 func applyFileConfig(cfg *Config, fc fileConfig) {
+	if fc.Role != "" {
+		cfg.Role = fc.Role
+	}
 	cfg.CloudUsenet = fc.CloudUsenet
 	cfg.Gateway = fc.Gateway
 	cfg.TorBoxHealth = fc.TorBoxHealth
@@ -702,6 +716,7 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 }
 
 func applyEnvOverrides(cfg *Config) {
+	cfg.Role = getenv("REHYDRATOR_ROLE", cfg.Role)
 	cfg.TorBoxHealth.Enabled = getenvBool("TORBOX_HEALTH_ENABLED", cfg.TorBoxHealth.Enabled)
 	cfg.TorBoxHealth.APIKey = getenv("TORBOX_HEALTH_API_KEY", cfg.TorBoxHealth.APIKey)
 	cfg.TorBoxHealth.IntervalSeconds = getenvInt("TORBOX_HEALTH_INTERVAL_SECONDS", cfg.TorBoxHealth.IntervalSeconds)
@@ -863,21 +878,27 @@ func hydrateDurations(cfg *Config) {
 }
 
 func validate(cfg Config) error {
-	if cfg.TorBoxHealth.Enabled && (strings.TrimSpace(cfg.TorBoxHealth.APIKey) == "" || cfg.TorBoxHealth.IntervalSeconds < 300 || cfg.TorBoxHealth.TimeoutSeconds < 1 || cfg.TorBoxHealth.TimeoutSeconds > 120) {
+	if cfg.Role != "" && cfg.Role != RoleCombined && cfg.Role != RoleGateway && cfg.Role != RoleController {
+		return errors.New("role must be combined, gateway or controller")
+	}
+	if (cfg.Role == RoleGateway || cfg.Role == RoleController) && (!cfg.Gateway.Enabled || cfg.CloudUsenet.Enabled) {
+		return errors.New("split roles require gateway.enabled and cloud_usenet.enabled=false")
+	}
+	if cfg.Role != RoleGateway && cfg.Role != RoleController && cfg.TorBoxHealth.Enabled && (strings.TrimSpace(cfg.TorBoxHealth.APIKey) == "" || cfg.TorBoxHealth.IntervalSeconds < 300 || cfg.TorBoxHealth.TimeoutSeconds < 1 || cfg.TorBoxHealth.TimeoutSeconds > 120) {
 		return errors.New("torbox_health requires api_key, interval_seconds >=300 and timeout_seconds 1..120")
 	}
 	h := cfg.FileHealth
-	if h.Enabled && (h.IntervalSeconds < 30 || h.BatchSize < 1 || h.BatchSize > 1000 || h.FailureThreshold < 2 || h.MaxRearmsPerRun < 1 || h.MaxRearmsPerRun > h.BatchSize || h.ProbeTimeoutSeconds < 1 || h.ProbeTimeoutSeconds > 30 || h.OutageFailurePercent < 1 || h.OutageFailurePercent > 100) {
+	if cfg.Role != RoleGateway && h.Enabled && (h.IntervalSeconds < 30 || h.BatchSize < 1 || h.BatchSize > 1000 || h.FailureThreshold < 2 || h.MaxRearmsPerRun < 1 || h.MaxRearmsPerRun > h.BatchSize || h.ProbeTimeoutSeconds < 1 || h.ProbeTimeoutSeconds > 30 || h.OutageFailurePercent < 1 || h.OutageFailurePercent > 100) {
 		return errors.New("invalid file_health settings: interval >=30s, batch 1..1000, failures >=2, rearms 1..batch, timeout 1..30s, outage percent 1..100")
 	}
-	if cfg.Jellyfin.RefreshMode != "" && cfg.Jellyfin.RefreshMode != "notification" && cfg.Jellyfin.RefreshMode != "targeted_scan" {
+	if cfg.Role != RoleGateway && cfg.Jellyfin.RefreshMode != "" && cfg.Jellyfin.RefreshMode != "notification" && cfg.Jellyfin.RefreshMode != "targeted_scan" {
 		return errors.New("jellyfin.refresh_mode must be notification or targeted_scan")
 	}
 	if cfg.Gateway.Enabled && cfg.CloudUsenet.Enabled {
 		return errors.New("enable gateway or cloud_usenet, not both")
 	}
 	if cfg.Gateway.Enabled {
-		if cfg.Gateway.QBUsername == "" || cfg.Gateway.QBPassword == "" || cfg.PruneEnabled {
+		if (cfg.Role != RoleController && (cfg.Gateway.QBUsername == "" || cfg.Gateway.QBPassword == "")) || cfg.PruneEnabled {
 			return errors.New("gateway requires qb_username/qb_password and prune_enabled=false")
 		}
 	}
@@ -893,20 +914,20 @@ func validate(cfg Config) error {
 		if cfg.Gateway.Enabled {
 			u = cfg.Gateway.CloudUsenetConfig
 		}
-		if !cfg.APIEnabled || u.APIKey == "" || u.SABAPIKey == "" || u.DAVUsername == "" || u.DAVPassword == "" || u.SubmitIntervalSeconds < 60 || !strings.HasPrefix(u.MountPath, "/") || !strings.HasPrefix(u.DownloadPath, "/") || u.MountPath == "/" || u.DownloadPath == "/" || u.DownloadPath == u.MountPath || strings.HasPrefix(filepath.Clean(u.DownloadPath), filepath.Clean(u.MountPath)+"/") || strings.HasPrefix(filepath.Clean(u.MountPath), filepath.Clean(u.DownloadPath)+"/") {
+		if !cfg.APIEnabled || (cfg.Role != RoleController && (u.APIKey == "" || u.SABAPIKey == "" || u.DAVUsername == "" || u.DAVPassword == "")) || u.SubmitIntervalSeconds < 60 || !strings.HasPrefix(u.MountPath, "/") || !strings.HasPrefix(u.DownloadPath, "/") || u.MountPath == "/" || u.DownloadPath == "/" || u.DownloadPath == u.MountPath || strings.HasPrefix(filepath.Clean(u.DownloadPath), filepath.Clean(u.MountPath)+"/") || strings.HasPrefix(filepath.Clean(u.MountPath), filepath.Clean(u.DownloadPath)+"/") {
 			return errors.New("gateway/cloud_usenet requires API enabled, TorBox/SAB keys, DAV credentials, distinct absolute mount/download paths and submit_interval_seconds >=60")
 		}
 	}
 	if cfg.RearmBackend != "decypharr" && !(cfg.Gateway.Enabled && cfg.RearmBackend == "torbox") {
 		return errors.New("rearm_backend must be decypharr, or torbox with gateway.enabled")
 	}
-	if cfg.Jellyfin.Enabled && (strings.TrimSpace(cfg.Jellyfin.URL) == "" || strings.TrimSpace(cfg.Jellyfin.APIKey) == "") {
+	if cfg.Role != RoleGateway && cfg.Jellyfin.Enabled && (strings.TrimSpace(cfg.Jellyfin.URL) == "" || strings.TrimSpace(cfg.Jellyfin.APIKey) == "") {
 		return errors.New("jellyfin.url and jellyfin.api_key are required when Jellyfin is enabled")
 	}
-	if cfg.Jellyfin.InventorySync.Enabled && (cfg.Jellyfin.InventorySync.IntervalSeconds < 60 || cfg.Jellyfin.InventorySync.MaxRefreshesPerRun < 1 || cfg.Jellyfin.InventorySync.MaxRefreshesPerRun > 100 || cfg.Jellyfin.InventorySync.CooldownMinutes < 1) {
+	if cfg.Role != RoleGateway && cfg.Jellyfin.InventorySync.Enabled && (cfg.Jellyfin.InventorySync.IntervalSeconds < 60 || cfg.Jellyfin.InventorySync.MaxRefreshesPerRun < 1 || cfg.Jellyfin.InventorySync.MaxRefreshesPerRun > 100 || cfg.Jellyfin.InventorySync.CooldownMinutes < 1) {
 		return errors.New("jellyfin.inventory_sync requires interval_seconds >=60, max_refreshes_per_run 1..100 and cooldown_minutes >=1")
 	}
-	if cfg.Jellyfin.RefreshDelaySeconds < 0 || cfg.Jellyfin.TimeoutSeconds <= 0 {
+	if cfg.Role != RoleGateway && (cfg.Jellyfin.RefreshDelaySeconds < 0 || cfg.Jellyfin.TimeoutSeconds <= 0) {
 		return errors.New("jellyfin refresh_delay_seconds must be nonnegative and timeout_seconds must be positive")
 	}
 
@@ -916,32 +937,32 @@ func validate(cfg Config) error {
 	if cfg.Tenant == "" {
 		return errors.New("TENANT/TENANT_NAME or tenant is required")
 	}
-	if cfg.RadarrURL == "" || cfg.RadarrAPIKey == "" {
+	if cfg.Role != RoleGateway && (cfg.RadarrURL == "" || cfg.RadarrAPIKey == "") {
 		return errors.New("RADARR_URL/RADARR_API_KEY or radarr.url/radarr.api_key are required")
 	}
-	if cfg.SonarrSyncEnabled && (cfg.SonarrURL == "" || cfg.SonarrAPIKey == "") {
+	if cfg.Role != RoleGateway && cfg.SonarrSyncEnabled && (cfg.SonarrURL == "" || cfg.SonarrAPIKey == "") {
 		return errors.New("SONARR_URL/SONARR_API_KEY or sonarr.url/sonarr.api_key are required when Sonarr sync is enabled")
 	}
-	if cfg.SeerrSyncEnabled && (cfg.SeerrURL == "" || cfg.SeerrAPIKey == "") {
+	if cfg.Role != RoleGateway && cfg.SeerrSyncEnabled && (cfg.SeerrURL == "" || cfg.SeerrAPIKey == "") {
 		return errors.New("SEERR_URL/SEERR_API_KEY or seerr.url/seerr.api_key are required when Seerr sync is enabled")
 	}
 	if !cfg.Gateway.Enabled && cfg.RearmBackend == "decypharr" && cfg.DecypharrURL == "" {
 		return errors.New("DECYPHARR_URL or decypharr.url is required")
 	}
-	if cfg.RearmBackend == "decypharr" && cfg.DecypharrAPIToken == "" && cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {
+	if !cfg.Gateway.Enabled && cfg.RearmBackend == "decypharr" && cfg.DecypharrAPIToken == "" && cfg.DecypharrUsername != "" && cfg.DecypharrPassword == "" {
 		return errors.New("DECYPHARR_PASSWORD is required when DECYPHARR_USERNAME is set")
 	}
 
-	if cfg.CSIPath == "" {
+	if cfg.Role != RoleGateway && cfg.CSIPath == "" {
 		return errors.New("CSI_PATH or csi_path is required")
 	}
 	if cfg.HealthAddr == "" {
 		return errors.New("HEALTH_ADDR or health_addr is required")
 	}
-	if cfg.APIEnabled && cfg.APIRequireToken && cfg.APIToken == "" {
+	if cfg.Role != RoleGateway && cfg.APIEnabled && cfg.APIRequireToken && cfg.APIToken == "" {
 		return errors.New("API_TOKEN is required when API_REQUIRE_TOKEN=true")
 	}
-	if cfg.RcloneRCEnabled && cfg.RcloneRCURL == "" {
+	if cfg.Role != RoleGateway && cfg.RcloneRCEnabled && cfg.RcloneRCURL == "" {
 		return errors.New("RCLONE_RC_URL or rclone_rc.url is required when RCLONE_RC_ENABLED=true")
 	}
 	return nil

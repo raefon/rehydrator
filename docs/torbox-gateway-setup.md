@@ -1,4 +1,4 @@
-# Direct TorBox gateway (v0.7.0 playground)
+# Direct TorBox gateway (v0.7.1 playground)
 
 Rehydrator accepts torrents and NZBs, submits them directly to TorBox, and exposes
 one read-only WebDAV catalog for CSI-rclone. Decypharr is not used in this mode.
@@ -9,7 +9,69 @@ Use a fresh isolated deployment/database for the playground. Existing Decypharr
 paths are not migrated. Nothing here requires deleting the working installation.
 UI work remains deferred.
 
-## Configuration
+## Split deployment with CSI
+
+Use two processes for each tenant. The gateway can live in your dedicated
+`rehydrator-gateways` namespace, and the controller stays in `tenet-nofear101`.
+Use one gateway Deployment/Service and credential set per tenant; this is not a
+single shared multi-tenant gateway. Match the tenant string, database, category
+names, mount path and staging path across the pair.
+
+| Role | Responsibilities | Mounts |
+|---|---|---|
+| `gateway` | TorBox submissions/polling, qBittorrent/SAB, WebDAV | Secret/config only; no tenant PVCs |
+| `controller` | Staging links, mounted-file verification, Arr/Seerr/Jellyfin | CSI plus shared media/config as needed |
+| `combined` | Existing single-process behavior (default) | Suitable only where the mount does not depend on this pod starting |
+
+Set YAML `role`, environment `REHYDRATOR_ROLE`, or `--role`; CLI takes precedence,
+then environment, then YAML. Split roles require `gateway.enabled: true` and
+`prune_enabled: false`; the older cloud-only mode remains combined-only.
+
+Start with [gateway config](../config/rehydrator.gateway.example.yaml) and
+[controller config](../config/rehydrator.controller.example.yaml). The controller
+does not require TorBox, qBittorrent, SAB or DAV secrets; it coordinates through
+the same PostgreSQL database. Only it needs Arr/Jellyfin credentials and the
+usual API token for incoming webhooks. Mount paths in the gateway config are
+logical consumer paths, not volumes that should be mounted in that pod.
+
+~~~sh
+rehydrator --role=gateway --config=/etc/rehydrator/config.yaml
+rehydrator --role=controller --config=/config/rehydrator.yaml
+~~~
+
+The gateway publishes ready provider catalogs as `Mounting`. The controller
+independently leases verification work, creates staging links and performs the
+bounded mounted-file read before marking `Completed`. Provider polling and
+verification have separate due times; catalog revisions fence stale completion
+after provider loss/replacement. With the controller stopped, DAV metadata remains
+available and new downloads wait in `Mounting` instead of prematurely completing.
+Gateway delete-data requests enqueue durable staging cleanup for the controller.
+
+Gateway `/readyz` checks database/catalog access without asking the controller,
+Arr or the CSI mount. `/healthz` is process liveness. Apply migrations through 033
+before rollout, or let the gateway initialize the schema first. Do not run
+schema repair concurrently with active controllers. The gateway must not wait
+for `/config/.permissions-initialized` or depend on a pod that needs its CSI mount.
+
+Point CSI and download clients to:
+
+~~~text
+http://tenet-nofear101-gateway.rehydrator-gateways.svc.cluster.local:8080/webdav/
+~~~
+
+Use that host with an empty URL Base for qBittorrent or `/sabnzbd` for SAB.
+Keep Arr/Seerr/Jellyfin webhooks pointed at the tenant **controller** Service.
+The gateway role exposes no controller/admin routes. Ensure existing NetworkPolicies
+permit tenant and CSI-node traffic to the gateway and both roles to PostgreSQL.
+A runnable-shape Kubernetes example is in
+[deploy/gateway-controller.example.yaml](../deploy/gateway-controller.example.yaml);
+create its referenced configuration Secrets and replace image/claim names first.
+No live cluster resources are changed by these examples.
+
+## Combined configuration
+
+For split CSI deployments use the role-specific examples above. The following
+configuration describes the original combined mode.
 
 Add this to your existing Rehydrator config, supplying credentials through your
 Secret/config renderer or the corresponding environment variables:
@@ -41,7 +103,7 @@ pruning is deliberately unavailable in direct mode; startup rejects
 `prune_enabled: true`.
 
 `db_auto_migrate` applies the embedded schema. If you manage migrations manually,
-apply through `032_direct_gateway.sql`. It adds independent retained sources,
+apply through `033_gateway_roles.sql`. It adds independent retained sources,
 shared jobs and hashed expiring client sessions. Existing cloud-NZB rows are
 copied without changing their job IDs; the legacy table is retained.
 
@@ -66,7 +128,7 @@ pass = RCLONE_OBSCURED_DAV_PASSWORD
 ```
 
 Generate the password value with `rclone obscure` and keep the config in a Secret.
-Mount the remote root at `/storage/torbox` in Rehydrator, Sonarr, Radarr and
+Mount the remote root at `/storage/torbox` in the Rehydrator controller, Sonarr, Radarr and
 Jellyfin. Share `/storage/media` with those pods too. Rehydrator serves HTTP;
 CSI-rclone owns FUSE. It does not mount anything itself.
 
@@ -89,7 +151,7 @@ validate actual bounded reads from each consumer after remounting.
 
 Add a **qBittorrent** download client for torrents:
 
-- Host: your Rehydrator Service; port: 8080; URL Base: empty.
+- Host: your Rehydrator gateway Service; port: 8080; URL Base: empty.
 - Username/password: gateway `qb_username` / `qb_password`.
 - Category: `sonarr` or `radarr` (or the configured `decypharr.*_category` values).
 - Initial state: Start. Content layout: Original.

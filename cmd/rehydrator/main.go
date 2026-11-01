@@ -30,10 +30,11 @@ import (
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.7.0"
+var version = "0.7.1"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
+	role := flag.String("role", "", "runtime role: combined, gateway or controller (overrides config/env)")
 	showVersion := flag.Bool("version", false, "print Rehydrator version and exit")
 	flag.Parse()
 
@@ -46,7 +47,7 @@ func main() {
 	}
 	slog.Info("rehydrator version", "version", version)
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.LoadWithRole(*configPath, *role)
 	if err != nil {
 		slog.Error("config error", "error", err)
 		os.Exit(1)
@@ -74,6 +75,11 @@ func main() {
 		slog.Info("database schema initialized")
 	}
 
+	if cfg.Role == config.RoleGateway {
+		runGateway(ctx, cfg, repo)
+		return
+	}
+
 	radarrClient := arr.NewClient("radarr", cfg.RadarrURL, cfg.RadarrAPIKey)
 	sonarrClient := arr.NewClient("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey)
 	decypharrClient := decypharr.NewClient(cfg.DecypharrURL, cfg.DecypharrUsername, cfg.DecypharrPassword, cfg.DecypharrAPIToken)
@@ -88,7 +94,7 @@ func main() {
 	}
 
 	var torboxHealth *torbox.HealthClient
-	if cfg.TorBoxHealth.Enabled {
+	if cfg.TorBoxHealth.Enabled && cfg.Role != config.RoleController {
 		torboxHealth = torbox.NewHealthClient(cfg.TorBoxHealth.APIKey)
 	}
 	var cloud *cloudusenet.Service
@@ -96,11 +102,17 @@ func main() {
 	if cfg.Gateway.Enabled {
 		gatewayConfig := cfg.Gateway
 		gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
-		cloud = gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
-		gatewayQB = cloud.QBittorrent
-		gatewaySAB = cloud.SAB
-		gatewayDAV = cloud.DAV
-		go cloud.Run(ctx)
+		if cfg.Role == config.RoleController {
+			cloud = gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, nil, nil, cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
+			cloud.SetRole(config.RoleController)
+			go cloud.RunMountWorker(ctx)
+		} else {
+			cloud = gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
+			gatewayQB = cloud.QBittorrent
+			gatewaySAB = cloud.SAB
+			gatewayDAV = cloud.DAV
+			go cloud.Run(ctx)
+		}
 	}
 	if cfg.CloudUsenet.Enabled {
 		cloudConfig := cfg.CloudUsenet
@@ -152,6 +164,7 @@ func main() {
 	slog.Info("rehydrator starting",
 		"config", cfg.ConfigPath,
 		"tenant", cfg.Tenant,
+		"role", cfg.Role,
 		"interval", cfg.ReconcileInterval.String(),
 		"cache_grace", cfg.CacheGrace.String(),
 		"csi_path", cfg.CSIPath,
@@ -341,6 +354,12 @@ func main() {
 	if cfg.APIEnabled {
 		healthServer = health.NewAPIServer(health.APIOptions{
 			CloudSAB: cloudSAB, CloudDAV: cloudDAV, GatewayQB: gatewayQB, GatewaySAB: gatewaySAB, GatewayDAV: gatewayDAV,
+			Readiness: func(ctx context.Context) error {
+				if cfg.Gateway.Enabled {
+					return repo.GatewayCatalogReady(ctx, cfg.Tenant)
+				}
+				return repo.Ping(ctx)
+			},
 			CaptureGrab:                  ctrl.CaptureGrab,
 			RecordGrabImport:             ctrl.RecordGrabImport,
 			Addr:                         cfg.HealthAddr,
@@ -388,4 +407,17 @@ func main() {
 	}
 
 	slog.Info("rehydrator stopped")
+}
+
+// Gateway startup deliberately has no Arr clients, CSI checker, filesystem
+// staging, permission-marker wait or dependency on a tenant controller.
+func runGateway(ctx context.Context, cfg config.Config, repo *db.Repo) {
+	gatewayConfig := cfg.Gateway
+	gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
+	service := gateway.NewDirect(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.DecypharrSonarrCategory, cfg.DecypharrRadarrCategory)
+	service.SetRole(config.RoleGateway)
+	server := health.NewAPIServer(health.APIOptions{Addr: cfg.HealthAddr, GatewayQB: service.QBittorrent, GatewaySAB: service.SAB, GatewayDAV: service.DAV, Readiness: func(ctx context.Context) error { return repo.GatewayCatalogReady(ctx, cfg.Tenant) }})
+	slog.Info("standalone gateway starting", "tenant", cfg.Tenant, "role", cfg.Role, "addr", cfg.HealthAddr)
+	go service.Run(ctx)
+	server.Run(ctx)
 }

@@ -4,6 +4,10 @@
 postgres_url: "postgres://<USER>:<PASSWORD>@<POSTGRES_HOST>:5432/<DATABASE>?sslmode=disable"
 tenant: tenet-nofear101
 
+# combined preserves legacy deployments. CSI deployments use separate gateway/controller pods.
+# See rehydrator.gateway.example.yaml and rehydrator.controller.example.yaml.
+role: combined
+
 health_addr: ":8080"
 db_auto_migrate: true
 
@@ -15,7 +19,8 @@ cache_grace_hours: 24 # Local pruning policy, not TorBox retention.
 max_retries: 10
 concurrent_workers: 2
 
-# Decypharr owns rearm and provider deletion. Configure TorBox inside Decypharr.
+# Legacy mode: Decypharr owns rearm/provider deletion.
+# Direct TorBox mode: set rearm_backend: torbox, gateway.enabled: true and prune_enabled: false.
 rearm_backend: decypharr
 
 # Re-arm / prune safety limits

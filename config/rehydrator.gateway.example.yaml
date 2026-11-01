@@ -1,0 +1,27 @@
+# Mount as a Secret at /etc/rehydrator/config.yaml in the gateway namespace.
+# No CSI/config/media PVC and no tenant permission-marker init container.
+role: gateway
+tenant: tenet-nofear101
+postgres_url: "" # POSTGRES_URL; same database/tenant as the controller
+health_addr: ":8080"
+db_auto_migrate: true # Start gateway/apply schema before controller rollout.
+prune_enabled: false
+rearm_enabled: true
+rearm_backend: torbox
+api:
+  enabled: true
+cloud_usenet:
+  enabled: false
+gateway:
+  enabled: true
+  api_key: "" # GATEWAY_API_KEY; only the gateway needs provider credentials
+  qb_username: arr
+  qb_password: "" # GATEWAY_QB_PASSWORD
+  sab_api_key: "" # GATEWAY_SAB_API_KEY
+  dav_username: rclone
+  dav_password: "" # GATEWAY_DAV_PASSWORD
+  # These describe paths in consumer pods; the gateway NEVER accesses them.
+  mount_path: /storage/torbox
+  download_path: /storage/media/downloads/rehydrator
+  submit_interval_seconds: 120
+  recover_missing: true

@@ -48,3 +48,11 @@ migration submits downloads, deletes library data, nor changes CSI mounts.
 Apply both in order after earlier migrations, or enable `db_auto_migrate`.
 Back up original-source payloads as credentials may occur in private source data.
 See [direct gateway setup](torbox-gateway-setup.md) for the fresh playground.
+
+## v0.7.1: Gateway/controller handoff
+
+`033_gateway_roles.sql` adds an independent mount-verification lease, catalog
+revision and deferred staging cleanup to gateway jobs. Apply it after 032, before
+starting either new role. Run migrations once before controllers start (or let
+the gateway run `db_auto_migrate: true` first); controllers should use false.
+It does not submit provider jobs or modify library paths.

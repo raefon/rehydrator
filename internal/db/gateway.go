@@ -46,9 +46,9 @@ func (r *Repo) AddGatewaySource(ctx context.Context, tenant, category string, so
 	}
 	var id string
 	if s.Protocol == model.ProtocolTorrent {
-		err = tx.QueryRow(ctx, `INSERT INTO gateway_jobs(id,tenant,category,fingerprint,filename,nzb,name,protocol,source_kind,infohash,magnet,torrent_file,source_id) VALUES('torrent-'||gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,'torrent',$7,$8,$9,$10,$11) ON CONFLICT(tenant,infohash) WHERE protocol='torrent' DO UPDATE SET hidden=false RETURNING id`, tenant, category, "torrent:"+s.InfoHash, filename, nzb, s.SourceTitle, string(s.Kind), s.InfoHash, s.Magnet, s.TorrentFile, sid).Scan(&id)
+		err = tx.QueryRow(ctx, `INSERT INTO gateway_jobs(id,tenant,category,fingerprint,filename,nzb,name,protocol,source_kind,infohash,magnet,torrent_file,source_id) VALUES('torrent-'||gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,'torrent',$7,$8,$9,$10,$11) ON CONFLICT(tenant,infohash) WHERE protocol='torrent' DO UPDATE SET hidden=false,cleanup_requested=false RETURNING id`, tenant, category, "torrent:"+s.InfoHash, filename, nzb, s.SourceTitle, string(s.Kind), s.InfoHash, s.Magnet, s.TorrentFile, sid).Scan(&id)
 	} else {
-		err = tx.QueryRow(ctx, `INSERT INTO gateway_jobs(tenant,category,fingerprint,filename,nzb,name,source_id) VALUES($1,$2,$3,$4,$5,$4,$6) ON CONFLICT(tenant,category,fingerprint) DO UPDATE SET hidden=false RETURNING id`, tenant, category, fingerprint, filename, nzb, sid).Scan(&id)
+		err = tx.QueryRow(ctx, `INSERT INTO gateway_jobs(tenant,category,fingerprint,filename,nzb,name,source_id) VALUES($1,$2,$3,$4,$5,$4,$6) ON CONFLICT(tenant,category,fingerprint) DO UPDATE SET hidden=false,cleanup_requested=false RETURNING id`, tenant, category, fingerprint, filename, nzb, sid).Scan(&id)
 	}
 	if err != nil {
 		return CloudNZBJob{}, err

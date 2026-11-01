@@ -14,8 +14,10 @@ torrents and hosted NZBs through one CSI-mounted WebDAV catalog without
 Decypharr. It is a fresh-start playground; live cluster acceptance remains
 required. UI work is deferred.
 
-This draft is **v0.7.0**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.0`.
+For CSI deployments, use the [gateway/controller split](docs/torbox-gateway-setup.md#split-deployment-with-csi). The gateway can run in a separate namespace without tenant mounts; the controller stays inside the tenant.
+
+This draft is **v0.7.1**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.1`.
 
 ## Workflow
 
@@ -43,7 +45,7 @@ Keep **Remove Completed** enabled if that is your normal configuration.
 
 1. Copy [the configuration example](config/rehydrator.example.yaml) and fill in
    PostgreSQL, tenant, Arr, Decypharr, API authentication, and mount settings.
-2. Apply the applicable SQL migrations through **032**, or enable `db_auto_migrate`.
+2. Apply the applicable SQL migrations through **033**, or enable `db_auto_migrate`.
 3. Configure Arr webhooks for **On Grab** and **On Import**, including upgrades.
 4. Enable Jellyfin, provide its API key, and configure its Webhook plugin.
 5. Validate one movie and one episode against your running mount before broad pruning.

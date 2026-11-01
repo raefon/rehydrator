@@ -506,3 +506,8 @@ INSERT INTO gateway_jobs(id,tenant,category,fingerprint,filename,nzb,name,provid
  SELECT j.id,j.tenant,j.category,j.fingerprint,j.filename,j.nzb,j.name,j.provider_id,j.state,j.files,j.attempts,j.missing_checks,j.hidden,j.next_check_at,j.last_error,j.created_at,j.updated_at,s.id
  FROM media_cache_cloud_usenet j JOIN gateway_sources s ON s.tenant=j.tenant AND s.protocol='usenet' AND s.fingerprint=j.fingerprint
  ON CONFLICT DO NOTHING;
+-- Independent mount verification lease; the gateway never waits for CSI.
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS verify_next_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS catalog_revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS cleanup_requested BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS gateway_verification_due ON gateway_jobs(tenant,verify_next_at) WHERE state='Mounting' OR cleanup_requested;

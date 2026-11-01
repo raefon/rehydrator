@@ -33,6 +33,7 @@ type TorrentProvider interface {
 }
 type Service struct {
 	direct             bool
+	role               string
 	torrent            TorrentProvider
 	qbUser, qbPassword string
 	cfg                config.CloudUsenetConfig
@@ -92,6 +93,9 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 func (s *Service) Reconcile(ctx context.Context) error {
+	if s.role == config.RoleController {
+		return fmt.Errorf("provider reconciliation is disabled in controller role")
+	}
 	protocol := ""
 	if !s.direct {
 		protocol = model.ProtocolUsenet
@@ -194,9 +198,26 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute); err != nil {
 		return err
 	}
-	if err = s.createLinks(j); err != nil {
-		j.LastError = err.Error()
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+	if s.role == config.RoleGateway {
+		return nil
+	}
+	// Reload the publication revision used by the controller CAS.
+	j, err = s.repo.GatewayJob(ctx, s.tenant, j.ID)
+	if err != nil {
+		return err
+	}
+	return s.verifyMount(ctx, j)
+}
+
+func (s *Service) verifyMount(ctx context.Context, j db.CloudNZBJob) error {
+	var err error
+
+	if !j.Hidden {
+		if err := s.createLinks(j); err != nil {
+			j.LastError = err.Error()
+			_, err := s.repo.FinishGatewayMount(ctx, s.tenant, j, j.LastError)
+			return err
+		}
 	}
 	// One bounded CDN byte probe establishes that the delivery mount works.
 	// Arr performs its own validation/import of the complete file list.
@@ -218,20 +239,27 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	}
 	if candidate == "" {
 		j.LastError = "waiting for a nonempty cloud payload file"
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+		_, err := s.repo.FinishGatewayMount(ctx, s.tenant, j, j.LastError)
+		return err
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	readable, err := s.mountProbe.Check(probeCtx, filepath.Join(s.cfg.MountPath, s.catalogPath(j), filepath.FromSlash(candidate)))
 	cancel()
 	if err != nil || !readable {
 		j.LastError = "waiting for cloud WebDAV mount visibility/readability"
-		return s.repo.UpdateCloudNZB(ctx, s.tenant, j, time.Minute)
+		_, err := s.repo.FinishGatewayMount(ctx, s.tenant, j, j.LastError)
+		return err
 	}
 	j.State = "Completed"
 	j.LastError = ""
-	slog.Info("TorBox gateway ready for Arr import", "protocol", j.Protocol, "job_id", j.ID, "provider_id", j.ProviderID, "files", len(j.Files))
-	return s.repo.UpdateCloudNZB(ctx, s.tenant, j, 15*time.Minute)
+	var completed bool
+	completed, err = s.repo.FinishGatewayMount(ctx, s.tenant, j, "")
+	if completed {
+		slog.Info("TorBox gateway ready for Arr import", "protocol", j.Protocol, "job_id", j.ID, "provider_id", j.ProviderID, "files", len(j.Files))
+	}
+	return err
 }
+
 func (s *Service) storage(j db.CloudNZBJob) string {
 	return filepath.Join(s.cfg.DownloadPath, j.Category, j.ID)
 }
@@ -373,4 +401,41 @@ func sameCatalog(before, after []torbox.UsenetFile) bool {
 		}
 	}
 	return true
+}
+
+// SetRole selects split responsibilities. Combined remains the default.
+func (s *Service) SetRole(role string) { s.role = role }
+func (s *Service) RunMountWorker(ctx context.Context) {
+	slog.Info("gateway mount verification worker starting", "tenant", s.tenant, "mount_path", s.cfg.MountPath)
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		for i := 0; i < 5 && ctx.Err() == nil; i++ {
+			if err := s.ReconcileMount(ctx); err != nil {
+				slog.Warn("gateway mount verification failed", "error", err)
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+func (s *Service) ReconcileMount(ctx context.Context) error {
+	if s.role == config.RoleGateway {
+		return fmt.Errorf("filesystem verification is disabled in gateway role")
+	}
+	j, ok, err := s.repo.ClaimGatewayMount(ctx, s.tenant)
+	if err != nil || !ok {
+		return err
+	}
+	if j.CleanupRequested {
+		if err = s.removeStagedLinks(j); err != nil {
+			return err
+		}
+		return s.repo.FinishGatewayCleanup(ctx, s.tenant, j)
+	}
+	return s.verifyMount(ctx, j)
 }

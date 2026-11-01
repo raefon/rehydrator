@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"github.com/raefon/rehydrator/internal/config"
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/model"
 	"io"
@@ -262,7 +263,12 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if r.FormValue("deleteFiles") == "true" {
-				if e = s.removeStagedLinks(j); e != nil {
+				if s.role == config.RoleGateway {
+					e = s.repo.RequestGatewayCleanup(r.Context(), s.tenant, j.ID)
+				} else {
+					e = s.removeStagedLinks(j)
+				}
+				if e != nil {
 					http.Error(w, "staging cleanup blocked", 409)
 					return
 				}

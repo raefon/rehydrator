@@ -23,6 +23,7 @@ type Server struct {
 }
 
 type APIOptions struct {
+	Readiness                    func(context.Context) error
 	GatewayQB                    http.HandlerFunc
 	GatewaySAB                   http.HandlerFunc
 	GatewayDAV                   http.HandlerFunc
@@ -90,6 +91,14 @@ func newServer(opt APIOptions) *Server {
 	})
 
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if opt.Readiness != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			if err := opt.Readiness(ctx); err != nil {
+				http.Error(w, "not ready", 503)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready\n"))

@@ -29,11 +29,10 @@ func (c *TorrentClient) Submit(ctx context.Context, source model.TorrentMetadata
 		}
 	}
 	health := &HealthClient{key: c.key, base: c.base, http: c.http}
-	observations, e := health.Availability(ctx, []string{s.InfoHash})
+	observation, e := health.LookupTorrent(ctx, s.InfoHash)
 	if e != nil {
 		return 0, fmt.Errorf("%w: %v", ErrSubmissionNotStarted, e)
 	}
-	observation := observations[s.InfoHash]
 	if observation.TorrentID > 0 {
 		if observation.Status == Available || observation.Status == Unknown {
 			return observation.TorrentID, nil
@@ -127,19 +126,15 @@ func (c *TorrentClient) Link(ctx context.Context, id, file int64) (string, error
 	return link, nil
 }
 
-// FindActive only observes the exact hash in a complete account listing. Queue
-// identities never become active placement IDs and absence never permits an add.
+// FindActive only adopts an exact positive hash/ID match in the account listing.
+// Queue identities never become placement IDs; incomplete listings cannot prove
+// absence or permit a new submission.
 func (c *TorrentClient) FindActive(ctx context.Context, hash string) (int64, error) {
 	health := &HealthClient{key: c.key, base: c.base, http: c.http}
-	observations, err := health.Availability(ctx, []string{hash})
+	observation, err := health.LookupTorrent(ctx, hash)
 	if err != nil {
 		return 0, err
 	}
-	normalized, err := model.NormalizeInfoHash(hash)
-	if err != nil {
-		return 0, err
-	}
-	observation := observations[normalized]
 	if observation.Status == Available || observation.Status == Unknown {
 		return observation.TorrentID, nil
 	}

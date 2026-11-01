@@ -41,6 +41,25 @@ func NewHealthClient(key string) *HealthClient {
 // Availability checks account download_present, not merely global cache presence.
 // A successful complete account listing is required before inferring absence.
 func (c *HealthClient) Availability(ctx context.Context, hashes []string) (map[string]Observation, error) {
+	return c.availability(ctx, hashes, false)
+}
+
+// LookupTorrent may return a validated positive identity without exhausting the
+// account inventory. An absent torrent still requires a complete listing; a
+// truncated or repeated listing must never authorize a new submission.
+func (c *HealthClient) LookupTorrent(ctx context.Context, hash string) (Observation, error) {
+	normalized, err := model.NormalizeInfoHash(hash)
+	if err != nil {
+		return Observation{}, err
+	}
+	states, err := c.availability(ctx, []string{normalized}, true)
+	if err != nil {
+		return Observation{}, err
+	}
+	return states[normalized], nil
+}
+
+func (c *HealthClient) availability(ctx context.Context, hashes []string, stopOnPositive bool) (map[string]Observation, error) {
 	if c.key == "" {
 		return nil, fmt.Errorf("TorBox health API key is missing")
 	}
@@ -124,6 +143,18 @@ func (c *HealthClient) Availability(ctx context.Context, hashes []string) (map[s
 				states[hash] = Observation{Status: Available, Reason: "download_present", TorrentID: entry.ID}
 			} else if states[hash].Status != Available && states[hash].Status != Unknown {
 				states[hash] = Observation{Status: Unavailable, Reason: "download_not_present", TorrentID: entry.ID}
+			}
+		}
+		if stopOnPositive {
+			matched := true
+			for _, observation := range states {
+				if observation.TorrentID <= 0 || (observation.Status != Available && observation.Status != Unknown) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return states, nil
 			}
 		}
 		if len(*result.Data) == 0 {

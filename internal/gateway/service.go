@@ -107,7 +107,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			id, err := lookup.FindActive(ctx, j.InfoHash)
 			if err != nil {
 				slog.Warn("TorBox unknown submission lookup inconclusive", "job_id", j.ID, "error", err)
-				return nil
+				return s.repo.RecordUnknownGatewayLookup(ctx, s.tenant, j.ID, "unknown submission lookup inconclusive: "+err.Error())
 			}
 			if id > 0 {
 				resolved, err := s.repo.ResolveUnknownGatewayTorrent(ctx, s.tenant, j, id)

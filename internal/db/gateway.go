@@ -125,3 +125,8 @@ func (r *Repo) ResolveUnknownGatewayTorrent(ctx context.Context, tenant string, 
 	tag, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET provider_id=$4,state='Downloading',last_error='',next_check_at=now(),catalog_revision=catalog_revision+1,updated_at=now() WHERE tenant=$1 AND id=$2 AND infohash=$3 AND protocol='torrent' AND state='SubmissionUnknown' AND provider_id=0`, tenant, j.ID, j.InfoHash, id)
 	return tag.RowsAffected() > 0, err
 }
+
+func (r *Repo) RecordUnknownGatewayLookup(ctx context.Context, tenant, id, detail string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET last_error=$3,updated_at=now() WHERE tenant=$1 AND id=$2 AND state='SubmissionUnknown' AND provider_id=0`, tenant, id, detail)
+	return err
+}

@@ -163,3 +163,27 @@ func TestFindActiveIsReadOnlyAndMatchesExactAccountHash(t *testing.T) {
 		})
 	}
 }
+
+func TestExistingTorrentReusedWhenProviderRepeatsInventory(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "GET" || r.URL.Path != "/torrents/mylist" {
+			t.Error("existing torrent triggered another submission")
+			w.WriteHeader(500)
+			return
+		}
+		fmt.Fprintf(w, `{"success":true,"data":[{"id":42,"hash":%q,"download_present":true}]}`, healthHash)
+	}))
+	defer srv.Close()
+	c := NewTorrentClient("secret")
+	c.base = srv.URL
+	id, err := c.Submit(context.Background(), model.TorrentMetadata{Kind: model.SourceMagnet, Magnet: "magnet:?xt=urn:btih:" + healthHash})
+	if err != nil || id != 42 || calls != 1 {
+		t.Fatal(id, calls, err)
+	}
+	id, err = c.FindActive(context.Background(), healthHash)
+	if err != nil || id != 42 || calls != 2 {
+		t.Fatal(id, calls, err)
+	}
+}

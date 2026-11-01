@@ -1,3 +1,10 @@
+# Rehydrator v0.7.3 — Adopt verified provider matches without exhaustive pagination (unreleased)
+
+- Torrent preflight and unknown-submission reconciliation may use a validated exact hash/ID match immediately, avoiding an unnecessary next-page request that can repeat the first page and block adoption.
+- Full provider health scans still require complete inventory. Missing hashes and repeated/partial pages remain inconclusive; they never authorize an eviction or another upload.
+- Save the current unknown-submission lookup error in the job record rather than leaving only an old add-response error visible.
+- No schema changes or retry-budget resets. Existing SubmissionUnknown jobs remain observation-only.
+
 # Rehydrator v0.7.2 — Start provider transfers normally (unreleased)
 
 - Fix torrent/NZB submission accidentally forcing TorBox queue-only mode with `as_queued=true`; request normal scheduling instead.

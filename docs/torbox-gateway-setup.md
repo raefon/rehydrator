@@ -1,4 +1,4 @@
-# Direct TorBox gateway (v0.7.2 playground)
+# Direct TorBox gateway (v0.7.3 playground)
 
 Rehydrator accepts torrents and NZBs, submits them directly to TorBox, and exposes
 one read-only WebDAV catalog for CSI-rclone. Decypharr is not used in this mode.
@@ -238,8 +238,10 @@ Version 0.7.1 accidentally requested `as_queued=true` for provider submissions.
 Version 0.7.2 requests normal scheduling for both torrent and NZB adds. It does not
 start previously queued provider items automatically. Start the existing torrent
 in TorBox rather than submitting another copy. A `SubmissionUnknown` torrent job
-is then checked against complete account inventory by exact hash about every five
-minutes and can adopt the active torrent ID. This is observation-only: absent,
+is then checked against account inventory by exact hash about every five
+minutes and can adopt the active torrent ID. Version 0.7.3 accepts an exact
+positive identity match without requesting further pages. An absent hash still
+requires complete inventory; repeated/partial pages stay inconclusive. This is observation-only: absent,
 queued-only or inconclusive results retain the unknown state and never authorize
 a duplicate upload. Queue IDs are not active torrent IDs. Automatic unknown-outcome
 reconciliation for NZBs remains unavailable because they have no torrent hash.

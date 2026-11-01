@@ -1,3 +1,10 @@
+# Rehydrator v0.7.4 — Correct qBittorrent import paths (unreleased)
+
+- Report the category staging directory as qBittorrent save_path and the stable per-job directory as content_path, avoiding Sonarr's base-download-directory import warning.
+- Prefix qBittorrent file names with the job directory so files/properties reconstruct the same import location. Existing staged files, sources and WebDAV paths are unchanged; no redownload or migration is needed.
+- Persist the provider's observed download name when updating job status.
+- Add contract regressions for Sonarr's modern content-path check and legacy files/properties path reconstruction across single-file, season-pack and loose-file catalogs.
+
 # Rehydrator v0.7.3 — Adopt verified provider matches without exhaustive pagination (unreleased)
 
 - Torrent preflight and unknown-submission reconciliation may use a validated exact hash/ID match immediately, avoiding an unnecessary next-page request that can repeat the first page and block adoption.

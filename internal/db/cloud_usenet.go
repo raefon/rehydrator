@@ -128,7 +128,7 @@ func (r *Repo) UpdateCloudNZB(ctx context.Context, tenant string, j CloudNZBJob,
 	if string(files) == "null" {
 		files = []byte("[]")
 	}
-	_, err = r.pool.Exec(ctx, `UPDATE gateway_jobs SET catalog_revision=catalog_revision+CASE WHEN provider_id IS DISTINCT FROM $3 OR files IS DISTINCT FROM $5::jsonb OR (state IS DISTINCT FROM $4 AND NOT(state='Completed' AND $4='Mounting')) THEN 1 ELSE 0 END,provider_id=$3,state=CASE WHEN state='Completed' AND $4='Mounting' AND provider_id=$3 AND files=$5::jsonb THEN state ELSE $4 END,files=$5::jsonb,missing_checks=$6,last_error=$7,next_check_at=now()+($8*interval '1 second'),updated_at=now() WHERE tenant=$1 AND id=$2`, tenant, j.ID, j.ProviderID, j.State, string(files), j.MissingChecks, j.LastError, delay.Seconds())
+	_, err = r.pool.Exec(ctx, `UPDATE gateway_jobs SET catalog_revision=catalog_revision+CASE WHEN provider_id IS DISTINCT FROM $3 OR files IS DISTINCT FROM $5::jsonb OR (state IS DISTINCT FROM $4 AND NOT(state='Completed' AND $4='Mounting')) THEN 1 ELSE 0 END,provider_id=$3,state=CASE WHEN state='Completed' AND $4='Mounting' AND provider_id=$3 AND files=$5::jsonb THEN state ELSE $4 END,files=$5::jsonb,missing_checks=$6,last_error=$7,next_check_at=now()+($8*interval '1 second'),updated_at=now(),name=$9 WHERE tenant=$1 AND id=$2`, tenant, j.ID, j.ProviderID, j.State, string(files), j.MissingChecks, j.LastError, delay.Seconds(), j.Name)
 	return err
 }
 func (r *Repo) HideCloudNZB(ctx context.Context, tenant, id string) error {

@@ -1,4 +1,4 @@
-# Direct TorBox gateway (v0.7.3 playground)
+# Direct TorBox gateway (v0.7.4 playground)
 
 Rehydrator accepts torrents and NZBs, submits them directly to TorBox, and exposes
 one read-only WebDAV catalog for CSI-rclone. Decypharr is not used in this mode.
@@ -245,3 +245,19 @@ requires complete inventory; repeated/partial pages stay inconclusive. This is o
 queued-only or inconclusive results retain the unknown state and never authorize
 a duplicate upload. Queue IDs are not active torrent IDs. Automatic unknown-outcome
 reconciliation for NZBs remains unavailable because they have no torrent hash.
+
+## Sonarr base-directory import warning
+
+Versions before 0.7.4 reported identical qBittorrent `save_path` and `content_path`,
+which Sonarr refuses to import. Version 0.7.4 reports:
+
+~~~text
+save_path:    /storage/media/downloads/rehydrator/sonarr
+content_path: /storage/media/downloads/rehydrator/sonarr/torrent-UUID
+files.name:   torrent-UUID/Release/Episode.mkv
+~~~
+
+Files remain staged in their existing locations. Update the gateway image and
+let Sonarr poll the queue again; no provider re-add, file move or source reset
+is required. Keep Original content layout. If a path remains inaccessible after
+that, verify Sonarr sees the same shared staging volume as the controller.

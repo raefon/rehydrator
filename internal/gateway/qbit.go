@@ -117,7 +117,7 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 	case "torrents/categories":
 		cats := map[string]any{}
 		for cat := range s.categories {
-			cats[cat] = map[string]any{"name": cat, "savePath": s.cfg.DownloadPath + "/" + cat}
+			cats[cat] = map[string]any{"name": cat, "savePath": filepath.Join(s.cfg.DownloadPath, cat)}
 		}
 		writeJSON(w, cats)
 	case "torrents/createCategory":
@@ -230,7 +230,7 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 			for _, f := range j.Files {
 				size += f.Size
 			}
-			items = append(items, map[string]any{"hash": j.InfoHash, "name": j.Name, "category": j.Category, "state": state, "progress": progress, "size": size, "total_size": size, "amount_left": int64(float64(size) * (1 - progress)), "save_path": s.storage(j), "content_path": s.storage(j), "added_on": j.CreatedAt.Unix(), "completion_on": j.CreatedAt.Unix(), "dlspeed": 0, "upspeed": 0, "ratio": 0, "eta": 8640000, "priority": 1, "num_seeds": 0, "num_leechs": 0, "tags": ""})
+			items = append(items, map[string]any{"hash": j.InfoHash, "name": j.Name, "category": j.Category, "state": state, "progress": progress, "size": size, "total_size": size, "amount_left": int64(float64(size) * (1 - progress)), "save_path": s.torrentSavePath(j), "content_path": s.storage(j), "added_on": j.CreatedAt.Unix(), "completion_on": j.CreatedAt.Unix(), "dlspeed": 0, "upspeed": 0, "ratio": 0, "eta": 8640000, "priority": 1, "num_seeds": 0, "num_leechs": 0, "tags": ""})
 		}
 		writeJSON(w, items)
 	case "torrents/files", "torrents/properties":
@@ -247,12 +247,12 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 			if j.State == "Completed" {
 				p = 1
 			}
-			files = append(files, map[string]any{"index": i, "name": f.Name, "size": f.Size, "progress": p, "priority": 1, "is_seed": p == 1})
+			files = append(files, map[string]any{"index": i, "name": filepath.ToSlash(filepath.Join(j.ID, filepath.FromSlash(f.Name))), "size": f.Size, "progress": p, "priority": 1, "is_seed": p == 1})
 		}
 		if endpoint == "torrents/files" {
 			writeJSON(w, files)
 		} else {
-			writeJSON(w, map[string]any{"save_path": s.storage(j), "total_size": size, "seeding_time": 0, "share_ratio": 0})
+			writeJSON(w, map[string]any{"save_path": s.torrentSavePath(j), "total_size": size, "seeding_time": 0, "share_ratio": 0})
 		}
 	case "torrents/delete":
 
@@ -316,4 +316,10 @@ func (s *Service) removeStagedLinks(j db.CloudNZBJob) error {
 		}
 	}
 	return nil
+}
+
+// qBittorrent file names are relative to save_path. The stable job directory is
+// the per-torrent content root, never the client's/category's base directory.
+func (s *Service) torrentSavePath(j db.CloudNZBJob) string {
+	return filepath.Join(s.cfg.DownloadPath, j.Category)
 }

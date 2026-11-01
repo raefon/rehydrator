@@ -2,11 +2,13 @@ package torbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/raefon/rehydrator/internal/model"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +42,9 @@ func TestDirectTorrentAPIContract(t *testing.T) {
 						return
 					}
 					defer r.MultipartForm.RemoveAll()
+					if r.FormValue("as_queued") != "false" {
+						t.Error("submission explicitly requested provider queue")
+					}
 					if kind == model.SourceMagnet {
 						if r.FormValue("magnet") != source.Magnet || len(r.MultipartForm.File) != 0 {
 							t.Error("altered magnet")
@@ -96,6 +101,64 @@ func TestTorrentCompletionRequiresProviderPresence(t *testing.T) {
 			d, _, err := c.Get(context.Background(), 42)
 			if err == nil && d.Ready() {
 				t.Fatal("completed without presence")
+			}
+		})
+	}
+}
+
+func TestQueuedTorrentIDIsNotAnActivePlacement(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/torrents/mylist":
+			fmt.Fprint(w, `{"success":true,"data":[]}`)
+		case "/torrents/createtorrent":
+			fmt.Fprint(w, `{"success":true,"data":{"queued_id":987,"torrent_id":null}}`)
+		default:
+			t.Error("unexpected request", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	c := NewTorrentClient("key")
+	c.base = srv.URL
+	id, err := c.Submit(context.Background(), model.TorrentMetadata{Kind: model.SourceMagnet, Magnet: "magnet:?xt=urn:btih:0123456789012345678901234567890123456789"})
+	if id != 0 || err == nil || !strings.Contains(err.Error(), "queued_id=987") {
+		t.Fatal(id, err)
+	}
+	if errors.Is(err, ErrSubmissionNotStarted) {
+		t.Fatal("accepted queued submission incorrectly marked safe to retry")
+	}
+}
+
+func TestFindActiveIsReadOnlyAndMatchesExactAccountHash(t *testing.T) {
+	wanted := "0123456789012345678901234567890123456789"
+	for _, hash := range []string{wanted, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
+		t.Run(hash, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" || r.URL.Path != "/torrents/mylist" {
+					t.Error("lookup attempted mutation", r.Method, r.URL.Path)
+					w.WriteHeader(500)
+					return
+				}
+				if r.URL.Query().Get("offset") == "0" {
+					fmt.Fprintf(w, `{"success":true,"data":[{"id":42,"hash":%q,"download_present":true,"download_state":"cached"}]}`, hash)
+				} else {
+					fmt.Fprint(w, `{"success":true,"data":[]}`)
+				}
+			}))
+			defer srv.Close()
+			c := NewTorrentClient("key")
+			c.base = srv.URL
+			id, err := c.FindActive(context.Background(), wanted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := int64(0)
+			if hash == wanted {
+				expected = 42
+			}
+			if id != expected {
+				t.Fatal("wrong account placement adopted", id, expected)
 			}
 		})
 	}

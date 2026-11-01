@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"github.com/raefon/rehydrator/internal/model"
 )
 
@@ -95,4 +96,32 @@ func (r *Repo) WakeGatewayJob(ctx context.Context, tenant, id string) error {
 func (r *Repo) DeferGatewaySubmission(ctx context.Context, tenant, id, reason string) error {
 	_, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET state='Queued',attempts=GREATEST(attempts-1,0),last_error=$3,next_check_at=now()+interval '5 minutes',updated_at=now() WHERE tenant=$1 AND id=$2 AND state='Submitting'`, tenant, id, reason)
 	return err
+}
+
+// Unknown outcomes are observation-only. Claiming never resets the submission
+// budget or authorizes a second upload.
+func (r *Repo) ClaimUnknownGatewayTorrent(ctx context.Context, tenant string) (CloudNZBJob, bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return CloudNZBJob{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	j, err := scanCloud(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND protocol='torrent' AND state='SubmissionUnknown' AND provider_id=0 AND next_check_at<=now() ORDER BY next_check_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
+	if err == pgx.ErrNoRows {
+		return j, false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return j, false, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE gateway_jobs SET next_check_at=now()+interval '5 minutes' WHERE tenant=$1 AND id=$2", tenant, j.ID); err != nil {
+		return j, false, err
+	}
+	return j, true, tx.Commit(ctx)
+}
+func (r *Repo) ResolveUnknownGatewayTorrent(ctx context.Context, tenant string, j CloudNZBJob, id int64) (bool, error) {
+	if id <= 0 {
+		return false, fmt.Errorf("active torrent ID required")
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET provider_id=$4,state='Downloading',last_error='',next_check_at=now(),catalog_revision=catalog_revision+1,updated_at=now() WHERE tenant=$1 AND id=$2 AND infohash=$3 AND protocol='torrent' AND state='SubmissionUnknown' AND provider_id=0`, tenant, j.ID, j.InfoHash, id)
+	return tag.RowsAffected() > 0, err
 }

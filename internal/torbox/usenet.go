@@ -92,7 +92,7 @@ func (c *UsenetClient) Create(ctx context.Context, nzb []byte, filename string) 
 		return 0, err
 	}
 	_ = w.WriteField("post_processing", "-1")
-	_ = w.WriteField("as_queued", "true")
+	_ = w.WriteField("as_queued", "false")
 	if err = w.Close(); err != nil {
 		return 0, err
 	}

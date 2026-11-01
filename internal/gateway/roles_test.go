@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"github.com/raefon/rehydrator/internal/config"
+	"github.com/raefon/rehydrator/internal/model"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -133,5 +134,50 @@ func TestStaleMountVerificationCannotCompleteReplacement(t *testing.T) {
 	current, err := s.repo.GatewayJob(ctx, s.tenant, j.ID)
 	if err != nil || current.ProviderID != 456 || current.State != "Mounting" {
 		t.Fatal(current, err)
+	}
+}
+
+type observingTorrent struct {
+	*fakeTorrent
+	existing int64
+	lookups  int
+}
+
+func (p *observingTorrent) FindActive(ctx context.Context, hash string) (int64, error) {
+	p.lookups++
+	return p.existing, nil
+}
+func TestUnknownTorrentAdoptsOnlyExistingPlacementWithoutResubmission(t *testing.T) {
+	s, p, conn := testService(t)
+	s.direct = true
+	lookup := &observingTorrent{fakeTorrent: &fakeTorrent{fakeProvider: p}}
+	s.torrent = lookup
+	ctx := context.Background()
+	j, err := s.repo.AddGatewaySource(ctx, s.tenant, "sonarr", model.TorrentMetadata{Kind: model.SourceMagnet, Magnet: testMagnet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.State = "SubmissionUnknown"
+	j.LastError = "add outcome unknown"
+	if err = s.repo.UpdateCloudNZB(ctx, s.tenant, j, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.repo.GatewayJob(ctx, s.tenant, j.ID)
+	if err != nil || current.State != "SubmissionUnknown" || p.creates != 0 {
+		t.Fatal(current, p.creates, err)
+	}
+	lookup.existing = 4321
+	if _, err = conn.Exec(ctx, "UPDATE gateway_jobs SET next_check_at=now() WHERE id=$1", j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err = s.repo.GatewayJob(ctx, s.tenant, j.ID)
+	if err != nil || current.State != "Downloading" || current.ProviderID != 4321 || current.Attempts != j.Attempts || p.creates != 0 || lookup.lookups != 2 {
+		t.Fatal(current, lookup.lookups, p.creates, err)
 	}
 }

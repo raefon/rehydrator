@@ -25,6 +25,9 @@ func TestCloudUsenetAPIContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer r.MultipartForm.RemoveAll()
+			if r.FormValue("as_queued") != "false" {
+				t.Error("submission explicitly requested provider queue")
+			}
 			f, h, err := r.FormFile("file")
 			if err != nil {
 				t.Error(err)

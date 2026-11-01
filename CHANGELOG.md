@@ -1,3 +1,10 @@
+# Rehydrator v0.7.2 — Start provider transfers normally (unreleased)
+
+- Fix torrent/NZB submission accidentally forcing TorBox queue-only mode with `as_queued=true`; request normal scheduling instead.
+- Recognize queue-only torrent responses without treating a queue ID as an active torrent ID. Retain the unknown-outcome guard so accepted queued jobs are not blindly resubmitted.
+- Log preflight submission deferrals, including provider account lookup failures.
+- Read-only reconciliation can attach an existing active torrent to a SubmissionUnknown job by exact account/hash match. It never resets attempts or submits another copy. Queue-only items must first start in TorBox.
+
 # Rehydrator v0.7.1 — Separate gateway and controller roles (unreleased)
 
 - Add `role: gateway|controller|combined`, `REHYDRATOR_ROLE`, and a `--role` override. Combined remains the legacy-compatible default.

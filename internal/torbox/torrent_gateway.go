@@ -58,7 +58,7 @@ func (c *TorrentClient) Submit(ctx context.Context, source model.TorrentMetadata
 	}
 	_ = w.WriteField("seed", "1")
 	_ = w.WriteField("allow_zip", "false")
-	_ = w.WriteField("as_queued", "true")
+	_ = w.WriteField("as_queued", "false")
 	if err = w.Close(); err != nil {
 		return 0, err
 	}
@@ -67,9 +67,16 @@ func (c *TorrentClient) Submit(ctx context.Context, source model.TorrentMetadata
 		return 0, err
 	}
 	var result struct {
-		ID int64 `json:"torrent_id"`
+		ID       int64 `json:"torrent_id"`
+		QueuedID int64 `json:"queued_id"`
 	}
-	if json.Unmarshal(raw, &result) != nil || result.ID <= 0 {
+	if json.Unmarshal(raw, &result) != nil {
+		return 0, fmt.Errorf("TorBox returned an invalid torrent submission response")
+	}
+	if result.ID <= 0 {
+		if result.QueuedID > 0 {
+			return 0, fmt.Errorf("TorBox accepted torrent into provider queue (queued_id=%d), not an active torrent; start the existing queued item and reconcile its active ID by infohash", result.QueuedID)
+		}
 		return 0, fmt.Errorf("TorBox did not return a torrent ID")
 	}
 	return result.ID, nil
@@ -118,4 +125,23 @@ func (c *TorrentClient) Link(ctx context.Context, id, file int64) (string, error
 		return "", fmt.Errorf("invalid delivery URL")
 	}
 	return link, nil
+}
+
+// FindActive only observes the exact hash in a complete account listing. Queue
+// identities never become active placement IDs and absence never permits an add.
+func (c *TorrentClient) FindActive(ctx context.Context, hash string) (int64, error) {
+	health := &HealthClient{key: c.key, base: c.base, http: c.http}
+	observations, err := health.Availability(ctx, []string{hash})
+	if err != nil {
+		return 0, err
+	}
+	normalized, err := model.NormalizeInfoHash(hash)
+	if err != nil {
+		return 0, err
+	}
+	observation := observations[normalized]
+	if observation.Status == Available || observation.Status == Unknown {
+		return observation.TorrentID, nil
+	}
+	return 0, nil
 }

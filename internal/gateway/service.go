@@ -96,6 +96,32 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if s.role == config.RoleController {
 		return fmt.Errorf("provider reconciliation is disabled in controller role")
 	}
+	if lookup, ok := s.torrent.(interface {
+		FindActive(context.Context, string) (int64, error)
+	}); ok && s.direct {
+		j, claimed, err := s.repo.ClaimUnknownGatewayTorrent(ctx, s.tenant)
+		if err != nil {
+			return err
+		}
+		if claimed {
+			id, err := lookup.FindActive(ctx, j.InfoHash)
+			if err != nil {
+				slog.Warn("TorBox unknown submission lookup inconclusive", "job_id", j.ID, "error", err)
+				return nil
+			}
+			if id > 0 {
+				resolved, err := s.repo.ResolveUnknownGatewayTorrent(ctx, s.tenant, j, id)
+				if err != nil {
+					return err
+				}
+				if resolved {
+					slog.Info("TorBox unknown submission matched existing active torrent", "job_id", j.ID, "provider_id", id, "infohash", j.InfoHash)
+				}
+			}
+			return nil
+		}
+	}
+
 	protocol := ""
 	if !s.direct {
 		protocol = model.ProtocolUsenet
@@ -117,6 +143,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			id, err = s.provider.Create(ctx, j.NZB, j.Filename)
 		}
 		if errors.Is(err, torbox.ErrSubmissionNotStarted) {
+			slog.Warn("TorBox gateway submission deferred before add", "tenant", s.tenant, "job_id", j.ID, "error", err)
 			return s.repo.DeferGatewaySubmission(ctx, s.tenant, j.ID, err.Error())
 		}
 		if err != nil {

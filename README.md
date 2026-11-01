@@ -16,8 +16,8 @@ required. UI work is deferred.
 
 For CSI deployments, use the [gateway/controller split](docs/torbox-gateway-setup.md#split-deployment-with-csi). The gateway can run in a separate namespace without tenant mounts; the controller stays inside the tenant.
 
-This draft is **v0.7.1**. Run `rehydrator --version` to inspect the running binary.
-The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.1`.
+This draft is **v0.7.2**. Run `rehydrator --version` to inspect the running binary.
+The Makefile embeds `VERSION`; Docker builds accept `--build-arg VERSION=0.7.2`.
 
 ## Workflow
 

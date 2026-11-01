@@ -101,11 +101,19 @@ func (c *UsenetClient) Create(ctx context.Context, nzb []byte, filename string) 
 		return 0, err
 	}
 	var result struct {
-		ID int64 `json:"usenetdownload_id"`
+		ID       int64 `json:"usenetdownload_id"`
+		QueuedID int64 `json:"queued_id"`
 	}
-	if json.Unmarshal(raw, &result) != nil || result.ID <= 0 {
+	if json.Unmarshal(raw, &result) != nil {
+		return 0, fmt.Errorf("TorBox returned an invalid Usenet submission response")
+	}
+	if result.ID <= 0 {
+		if result.QueuedID > 0 {
+			return 0, fmt.Errorf("TorBox accepted NZB into provider queue (queued_id=%d), not an active Usenet download; inspect the existing provider job before retrying", result.QueuedID)
+		}
 		return 0, fmt.Errorf("TorBox did not return a Usenet download ID")
 	}
+
 	return result.ID, nil
 }
 func (c *UsenetClient) Get(ctx context.Context, id int64) (UsenetDownload, bool, error) {

@@ -84,3 +84,16 @@ func TestCloudUsenetRejectsUnknownAndUnsafeData(t *testing.T) {
 		})
 	}
 }
+
+func TestQueuedUsenetResponseNeverBecomesActiveID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"success":true,"data":{"queued_id":987,"usenetdownload_id":null}}`)
+	}))
+	defer srv.Close()
+	c := NewUsenetClient("secret")
+	c.base = srv.URL
+	id, err := c.Create(context.Background(), []byte(`<nzb/>`), "original.nzb")
+	if id != 0 || err == nil || !strings.Contains(err.Error(), "queued_id=987") {
+		t.Fatal(id, err)
+	}
+}

@@ -1,4 +1,4 @@
-# Direct TorBox gateway (v0.7.4 playground)
+# Direct TorBox gateway (v0.7.5 playground)
 
 Rehydrator accepts torrents and NZBs, submits them directly to TorBox, and exposes
 one read-only WebDAV catalog for CSI-rclone. Decypharr is not used in this mode.
@@ -157,6 +157,8 @@ Add a **qBittorrent** download client for torrents:
 - Initial state: Start. Content layout: Original.
 - Disable sequential download, first/last-piece priority, force-start and tags.
 - Leave per-release seeding/ratio overrides unset. TorBox manages seeding.
+
+For the complete hosted-NZB test procedure, see [NZB gateway setup](nzb-gateway-setup.md).
 
 Add a **SABnzbd** client for Usenet:
 

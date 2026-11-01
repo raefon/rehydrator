@@ -1,3 +1,11 @@
+# Rehydrator v0.7.5 — Hosted-NZB client integration checks (unreleased)
+
+- Align SAB fullstatus with the completedir field expected by Arr and explicitly report an empty sorter list, disabled sorting and retained history.
+- Log durable NZB acceptance without exposing source contents or credentials.
+- Identify TorBox queue-only NZB responses without mistaking queued IDs for active Usenet placements or permitting blind duplicate uploads.
+- Add Sonarr/Radarr-style SAB request tests for separate categories, original NZB retention, split-role completion, stable shared-mount paths and history cleanup.
+- Document a live hosted-NZB acceptance procedure using the existing gateway and CSI mount; no separate NNTP/SAB server or schema migration is required.
+
 # Rehydrator v0.7.4 — Correct qBittorrent import paths (unreleased)
 
 - Report the category staging directory as qBittorrent save_path and the stable per-job directory as content_path, avoiding Sonarr's base-download-directory import warning.

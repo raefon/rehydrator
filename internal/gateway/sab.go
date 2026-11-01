@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -43,13 +44,13 @@ func (s *Service) SAB(w http.ResponseWriter, r *http.Request) {
 	case "version":
 		writeJSON(w, map[string]any{"version": "4.4.0"})
 	case "fullstatus":
-		writeJSON(w, map[string]any{"status": map[string]any{"version": "4.4.0", "paused": false, "diskspace1": "1000", "diskspace2": "1000", "diskspacetotal1": "1000", "complete_dir": s.cfg.DownloadPath}})
+		writeJSON(w, map[string]any{"status": map[string]any{"version": "4.4.0", "paused": false, "diskspace1": "1000", "diskspace2": "1000", "diskspacetotal1": "1000", "completedir": s.cfg.DownloadPath}})
 	case "get_config":
 		cats := []map[string]any{}
 		for cat := range s.categories {
 			cats = append(cats, map[string]any{"name": cat, "dir": filepath.Join(s.cfg.DownloadPath, cat), "pp": 3, "priority": 0})
 		}
-		writeJSON(w, map[string]any{"config": map[string]any{"categories": cats, "misc": map[string]any{"complete_dir": s.cfg.DownloadPath, "enable_tv_sorting": false, "enable_movie_sorting": false}}})
+		writeJSON(w, map[string]any{"config": map[string]any{"categories": cats, "sorters": []any{}, "misc": map[string]any{"complete_dir": s.cfg.DownloadPath, "enable_tv_sorting": false, "enable_movie_sorting": false, "enable_date_sorting": false, "history_retention_option": "all"}}})
 	case "addfile":
 		category := r.FormValue("cat")
 		if !s.categories[category] {
@@ -81,6 +82,7 @@ func (s *Service) SAB(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not persist cloud NZB", 500)
 			return
 		}
+		slog.Info("SAB NZB accepted", "tenant", s.tenant, "job_id", job.ID, "category", job.Category, "state", job.State)
 		writeJSON(w, map[string]any{"status": true, "nzo_ids": []string{job.ID}})
 	case "queue", "history":
 		if r.FormValue("name") == "delete" {

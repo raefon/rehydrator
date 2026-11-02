@@ -40,6 +40,9 @@ func (d UsenetDownload) Status(providerID int64, found bool) ProviderStatus {
 		state = d.State
 	}
 	s.State = state
+	if _, failed := d.FailureMessage(); failed {
+		s.State = "failed"
+	}
 	s.Progress = validNumber(d.Progress, 1)
 	s.Speed = validNumber(d.Speed, 0)
 	s.Size = validNumber(d.Size, 0)

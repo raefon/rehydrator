@@ -125,3 +125,35 @@ and old staging links are left untouched. Sonarr should retry its queue after
 completion is reported again. Hidden jobs remain retained without restaging unless
 made visible again. Existing staging conflicts block completion rather than
 replacing files or following unsafe parent symlinks.
+
+## Failed downloads and replacement searches (v0.8.4)
+
+Terminal TorBox states such as `failed (Aborted, cannot be completed…)` become
+Rehydrator Failed jobs. The SAB history reports `status: Failed`, a sanitized
+`fail_message`, the original `nzo_id`, and the correct Arr category. These jobs no
+longer remain Downloading indefinitely and are not re-uploaded automatically.
+
+In Sonarr and Radarr's Download Clients settings, enable Failed Download Handling
+and its Redownload/automatic replacement-search option. Enable failed-history
+removal if desired. Arr can then associate the failed ID with its grab, blocklist
+the release and search for a different one. Indexers must allow automatic search
+and a suitable alternative must exist. Manually added jobs that Arr never grabbed
+may not have enough history for automatic blocklisting/search.
+
+Arr owns this decision; Rehydrator does not submit duplicate searches or directly
+change the blocklist. When Arr removes the failed client-history item, it is hidden
+from the client response but remains in the gateway database/dashboard with its
+original source. Existing stuck jobs are detected at their next provider check.
+
+HTTP errors, rate limits, uncertain submissions, processing, and mount problems
+are not turned into terminal release failures. Provider disk/write failures use
+Arr's SAB warning message so they do not automatically blocklist a good release.
+Terminal failure text is sanitized rather than forwarding provider URLs or keys.
+
+This automatic failed-download handoff applies to the SAB/NZB integration.
+Torrent failures are reported as qBittorrent `error`, which Arr may treat as a
+warning; this change does not force torrent blocklisting or replacement searches.
+
+References: [Sonarr settings](https://github.com/Servarr/Wiki/blob/master/sonarr/settings.md),
+[Sonarr SAB client](https://github.com/Sonarr/Sonarr/blob/develop/src/NzbDrone.Core/Download/Clients/Sabnzbd/Sabnzbd.cs),
+and [Radarr SAB client](https://github.com/Radarr/Radarr/blob/develop/src/NzbDrone.Core/Download/Clients/Sabnzbd/Sabnzbd.cs).

@@ -211,3 +211,7 @@ are read, and preferences do not automatically sync between different hosts.
 
 The script-free OIDC access-denied page uses the same colors and follows the OS
 preference. It does not read the dashboard's local theme preference.
+
+Terminal provider failure messages are sanitized. Failed NZBs are reported through
+SAB history so Arr's configured failed-download handling can blocklist and search
+for alternatives; see [failed NZB handling](../docs/nzb-gateway-setup.md#failed-downloads-and-replacement-searches-v084).

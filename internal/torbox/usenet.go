@@ -36,6 +36,9 @@ type UsenetDownload struct {
 }
 
 func (d UsenetDownload) Ready() bool {
+	if _, failed := d.FailureMessage(); failed {
+		return false
+	}
 	state := strings.ToLower(d.State)
 	return (state == "cached" || state == "completed") && (d.Present == nil || *d.Present) && len(d.Files) > 0
 }

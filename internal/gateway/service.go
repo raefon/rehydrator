@@ -180,6 +180,13 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if err = s.repo.RecordProviderStatus(ctx, s.tenant, j, download.Status(j.ProviderID, found)); err != nil {
 		return err
 	}
+	if message, failed := download.FailureMessage(); found && failed {
+		j.State = "Failed"
+		j.LastError = message
+		j.MissingChecks = 0
+		slog.Warn("TorBox terminal download failure reported to Arr", "tenant", s.tenant, "job_id", j.ID, "protocol", j.Protocol, "provider_id", j.ProviderID)
+		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, time.Hour)
+	}
 	if !found || (download.Present != nil && !*download.Present && (download.State == "cached" || download.State == "completed")) {
 		if j.MissingChecks < 3 {
 			j.MissingChecks++
@@ -204,11 +211,6 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	j.MissingChecks = 0
 	if download.Name != "" {
 		j.Name = download.Name
-	}
-	if strings.EqualFold(download.State, "failed") {
-		j.State = "Failed"
-		j.LastError = "TorBox provider download failed; acquire a replacement through Arr"
-		return s.repo.UpdateGatewayJob(ctx, s.tenant, j, time.Hour)
 	}
 	if !download.Ready() {
 		j.State = "Downloading"

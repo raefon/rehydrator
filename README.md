@@ -5,7 +5,7 @@ sources in PostgreSQL, and exposes a shared WebDAV catalog for CSI-rclone. A lib
 controller stages and verifies files for Sonarr/Radarr and refreshes Jellyfin.
 Seerr and playback webhooks can request restoration of tracked releases.
 
-Current version: **v0.8.3**. Run `rehydrator --version` to inspect your binary.
+Current version: **v0.8.4**. Run `rehydrator --version` to inspect your binary.
 
 ## Deployment
 

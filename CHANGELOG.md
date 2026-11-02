@@ -1,3 +1,10 @@
+# Rehydrator v0.8.4 — Report terminal provider download failures to Arr (unreleased)
+
+- Recognize decorated TorBox failed/aborted states, including NZBs that cannot be completed, instead of leaving them Downloading.
+- Report terminal NZB failures as SAB history Failed entries with a sanitized fail_message and stable download identity, enabling Arr's configured native failed-download blocklisting/replacement search.
+- Keep network errors, uncertain submissions, processing and mount delays separate from release failures. Preserve Arr's disk/write-error warning special case.
+- Retain original sources and job history after Arr removes failed client entries. No schema migration beyond 035 required.
+
 # Rehydrator v0.8.3 — Match the shared Authentik theme (unreleased)
 
 - Match Authentik's supplied white/charcoal surfaces, rounded cards, soft controls and shadows while retaining Rehydrator's green accent.

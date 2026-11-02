@@ -187,7 +187,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !allowed {
-		http.Error(w, "account is not permitted", 403)
+		denyAccount(w)
 		return
 	}
 	expires := time.Now().Add(time.Hour)

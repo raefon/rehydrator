@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: ghcr.io/raefon/rehydrator:0.8.1
+          image: ghcr.io/raefon/rehydrator:0.8.2
           args: ["--role=gateway", "--config=/etc/rehydrator/config.yaml"]
           ports:
             - name: http
@@ -72,7 +72,7 @@ spec:
         fsGroup: 568
       containers:
         - name: controller
-          image: ghcr.io/raefon/rehydrator:0.8.1
+          image: ghcr.io/raefon/rehydrator:0.8.2
           args: ["--role=controller", "--config=/etc/rehydrator/config.yaml"]
           ports:
             - name: http

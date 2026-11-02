@@ -1,3 +1,8 @@
+# Rehydrator v0.8.2 — OIDC access-denied page (unreleased)
+
+- Replace the plain account-denied response with an accessible, responsive Rehydrator page and sign-in retry link.
+- Keep HTTP 403 and the existing authorization checks; no token, user or group details are exposed. The page is embedded and needs no frontend assets or external requests.
+
 # Rehydrator v0.8.1 — Release-named SAB import paths (unreleased)
 
 - Persist sanitized release folders for NZB staging and report them as SAB history storage, keeping opaque job IDs as stable internal identity.

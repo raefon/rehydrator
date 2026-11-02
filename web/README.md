@@ -195,3 +195,7 @@ worker's bounded capacity and provider response times can delay execution.
 NZB staging uses a persisted release folder underneath each stable job directory
 as of v0.8.1; apply migration 035 and upgrade both gateway/controller roles. Provider
 progress and WebDAV paths are unaffected. See [SAB import paths](../docs/nzb-gateway-setup.md#release-named-import-folders-v081).
+
+Denied OIDC group access shows a branded HTTP 403 page with a sign-in retry link.
+It does not sign users out of Authentik; switch identity-provider accounts first
+if you need to retry with a different identity.

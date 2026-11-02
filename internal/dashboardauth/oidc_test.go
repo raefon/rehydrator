@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +90,9 @@ func TestOIDCFlow(t *testing.T) {
 			if tc.denied != 0 {
 				if w.Code != tc.denied {
 					t.Fatal(w.Code, w.Body.String())
+				}
+				if tc.denied == 403 && (!strings.Contains(w.Body.String(), "This instance isn’t yours.") || w.Header().Get("Content-Type") != "text/html; charset=utf-8") {
+					t.Fatal("group rejection did not use denied page")
 				}
 				if len(a.sessions) != 0 {
 					t.Fatal("invalid login created session")

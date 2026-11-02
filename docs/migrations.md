@@ -68,3 +68,12 @@ No new migration is required beyond 034. Old tables and historical migrations ar
 retained so existing databases and source payloads can still be upgraded. Update
 removed YAML/environment settings using [configuration](configuration.md); do not
 drop tables or delete old source records as part of this upgrade.
+
+## v0.8.1: SAB release folders
+
+`035_sab_release_folder.sql` adds a persisted release folder for NZB import staging.
+Visible completed NZBs without a pinned folder return to Mounting for local
+verification; their provider IDs, source payloads, attempts and WebDAV paths stay
+unchanged. The controller creates the release-named staging links and verifies a
+bounded read before completion. Existing old links remain in place. Hidden history
+is not restaged until made visible again. Apply 035 before upgrading either role.

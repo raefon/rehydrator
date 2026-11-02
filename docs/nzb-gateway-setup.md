@@ -27,7 +27,7 @@ after updating its configuration Secret.
 The controller needs no additional credentials for hosted NZBs.
 
 For the tightened SAB client responses and acceptance logs, deploy v0.7.5 or
-later. Apply the current schema through migration 034.
+later. Apply the current schema through migration 035.
 
 ## Sonarr and Radarr
 
@@ -109,3 +109,19 @@ NZB retention, split-role readiness, staged import paths and retained catalog af
 history cleanup. They use mocked TorBox responses and simulated mounted files.
 Live TorBox Usenet completion, actual Arr import and Jellyfin playback must be
 confirmed with the first real NZB; torrent success alone does not verify them.
+
+## Release-named import folders (v0.8.1)
+
+SAB history reports `storage` as
+`<download_path>/<category>/<job-id>/<release-folder>/`. The job ID remains the
+stable download identity. Release names are sanitized and persisted when the
+controller first stages a provider-ready NZB, then remain fixed across restarts,
+provider name changes and recovery. Provider-relative filenames are preserved.
+
+Apply migration 035 before rolling out both roles. Existing visible completed
+NZBs return to Mounting until the controller creates and verifies the new staging
+path. No provider re-download is requested, original WebDAV paths remain valid,
+and old staging links are left untouched. Sonarr should retry its queue after
+completion is reported again. Hidden jobs remain retained without restaging unless
+made visible again. Existing staging conflicts block completion rather than
+replacing files or following unsafe parent symlinks.

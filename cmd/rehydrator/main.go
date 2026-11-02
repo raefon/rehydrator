@@ -29,7 +29,7 @@ import (
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.8.0"
+var version = "0.8.1"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")

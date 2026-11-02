@@ -72,7 +72,7 @@ func TestGatewayPublishesWithoutMountAndControllerCompletes(t *testing.T) {
 	if current.State != "Completed" {
 		t.Fatal(current)
 	}
-	stage := filepath.Join(s.storage(j), "Release", "Movie & test.mkv")
+	stage := filepath.Join(s.storage(current), "Release", "Movie & test.mkv")
 	if link, err := os.Readlink(stage); err != nil || link != target {
 		t.Fatal(link, err)
 	}

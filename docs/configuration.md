@@ -49,7 +49,7 @@ remain for upgrade compatibility, and existing `cloud-nzb-…` job IDs stay stab
 Old library links pointing to another WebDAV layout are not automatically migrated.
 Use a database backup and reconcile those paths deliberately.
 
-Apply schema through 034 before new binaries, or start the gateway with
+Apply schema through 035 before new binaries, or start the gateway with
 `db_auto_migrate: true` before upgrading the controller. No cleanup migration or
 manual table drop is necessary for this consolidation.
 

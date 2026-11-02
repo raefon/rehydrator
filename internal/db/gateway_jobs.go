@@ -12,6 +12,7 @@ import (
 )
 
 type GatewayJob struct {
+	ReleaseFolder                                    string
 	ProviderStatus                                   *torbox.ProviderStatus
 	ID, Category, Filename, Name, State, LastError   string
 	Protocol, SourceKind, InfoHash, Magnet, SourceID string
@@ -26,12 +27,12 @@ type GatewayJob struct {
 	Files                                            []torbox.UsenetFile
 }
 
-const gatewayColumns = "id,category,filename,name,state,last_error,nzb,provider_id,attempts,missing_checks,hidden,created_at,files,protocol,source_kind,infohash,magnet,torrent_file,COALESCE(source_id,''),cleanup_requested,catalog_revision,provider_status"
+const gatewayColumns = "id,category,filename,name,state,last_error,nzb,provider_id,attempts,missing_checks,hidden,created_at,files,protocol,source_kind,infohash,magnet,torrent_file,COALESCE(source_id,''),cleanup_requested,catalog_revision,provider_status,release_folder"
 
 func scanGatewayJob(row pgx.Row) (GatewayJob, error) {
 	var j GatewayJob
 	var files, status []byte
-	err := row.Scan(&j.ID, &j.Category, &j.Filename, &j.Name, &j.State, &j.LastError, &j.NZB, &j.ProviderID, &j.Attempts, &j.MissingChecks, &j.Hidden, &j.CreatedAt, &files, &j.Protocol, &j.SourceKind, &j.InfoHash, &j.Magnet, &j.TorrentFile, &j.SourceID, &j.CleanupRequested, &j.CatalogRevision, &status)
+	err := row.Scan(&j.ID, &j.Category, &j.Filename, &j.Name, &j.State, &j.LastError, &j.NZB, &j.ProviderID, &j.Attempts, &j.MissingChecks, &j.Hidden, &j.CreatedAt, &files, &j.Protocol, &j.SourceKind, &j.InfoHash, &j.Magnet, &j.TorrentFile, &j.SourceID, &j.CleanupRequested, &j.CatalogRevision, &status, &j.ReleaseFolder)
 	if err == nil {
 		err = json.Unmarshal(files, &j.Files)
 		if err == nil && len(status) > 0 {

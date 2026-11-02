@@ -3,7 +3,7 @@ role: controller
 tenant: tenet-nofear101
 postgres_url: "" # POSTGRES_URL; same database/tenant as its gateway
 health_addr: ":8080"
-db_auto_migrate: false # Gateway/migration job must apply schema through 034 first.
+db_auto_migrate: false # Gateway/migration job must apply schema through 035 first.
 csi_path: /storage/media
 rearm_enabled: true
 api:

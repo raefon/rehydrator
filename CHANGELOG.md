@@ -1,3 +1,10 @@
+# Rehydrator v0.8.1 — Release-named SAB import paths (unreleased)
+
+- Persist sanitized release folders for NZB staging and report them as SAB history storage, keeping opaque job IDs as stable internal identity.
+- Verify the release-named staging path before announcing completion; freeze its name across provider polling, restarts and recovery.
+- Re-verify existing visible completed NZBs without re-downloading or deleting old staging links. Torrent staging and WebDAV paths are unchanged.
+- Apply migration 035 before new binaries, or start the schema-migrating gateway before upgrading the controller.
+
 # Rehydrator v0.8.0 — Direct gateway consolidation (unreleased)
 
 - Remove Decypharr clients and lifecycle operations, the separate cloud-NZB backend/routes, provider pruning APIs, and the superseded periodic file/provider-health worker.

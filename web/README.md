@@ -191,3 +191,7 @@ checks retain five-minute delays. Submission spacing remains independent. This d
 Sonarr/Radarr's download-client polling, the controller's 15-second worker tick, or
 the dashboard's 10-second database refresh. Due times are scheduling targets; the
 worker's bounded capacity and provider response times can delay execution.
+
+NZB staging uses a persisted release folder underneath each stable job directory
+as of v0.8.1; apply migration 035 and upgrade both gateway/controller roles. Provider
+progress and WebDAV paths are unaffected. See [SAB import paths](../docs/nzb-gateway-setup.md#release-named-import-folders-v081).

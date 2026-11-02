@@ -24,7 +24,7 @@ rehydrator --role=gateway --config=/etc/rehydrator/config.yaml
 rehydrator --role=controller --config=/config/rehydrator.yaml
 ```
 
-Apply schema through 034 before rollout, or start the gateway with
+Apply schema through 035 before rollout, or start the gateway with
 `db_auto_migrate: true` before controllers. Use false on controllers. `/healthz`
 checks process liveness; gateway `/readyz` checks the database/catalog without
 requiring Arr or CSI. The [deployment example](../deploy/gateway-controller.example.yaml)

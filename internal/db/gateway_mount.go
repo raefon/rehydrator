@@ -13,7 +13,7 @@ func (r *Repo) ClaimGatewayMount(ctx context.Context, tenant string) (GatewayJob
 		return GatewayJob{}, false, err
 	}
 	defer tx.Rollback(ctx)
-	j, err := scanGatewayJob(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND (state='Mounting' OR cleanup_requested) AND verify_next_at<=now() ORDER BY verify_next_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
+	j, err := scanGatewayJob(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND (state='Mounting' OR cleanup_requested OR (protocol='usenet' AND state='Completed' AND NOT hidden AND release_folder='')) AND verify_next_at<=now() ORDER BY verify_next_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
 	if err == pgx.ErrNoRows {
 		return j, false, tx.Commit(ctx)
 	}
@@ -42,7 +42,7 @@ func (r *Repo) FinishGatewayCleanup(ctx context.Context, tenant string, j Gatewa
 }
 
 func (r *Repo) GatewayCatalogReady(ctx context.Context, tenant string) error {
-	rows, err := r.pool.Query(ctx, `SELECT id,catalog_revision,verify_next_at,cleanup_requested FROM gateway_jobs WHERE tenant=$1 LIMIT 0`, tenant)
+	rows, err := r.pool.Query(ctx, `SELECT id,catalog_revision,verify_next_at,cleanup_requested,release_folder FROM gateway_jobs WHERE tenant=$1 LIMIT 0`, tenant)
 	if err != nil {
 		return err
 	}

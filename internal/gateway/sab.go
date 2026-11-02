@@ -118,7 +118,7 @@ func (s *Service) SAB(w http.ResponseWriter, r *http.Request) {
 			if filter := r.FormValue("nzo_ids"); filter != "" && !strings.Contains(","+filter+",", ","+j.ID+",") {
 				continue
 			}
-			terminal := j.State == "Completed" || j.State == "Failed"
+			terminal := (j.State == "Completed" && j.ReleaseFolder != "") || j.State == "Failed"
 			if (mode == "history") != terminal {
 				continue
 			}
@@ -137,7 +137,11 @@ func (s *Service) SAB(w http.ResponseWriter, r *http.Request) {
 			for _, f := range j.Files {
 				size += f.Size
 			}
-			slots = append(slots, map[string]any{"nzo_id": j.ID, "name": j.Name, "filename": j.Name, "nzb_name": j.Filename, "status": status, "category": j.Category, "cat": j.Category, "storage": s.storage(j), "bytes": size, "fail_message": j.LastError, "completed": j.CreatedAt.Unix(), "download_time": 1, "percentage": "0", "mb": "0", "mbleft": "0", "timeleft": "0:00:00", "priority": "Normal"})
+			releaseName := j.Name
+			if j.ReleaseFolder != "" {
+				releaseName = j.ReleaseFolder
+			}
+			slots = append(slots, map[string]any{"nzo_id": j.ID, "name": releaseName, "filename": releaseName, "nzb_name": j.Filename, "status": status, "category": j.Category, "cat": j.Category, "storage": s.storage(j), "bytes": size, "fail_message": j.LastError, "completed": j.CreatedAt.Unix(), "download_time": 1, "percentage": "0", "mb": "0", "mbleft": "0", "timeleft": "0:00:00", "priority": "Normal"})
 		}
 		writeJSON(w, map[string]any{mode: map[string]any{"slots": slots, "noofslots": len(slots), "noofslots_total": len(slots), "status": "Downloading", "paused": false, "diskspace1": "1000", "diskspace2": "1000", "speed": "0", "kbpersec": "0", "mb": "0", "mbleft": "0", "timeleft": "0:00:00"}})
 	default:

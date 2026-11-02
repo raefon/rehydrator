@@ -248,6 +248,15 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 func (s *Service) verifyMount(ctx context.Context, j db.GatewayJob) error {
 	var err error
+	if j.Protocol == model.ProtocolUsenet && j.ReleaseFolder == "" {
+		j, err = s.repo.PinGatewayReleaseFolder(ctx, s.tenant, j, releaseFolder(j))
+		if err != nil {
+			return err
+		}
+	}
+	if j.Protocol == model.ProtocolUsenet && !validReleaseFolder(j.ReleaseFolder) {
+		return fmt.Errorf("invalid persisted NZB release folder")
+	}
 
 	if !j.Hidden {
 		if err := s.createLinks(j); err != nil {
@@ -280,7 +289,11 @@ func (s *Service) verifyMount(ctx context.Context, j db.GatewayJob) error {
 		return err
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	readable, err := s.mountProbe.Check(probeCtx, filepath.Join(s.cfg.MountPath, s.catalogPath(j), filepath.FromSlash(candidate)))
+	probePath := filepath.Join(s.cfg.MountPath, s.catalogPath(j), filepath.FromSlash(candidate))
+	if j.Protocol == model.ProtocolUsenet && !j.Hidden {
+		probePath = filepath.Join(s.storage(j), filepath.FromSlash(candidate))
+	}
+	readable, err := s.mountProbe.Check(probeCtx, probePath)
 	cancel()
 	if err != nil || !readable {
 		j.LastError = "waiting for cloud WebDAV mount visibility/readability"
@@ -298,7 +311,11 @@ func (s *Service) verifyMount(ctx context.Context, j db.GatewayJob) error {
 }
 
 func (s *Service) storage(j db.GatewayJob) string {
-	return filepath.Join(s.cfg.DownloadPath, j.Category, j.ID)
+	root := filepath.Join(s.cfg.DownloadPath, j.Category, j.ID)
+	if j.Protocol == model.ProtocolUsenet && j.ReleaseFolder != "" {
+		return filepath.Join(root, j.ReleaseFolder)
+	}
+	return root
 }
 func (s *Service) createLinks(j db.GatewayJob) error {
 	if !s.categories[j.Category] {

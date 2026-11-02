@@ -1,3 +1,9 @@
+# Rehydrator v0.8.3 — Match the shared Authentik theme (unreleased)
+
+- Match Authentik's supplied white/charcoal surfaces, rounded cards, soft controls and shadows while retaining Rehydrator's green accent.
+- Add per-host light/dark/system selection with system-change tracking and a stored visual preference; authentication and tenant data are unaffected.
+- Align the standalone OIDC denial page with the same neutral palette using OS light/dark preference, retaining its script-free HTTP 403 behavior.
+
 # Rehydrator v0.8.2 — OIDC access-denied page (unreleased)
 
 - Replace the plain account-denied response with an accessible, responsive Rehydrator page and sign-in retry link.

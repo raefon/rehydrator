@@ -199,3 +199,15 @@ progress and WebDAV paths are unaffected. See [SAB import paths](../docs/nzb-gat
 Denied OIDC group access shows a branded HTTP 403 page with a sign-in retry link.
 It does not sign users out of Authentik; switch identity-provider accounts first
 if you need to retry with a different identity.
+
+## Appearance
+
+The dashboard matches the shared Authentik theme's white / `#1e1e1e` page surfaces,
+white / `#1a1a1a` cards, translucent inputs, one-rem corners and soft shadows.
+Rehydrator keeps its green action accent with darker link text in light mode.
+Choose System, Light or Dark in the header; the choice is stored per hostname as
+`rehydrator-theme`. System tracks OS changes. No Authentik settings or credentials
+are read, and preferences do not automatically sync between different hosts.
+
+The script-free OIDC access-denied page uses the same colors and follows the OS
+preference. It does not read the dashboard's local theme preference.

@@ -95,8 +95,11 @@ flows share this mode and retain their concurrency/dedupe limits. Global manual
 library refresh remains explicitly available.
 
 Only plugin statuses `Created` and `Refreshed` count as accepted requests.
-`PathNotFound`, `ParentNotFound`, `Failed`, malformed responses, and HTTP failures
-are reported as failures. A missing plugin does not trigger a full scan.
+`ParentNotFound` (including an HTTP 404 with that plugin status) sends a native
+`/Library/Media/Updated` notification for the containing folder so Jellyfin can
+discover it asynchronously. Acceptance does not confirm that indexing finished.
+`PathNotFound`, `Failed`, malformed responses, and other HTTP failures remain
+failures. A missing plugin does not trigger a fallback or a full scan.
 Logs show the returned status/item ID; metadata processing is still asynchronous.
 Paths must match Jellyfin's library view, and mounted files must be readable.
 The integration does not repair WebDAV streaming errors or mount timeouts.

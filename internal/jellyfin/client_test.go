@@ -83,7 +83,7 @@ func TestLibraryRefreshAndPing(t *testing.T) {
 }
 
 func TestTargetedScanResults(t *testing.T) {
-	for _, status := range []string{"Created", "Refreshed", "PathNotFound", "ParentNotFound", "Failed", ""} {
+	for _, status := range []string{"Created", "Refreshed", "PathNotFound", "Failed", ""} {
 		t.Run(status, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != "POST" || r.URL.Path != "/Library/ScanPath" || r.Header.Get("Authorization") != `MediaBrowser Token="secret"` {
@@ -113,5 +113,56 @@ func TestTargetedScanMissingPlugin(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatal("unexpected fallback scan")
+	}
+}
+
+func TestMissingParentDiscovery(t *testing.T) {
+	for _, status := range []int{200, 404} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					w.WriteHeader(status)
+					_, _ = w.Write([]byte(`{"Status":"ParentNotFound"}`))
+					return
+				}
+				if r.URL.Path != "/Library/Media/Updated" || r.Method != "POST" {
+					t.Errorf("unexpected fallback: %s %s", r.Method, r.URL.Path)
+				}
+				var body struct {
+					Updates []struct{ Path, UpdateType string }
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if len(body.Updates) != 1 || body.Updates[0].Path != "/media/movies/New Movie" || body.Updates[0].UpdateType != "Modified" {
+					t.Errorf("unexpected notification: %+v", body)
+				}
+				w.WriteHeader(204)
+			}))
+			defer server.Close()
+			if err := NewClient(server.URL, "secret", time.Second, "targeted_scan").RefreshPath(context.Background(), "/media/movies/New Movie/movie.mkv"); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 2 {
+				t.Fatalf("calls=%d", calls)
+			}
+		})
+	}
+}
+
+func TestMissingParentNotificationFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/Library/ScanPath" {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"Status":"ParentNotFound"}`))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	if err := NewClient(server.URL, "secret", time.Second, "targeted_scan").RefreshPath(context.Background(), "/media/new/movie.mkv"); err == nil {
+		t.Fatal("failed discovery notification accepted")
 	}
 }

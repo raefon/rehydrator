@@ -1,3 +1,9 @@
+# Rehydrator v0.8.5 — Discover unindexed Jellyfin parent folders (unreleased)
+
+- Fall back to a native Jellyfin folder-change notification when TargetedScan reports ParentNotFound, including HTTP 404 responses carrying that status.
+- Apply the fallback to movie and episode refreshes; discovery remains asynchronous and does not trigger a full library scan.
+- Keep missing-plugin, missing-file and other scan failures visible. No schema migration required.
+
 # Rehydrator v0.8.4 — Report terminal provider download failures to Arr (unreleased)
 
 - Recognize decorated TorBox failed/aborted states, including NZBs that cannot be completed, instead of leaving them Downloading.

@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"time"
 )
@@ -63,21 +65,38 @@ func (c *Client) RefreshPath(ctx context.Context, path string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("jellyfin refresh failed: %s", resp.Status)
-	}
-	if c.refreshMode == "targeted_scan" {
+	if c.refreshMode == "targeted_scan" && (resp.StatusCode == http.StatusNotFound || (resp.StatusCode >= 200 && resp.StatusCode < 300)) {
 		var result struct {
 			Status string
 			ItemId string
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result)
+		if err == nil && result.Status == "ParentNotFound" {
+			// Let Jellyfin discover the unindexed folder through its native notifier.
+			// This is asynchronous; acceptance does not mean indexing has finished.
+			parent := pathpkg.Dir(path)
+			notifier := *c
+			notifier.refreshMode = "notification"
+			if err := notifier.RefreshPath(ctx, parent); err != nil {
+				return fmt.Errorf("Jellyfin parent discovery notification failed: %w", err)
+			}
+			slog.Info("Jellyfin parent discovery notification accepted", "path", path, "parent_path", parent)
+			return nil
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("jellyfin refresh failed: %s", resp.Status)
+		}
+		if err != nil {
 			return fmt.Errorf("invalid targeted scan response: %w", err)
 		}
 		if result.Status != "Created" && result.Status != "Refreshed" {
 			return fmt.Errorf("Jellyfin targeted scan rejected path: status=%q", result.Status)
 		}
 		slog.Info("Jellyfin targeted scan accepted", "path", path, "status", result.Status, "item_id", result.ItemId)
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("jellyfin refresh failed: %s", resp.Status)
 	}
 	return nil
 }

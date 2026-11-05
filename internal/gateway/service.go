@@ -250,14 +250,14 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 func (s *Service) verifyMount(ctx context.Context, j db.GatewayJob) error {
 	var err error
-	if j.Protocol == model.ProtocolUsenet && j.ReleaseFolder == "" {
+	if j.ReleaseFolder == "" {
 		j, err = s.repo.PinGatewayReleaseFolder(ctx, s.tenant, j, releaseFolder(j))
 		if err != nil {
 			return err
 		}
 	}
-	if j.Protocol == model.ProtocolUsenet && !validReleaseFolder(j.ReleaseFolder) {
-		return fmt.Errorf("invalid persisted NZB release folder")
+	if !validReleaseFolder(j.ReleaseFolder) {
+		return fmt.Errorf("invalid persisted release folder")
 	}
 
 	if !j.Hidden {
@@ -314,7 +314,7 @@ func (s *Service) verifyMount(ctx context.Context, j db.GatewayJob) error {
 
 func (s *Service) storage(j db.GatewayJob) string {
 	root := filepath.Join(s.cfg.DownloadPath, j.Category, j.ID)
-	if j.Protocol == model.ProtocolUsenet && j.ReleaseFolder != "" {
+	if j.ReleaseFolder != "" {
 		return filepath.Join(root, j.ReleaseFolder)
 	}
 	return root

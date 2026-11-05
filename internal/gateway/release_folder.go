@@ -13,8 +13,11 @@ func releaseFolder(j db.GatewayJob) string {
 	if name == "" {
 		name = j.Filename
 	}
-	if strings.HasSuffix(strings.ToLower(name), ".nzb") {
-		name = name[:len(name)-4]
+	for _, suffix := range []string{".nzb", ".torrent"} {
+		if strings.HasSuffix(strings.ToLower(name), suffix) {
+			name = name[:len(name)-len(suffix)]
+			break
+		}
 	}
 	var out strings.Builder
 	for _, r := range name {

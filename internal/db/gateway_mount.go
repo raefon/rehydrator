@@ -13,7 +13,7 @@ func (r *Repo) ClaimGatewayMount(ctx context.Context, tenant string) (GatewayJob
 		return GatewayJob{}, false, err
 	}
 	defer tx.Rollback(ctx)
-	j, err := scanGatewayJob(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND (state='Mounting' OR cleanup_requested OR (protocol='usenet' AND state='Completed' AND NOT hidden AND release_folder='')) AND verify_next_at<=now() ORDER BY verify_next_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
+	j, err := scanGatewayJob(tx.QueryRow(ctx, "SELECT "+catalogColumns()+" FROM gateway_jobs WHERE tenant=$1 AND (state='Mounting' OR cleanup_requested OR (state='Completed' AND NOT hidden AND release_folder='')) AND verify_next_at<=now() ORDER BY verify_next_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
 	if err == pgx.ErrNoRows {
 		return j, false, tx.Commit(ctx)
 	}

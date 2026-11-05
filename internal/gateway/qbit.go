@@ -247,7 +247,7 @@ func (s *Service) QBittorrent(w http.ResponseWriter, r *http.Request) {
 			if j.State == "Completed" {
 				p = 1
 			}
-			files = append(files, map[string]any{"index": i, "name": filepath.ToSlash(filepath.Join(j.ID, filepath.FromSlash(f.Name))), "size": f.Size, "progress": p, "priority": 1, "is_seed": p == 1})
+			files = append(files, map[string]any{"index": i, "name": filepath.ToSlash(filepath.Join(filepath.Base(s.storage(j)), filepath.FromSlash(f.Name))), "size": f.Size, "progress": p, "priority": 1, "is_seed": p == 1})
 		}
 		if endpoint == "torrents/files" {
 			writeJSON(w, files)
@@ -318,8 +318,11 @@ func (s *Service) removeStagedLinks(j db.GatewayJob) error {
 	return nil
 }
 
-// qBittorrent file names are relative to save_path. The stable job directory is
-// the per-torrent content root, never the client's/category's base directory.
+// qBittorrent file names are relative to save_path. Named releases use the
+// stable job directory as save_path and a release-named child as content_path.
 func (s *Service) torrentSavePath(j db.GatewayJob) string {
+	if j.ReleaseFolder != "" {
+		return filepath.Join(s.cfg.DownloadPath, j.Category, j.ID)
+	}
 	return filepath.Join(s.cfg.DownloadPath, j.Category)
 }

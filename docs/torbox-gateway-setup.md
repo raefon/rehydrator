@@ -93,3 +93,14 @@ Test a single torrent and NZB before broad acquisition. Confirm durable source
 storage, provider completion, WebDAV visibility, controller verification, Arr
 import and Jellyfin refresh. Unit tests use provider mocks and simulated mounted
 files; they do not replace a live CSI/provider test.
+
+### Torrent release folder names
+
+Torrent imports use `<download_path>/<category>/<job-id>/<release-name>/`.
+The qBittorrent API reports the job directory as `save_path`, its release-named
+child as `content_path`, and files relative to that save path. This lets Arr parse
+episode numbers from the release folder instead of an opaque job ID. The controller
+re-verifies visible completed torrents without a pinned release folder at the new
+path; it does not resubmit the torrent or change WebDAV paths. Existing staging
+links remain in place for already imported library links. Upgrade both gateway and
+controller together so their reported and verified paths agree.

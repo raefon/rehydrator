@@ -133,3 +133,22 @@ func TestCompletedNZBUpgradeUsesReleaseFolderWithoutRedownload(t *testing.T) {
 		})
 	}
 }
+
+func TestTorrentReleaseNamedImportPaths(t *testing.T) {
+	s := &Service{cfg: config.GatewayStorageConfig{DownloadPath: "/downloads"}}
+	j := db.GatewayJob{ID: "torrent-uuid", Category: "sonarr", Protocol: "torrent", Name: "Demon.Slayer.S04E02.1080p"}
+	// Legacy paths remain usable until the controller publishes a named folder.
+	if s.storage(j) != "/downloads/sonarr/torrent-uuid" {
+		t.Fatal(s.storage(j))
+	}
+	j.ReleaseFolder = releaseFolder(j)
+	if filepath.Base(s.storage(j)) != j.Name {
+		t.Fatal(s.storage(j))
+	}
+	if filepath.Dir(s.storage(j)) != s.torrentSavePath(j) {
+		t.Fatal("content path must be below save path")
+	}
+	if got := releaseFolder(db.GatewayJob{Filename: "Show.S01E01.torrent"}); got != "Show.S01E01" {
+		t.Fatal(got)
+	}
+}

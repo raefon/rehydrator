@@ -1,3 +1,9 @@
+# Rehydrator v0.8.6 — Release-named torrent import folders (unreleased)
+
+- Extend pinned release-named staging to torrents so Sonarr can parse episode and season names instead of opaque job IDs.
+- Keep qBittorrent save paths, content paths and relative file paths consistent for modern and legacy Arr clients.
+- Re-verify visible completed torrents without re-uploading; retain old staging links and stable WebDAV paths. Upgrade gateway and controller together. No schema migration required.
+
 # Rehydrator v0.8.5 — Discover unindexed Jellyfin parent folders (unreleased)
 
 - Fall back to a native Jellyfin folder-change notification when TargetedScan reports ParentNotFound, including HTTP 404 responses carrying that status.

@@ -12,6 +12,7 @@ import (
 )
 
 type Entry struct {
+	Source  string            `json:"source"`
 	Time    string            `json:"time"`
 	Level   string            `json:"level"`
 	Message string            `json:"message"`
@@ -49,7 +50,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	if len(msg) > 512 {
 		msg = msg[:512]
 	}
-	e := Entry{Time: r.Time.UTC().Format(time.RFC3339), Level: r.Level.String(), Message: msg, Fields: map[string]string{}}
+	e := Entry{Time: r.Time.UTC().Format(time.RFC3339Nano), Level: r.Level.String(), Message: msg, Fields: map[string]string{}}
 	add := func(a slog.Attr) {
 		if h.grouped {
 			return

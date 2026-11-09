@@ -19,3 +19,15 @@ API contracts before these views can display real jobs or perform actions.
 
 The React/TypeScript version now lives in [web](../../web/README.md). This HTML
 file remains the original standalone visual reference.
+
+## Unified live logs preview
+
+Open [logs.html](logs.html) directly in a browser, or visit
+http://localhost:8090/docs/mockups/logs.html when serving the repository root
+with `python3 -m http.server 8090`.
+The preview reuses `web/src/style.css`; serve the repository root so that
+stylesheet remains accessible. Gateway and Core entries are simulated, with
+source and level filters, text search, pause/resume, follow-newest, and themes.
+Core labels represent the Rehydrator controller. The implemented dashboard now
+uses shared PostgreSQL snapshots for split deployments; see [web/README.md](../../web/README.md)
+for migration and retention details. This standalone preview stays simulated.

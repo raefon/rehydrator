@@ -236,3 +236,19 @@ Original submission sources, existing staging links and library records are
 retained. These controls use the existing dashboard authentication and origin/CSRF
 checks; download-client delete semantics are unchanged. Deploy the new gateway
 binary/image to expose both features.
+
+The Logs view follows a terminal-style feed with Gateway/Core source filters,
+text and level filtering, pause/resume, and follow-newest. It polls every two
+seconds. Scrolling back disables follow so incoming output does not interrupt
+reading; enable Follow newest to return to the bottom.
+
+Split deployments share sanitized process snapshots through PostgreSQL. Apply
+`migrations/036_ui_log_snapshots.sql` before rolling out both Gateway and Core
+(or use the existing database auto-migration setting). Each process retains its
+last 300 messages; the dashboard merges up to 600 entries for the authenticated
+tenant. Sources stop reporting after ten seconds without a heartbeat, and old
+snapshots are removed after ten minutes by active publishers. The UI reports
+which sources are present and falls back to local logs when shared snapshots
+are unavailable. Combined deployments use a Combined source label. This feed
+preserves the existing redaction; raw errors and sensitive attributes remain
+available only through the normal operational logging setup.

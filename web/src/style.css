@@ -150,3 +150,24 @@ a { color: var(--green); }
 .log-table td:last-child { white-space: normal; min-width: 20rem; overflow-wrap: anywhere; }
 .danger { background: #b42318; color: #fff; border: 1px solid #b42318; border-radius: 0.75rem; padding: 10px 16px; }
 .danger:hover:not(:disabled) { background: #912018; }
+
+/* Terminal log output uses the same surrounding dashboard controls. */
+.log-controls, .log-sources { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.log-controls { margin: 18px 0 12px; }
+.log-sources [aria-pressed="true"] { background: var(--success-bg); color: var(--green); border-color: var(--green); }
+.log-terminal { background: #101210; color: #dae0d8; border: 1px solid #343a32; border-radius: 10px; overflow: hidden; }
+.log-window-bar, .log-window-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 18px; font-size: 12px; color: #aab4a6; }
+.log-window-bar { background: #20241f; border-bottom: 1px solid #343a32; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.log-window-bar label { font-family: system-ui, sans-serif; }
+.log-window-dots { color: #899583; letter-spacing: 4px; margin-right: 12px; }
+.log-output { height: clamp(300px, 60vh, 720px); overflow: auto; padding: 14px 0; scrollbar-gutter: stable; }
+.log-output:focus-visible { outline: 2px solid #b9f47b; outline-offset: -2px; }
+.log-line { padding: 2px 18px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.8 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.log-line time, .log-fields { color: #899583; }
+.log-source { color: #b9f47b; }
+.log-level { color: #aab4a6; }
+.log-level-warn { color: #efbf79; }
+.log-level-error { color: #ee9090; }
+.log-window-footer { border-top: 1px solid #343a32; color: #aab4a6; }
+.log-empty { padding: 16px 18px; color: #aab4a6; }
+@media (forced-colors: active) { .log-terminal, .log-window-bar, .log-window-footer { border-color: CanvasText; } }

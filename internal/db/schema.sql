@@ -520,3 +520,13 @@ ALTER TABLE gateway_jobs ADD COLUMN IF NOT EXISTS release_folder TEXT NOT NULL D
 -- Re-verify visible completed NZBs at their new staging path; never re-upload.
 UPDATE gateway_jobs SET state='Mounting',catalog_revision=catalog_revision+1,verify_next_at=now()
 WHERE protocol='usenet' AND state='Completed' AND NOT hidden AND release_folder='';
+
+-- Bounded sanitized snapshots shared by gateway and controller processes.
+CREATE TABLE IF NOT EXISTS ui_log_snapshots (
+ tenant TEXT NOT NULL,
+ instance TEXT NOT NULL,
+ source TEXT NOT NULL,
+ entries JSONB NOT NULL DEFAULT '[]'::jsonb,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY (tenant, instance)
+);

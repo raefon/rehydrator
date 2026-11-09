@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/raefon/rehydrator/internal/db"
 	"github.com/raefon/rehydrator/internal/model"
@@ -70,7 +71,28 @@ func (s *Service) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.URL.Path == "/dashboard/api/logs" && r.Method == http.MethodGet:
-		writeJSON(w, map[string]any{"entries": uilogs.Recent.Snapshot(), "scope": "Current process only; last 300 messages since startup. Free-form errors and sensitive attributes omitted."})
+		var entries []uilogs.Entry
+		var sources []string
+		var err error
+		if s.repo != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			entries, sources, err = s.repo.RecentUILogs(ctx, s.tenant)
+		}
+		scope := "Last 600 entries · Sensitive attributes omitted."
+		if err != nil || len(sources) == 0 {
+			entries = uilogs.Recent.Snapshot()
+			source := "Combined"
+			if s.role == "gateway" {
+				source = "Gateway"
+			}
+			for i := range entries {
+				entries[i].Source = source
+			}
+			sources = []string{source}
+			scope = "Current process only; shared log feed unavailable."
+		}
+		writeJSON(w, map[string]any{"entries": entries, "sources": sources, "scope": scope})
 	case r.URL.Path == "/dashboard/api/jobs/prune" && r.Method == http.MethodPost:
 		s.dashboardPrune(w, r)
 	case r.URL.Path == "/dashboard/api/snapshot" && r.Method == http.MethodGet:

@@ -1,3 +1,9 @@
+# Rehydrator v0.8.8 — Unified live Gateway and Core logs (unreleased)
+
+- Replace the recent-log table with a terminal-style window combining Gateway and Core output, with source/level filters, search, pause/resume and follow-newest. Refresh every two seconds and stop following when scrolling back.
+- Share bounded, sanitized process snapshots through PostgreSQL for split deployments, merge up to 600 entries per tenant, and report available sources. Fall back to local logs when the shared feed is unavailable; preserve dashboard authentication and log redaction.
+- Apply migration 036 before upgrading Gateway and Core, or use database auto-migration. Combined deployments display a Combined source label. Expire inactive sources after ten seconds and clean up old snapshots after ten minutes.
+
 # Rehydrator v0.8.7 — Dashboard logs and confirmed failed-job deletion (unreleased)
 
 - Add a recent operational log view with search and level filters, backed by a bounded process-local buffer. Exclude free-form attributes such as errors, response bodies and credentials.

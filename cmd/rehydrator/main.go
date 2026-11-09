@@ -30,7 +30,7 @@ import (
 
 // version is overridden by the release build with -ldflags; the default keeps
 // local development builds identifiable as well.
-var version = "0.8.4"
+var version = "0.8.8"
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
@@ -74,6 +74,15 @@ func main() {
 		}
 		slog.Info("database schema initialized")
 	}
+
+	logSource := "Combined"
+	if cfg.Role == config.RoleGateway {
+		logSource = "Gateway"
+	}
+	if cfg.Role == config.RoleController {
+		logSource = "Core"
+	}
+	go uilogs.Publish(ctx, repo, cfg.Tenant, logSource)
 
 	if cfg.Role == config.RoleGateway {
 		runGateway(ctx, cfg, repo)

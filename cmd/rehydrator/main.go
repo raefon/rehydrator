@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/raefon/rehydrator/internal/uilogs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -37,7 +38,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print Rehydrator version and exit")
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(uilogs.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
 
 	if *showVersion {

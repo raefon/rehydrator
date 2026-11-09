@@ -1,3 +1,9 @@
+# Rehydrator v0.8.7 — Dashboard logs and confirmed failed-job deletion (unreleased)
+
+- Add a recent operational log view with search and level filters, backed by a bounded process-local buffer. Exclude free-form attributes such as errors, response bodies and credentials.
+- Select up to 50 failed jobs and confirm deletion from both TorBox and Rehydrator, with per-job results. Keep records when provider checks/deletion fail; reject active, library-linked and shared provider placements.
+- Preserve original submission sources and library records. No automatic pruning, provider-wide deletion, Kubernetes API access or schema migration.
+
 # Rehydrator v0.8.6 — Release-named torrent import folders (unreleased)
 
 - Extend pinned release-named staging to torrents so Sonarr can parse episode and season names instead of opaque job IDs.

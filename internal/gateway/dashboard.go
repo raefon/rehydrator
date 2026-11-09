@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"github.com/raefon/rehydrator/internal/dashboardauth"
+	"github.com/raefon/rehydrator/internal/uilogs"
 	"io"
 	"net/http"
 	"net/url"
@@ -68,6 +69,10 @@ func (s *Service) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == "/dashboard/api/logs" && r.Method == http.MethodGet:
+		writeJSON(w, map[string]any{"entries": uilogs.Recent.Snapshot(), "scope": "Current process only; last 300 messages since startup. Free-form errors and sensitive attributes omitted."})
+	case r.URL.Path == "/dashboard/api/jobs/prune" && r.Method == http.MethodPost:
+		s.dashboardPrune(w, r)
 	case r.URL.Path == "/dashboard/api/snapshot" && r.Method == http.MethodGet:
 		jobs, err := s.repo.GatewayJobs(r.Context(), s.tenant)
 		if err != nil {

@@ -145,3 +145,8 @@ a { color: var(--green); }
   .stat, .card, .tablewrap, dialog, nav button.active { box-shadow: none; border: 1px solid CanvasText; }
   .primary { border-color: ButtonText; }
 }
+
+.tablewrap input[type="checkbox"] { width: 1rem; height: 1rem; padding: 0; accent-color: var(--green); }
+.log-table td:last-child { white-space: normal; min-width: 20rem; overflow-wrap: anywhere; }
+.danger { background: #b42318; color: #fff; border: 1px solid #b42318; border-radius: 0.75rem; padding: 10px 16px; }
+.danger:hover:not(:disabled) { background: #912018; }

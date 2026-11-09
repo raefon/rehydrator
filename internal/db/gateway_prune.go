@@ -7,13 +7,13 @@ import (
 
 var (
 	ErrGatewayPruneUnavailable = errors.New("job unavailable")
-	ErrGatewayPruneActive      = errors.New("only failed jobs without pending cleanup can be deleted")
+	ErrGatewayPruneActive      = errors.New("submission is in progress or its provider identity is unresolved")
 	ErrGatewayPruneInUse       = errors.New("job is linked to library media or shares a provider download")
 )
 
-// PruneFailedGatewayJob locks the state through provider deletion and removes
+// PruneGatewayJob locks the state through provider deletion and removes
 // only the job row. Retained sources and library records are never removed.
-func (r *Repo) PruneFailedGatewayJob(ctx context.Context, tenant, id string, remove func(GatewayJob) error) error {
+func (r *Repo) PruneGatewayJob(ctx context.Context, tenant, id string, remove func(GatewayJob) error) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -23,7 +23,7 @@ func (r *Repo) PruneFailedGatewayJob(ctx context.Context, tenant, id string, rem
 	if err != nil {
 		return ErrGatewayPruneUnavailable
 	}
-	if j.State != "Failed" || j.CleanupRequested {
+	if j.State == "Submitting" || (j.State == "SubmissionUnknown" && j.ProviderID == 0) {
 		return ErrGatewayPruneActive
 	}
 	var used bool
@@ -37,7 +37,7 @@ func (r *Repo) PruneFailedGatewayJob(ctx context.Context, tenant, id string, rem
 	if err = remove(j); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, "DELETE FROM gateway_jobs WHERE tenant=$1 AND id=$2 AND state='Failed'", tenant, id); err != nil {
+	if _, err = tx.Exec(ctx, "DELETE FROM gateway_jobs WHERE tenant=$1 AND id=$2", tenant, id); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

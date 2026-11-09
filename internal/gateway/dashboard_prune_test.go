@@ -33,15 +33,15 @@ func TestPruneProviderGuards(t *testing.T) {
 	}{
 		{name: "failed", state: "failed", found: true, wantDelete: true},
 		{name: "already absent"},
-		{name: "finished", state: "completed", found: true, wantError: true},
-		{name: "downloading", state: "downloading", found: true, wantError: true},
+		{name: "finished", state: "completed", found: true, wantDelete: true},
+		{name: "downloading", state: "downloading", found: true, wantDelete: true},
 		{name: "lookup failed", lookupError: errors.New("private"), wantError: true},
 		{name: "delete failed", state: "failed", found: true, deleteError: errors.New("private"), wantDelete: true, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &pruneProvider{state: tc.state, found: tc.found, lookupError: tc.lookupError, deleteError: tc.deleteError}
 			s := &Service{provider: p}
-			err := s.deleteFailedPlacement(context.Background(), db.GatewayJob{Protocol: "usenet", ProviderID: 42})
+			err := s.deletePlacement(context.Background(), db.GatewayJob{Protocol: "usenet", ProviderID: 42})
 			if (err != nil) != tc.wantError || (p.deletes > 0) != tc.wantDelete {
 				t.Fatalf("deletes=%d err=%v", p.deletes, err)
 			}
@@ -68,24 +68,27 @@ func TestDashboardFailedPruneTransaction(t *testing.T) {
 	ctx := context.Background()
 	s.dashboardExternalAuth = true
 	j := addTestJob(t, s)
+	if _, err := conn.Exec(ctx, "UPDATE gateway_jobs SET state='Submitting' WHERE tenant=$1 AND id=$2", s.tenant, j.ID); err != nil {
+		t.Fatal(err)
+	}
 	var called bool
 	reject := func(db.GatewayJob) error { called = true; return nil }
-	if err := s.repo.PruneFailedGatewayJob(ctx, s.tenant, j.ID, reject); err == nil || called {
-		t.Fatal("active job accepted")
+	if err := s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, reject); err == nil || called {
+		t.Fatal("in-flight submission accepted")
 	}
-	if err := s.repo.PruneFailedGatewayJob(ctx, "other-tenant", j.ID, reject); err == nil || called {
+	if err := s.repo.PruneGatewayJob(ctx, "other-tenant", j.ID, reject); err == nil || called {
 		t.Fatal("cross tenant accepted")
 	}
 	if _, err := conn.Exec(ctx, "UPDATE gateway_jobs SET state='Failed' WHERE tenant=$1 AND id=$2", s.tenant, j.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.repo.PruneFailedGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { return errors.New("provider unavailable") }); err == nil {
+	if err := s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { return errors.New("provider unavailable") }); err == nil {
 		t.Fatal("provider failure ignored")
 	}
 	if _, err := s.repo.GatewayJob(ctx, s.tenant, j.ID); err != nil {
 		t.Fatal("failed job removed on error")
 	}
-	if err := s.repo.PruneFailedGatewayJob(ctx, s.tenant, j.ID, reject); err != nil {
+	if err := s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, reject); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.repo.GatewayJob(ctx, s.tenant, j.ID); err == nil {
@@ -109,7 +112,7 @@ func TestPruneBlocksSharedProviderPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	err = s.repo.PruneFailedGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { called = true; return nil })
+	err = s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { called = true; return nil })
 	if err == nil || called {
 		t.Fatal("shared provider placement was deleted", other.ID)
 	}
@@ -142,7 +145,7 @@ func TestPruneBlocksLibraryLinkedJob(t *testing.T) {
 	}
 	t.Cleanup(func() { conn.Exec(ctx, "DELETE FROM media_cache_state WHERE tenant=$1", s.tenant) })
 	called := false
-	if err := s.repo.PruneFailedGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { called = true; return nil }); err == nil || called {
+	if err := s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { called = true; return nil }); err == nil || called {
 		t.Fatal("library linked job accepted")
 	}
 }
@@ -173,5 +176,37 @@ func TestDashboardPrunePartialResults(t *testing.T) {
 	}
 	if len(response.Results) != 2 || !response.Results[0].Deleted || response.Results[1].Deleted || response.Results[1].Error == "" {
 		t.Fatal(w.Body.String())
+	}
+}
+
+func TestPruneSelectedNonFailedJobs(t *testing.T) {
+	for _, state := range []string{"Queued", "Downloading", "Mounting", "Completed", "Missing"} {
+		t.Run(state, func(t *testing.T) {
+			s, _, conn := testService(t)
+			ctx := context.Background()
+			j := addTestJob(t, s)
+			if _, err := conn.Exec(ctx, "UPDATE gateway_jobs SET state=$3 WHERE tenant=$1 AND id=$2", s.tenant, j.ID, state); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			if err := s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { called = true; return nil }); err != nil || !called {
+				t.Fatal("selected job rejected", err)
+			}
+			if _, err := s.repo.GatewayJob(ctx, s.tenant, j.ID); err == nil {
+				t.Fatal("selected job retained")
+			}
+		})
+	}
+}
+func TestPruneUnresolvedSubmissionRetained(t *testing.T) {
+	s, _, conn := testService(t)
+	ctx := context.Background()
+	j := addTestJob(t, s)
+	if _, err := conn.Exec(ctx, "UPDATE gateway_jobs SET state='SubmissionUnknown',provider_id=0 WHERE tenant=$1 AND id=$2", s.tenant, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { called = true; return nil }); err == nil || called {
+		t.Fatal("unknown provider submission removed")
 	}
 }

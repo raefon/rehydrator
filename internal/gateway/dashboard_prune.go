@@ -22,7 +22,7 @@ type deletionProvider interface {
 	Delete(context.Context, int64) error
 }
 
-func (s *Service) deleteFailedPlacement(ctx context.Context, j db.GatewayJob) error {
+func (s *Service) deletePlacement(ctx context.Context, j db.GatewayJob) error {
 	if j.ProviderID == 0 {
 		return nil
 	}
@@ -36,15 +36,12 @@ func (s *Service) deleteFailedPlacement(ctx context.Context, j db.GatewayJob) er
 	if !ok {
 		return pruneRejection("provider deletion unavailable")
 	}
-	download, found, err := p.Get(ctx, j.ProviderID)
+	_, found, err := p.Get(ctx, j.ProviderID)
 	if err != nil {
 		return pruneRejection("provider status could not be verified; job retained")
 	}
 	if !found {
 		return nil
-	}
-	if _, failed := download.FailureMessage(); !failed {
-		return pruneRejection("provider download is no longer failed; job retained")
 	}
 	if err = p.Delete(ctx, j.ProviderID); err != nil {
 		return pruneRejection("TorBox deletion was not confirmed; job retained")
@@ -60,7 +57,7 @@ func (s *Service) dashboardPrune(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&body) != nil || decoder.Decode(new(any)) != io.EOF || !body.Confirm || len(body.IDs) == 0 || len(body.IDs) > 50 {
-		http.Error(w, "confirm deletion of 1–50 failed jobs", 400)
+		http.Error(w, "confirm deletion of 1–50 selected jobs", 400)
 		return
 	}
 	type result struct {
@@ -77,10 +74,10 @@ func (s *Service) dashboardPrune(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seen[id] = true
-		err := s.repo.PruneFailedGatewayJob(ctx, s.tenant, id, func(j db.GatewayJob) error { return s.deleteFailedPlacement(ctx, j) })
+		err := s.repo.PruneGatewayJob(ctx, s.tenant, id, func(j db.GatewayJob) error { return s.deletePlacement(ctx, j) })
 		entry := result{ID: id, Deleted: err == nil}
 		if err != nil {
-			slog.Warn("Failed job deletion blocked or unconfirmed", "tenant", s.tenant, "job_id", id)
+			slog.Warn("Job deletion blocked or unconfirmed", "tenant", s.tenant, "job_id", id)
 			var rejection pruneRejection
 			switch {
 			case errors.As(err, &rejection):
@@ -88,14 +85,14 @@ func (s *Service) dashboardPrune(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, db.ErrGatewayPruneInUse):
 				entry.Error = "Linked to library media or another job shares this provider download; retained."
 			case errors.Is(err, db.ErrGatewayPruneActive):
-				entry.Error = "Job is no longer failed or has pending cleanup; retained."
+				entry.Error = "Submission is still in progress or its provider identity is unresolved; wait for reconciliation and retry."
 			case errors.Is(err, db.ErrGatewayPruneUnavailable):
 				entry.Error = "Job unavailable or already removed."
 			default:
 				entry.Error = "Database operation failed; refresh and retry."
 			}
 		} else {
-			slog.Info("Failed job pruned after provider deletion check", "tenant", s.tenant, "job_id", id)
+			slog.Info("Job pruned after provider deletion check", "tenant", s.tenant, "job_id", id)
 		}
 		results = append(results, entry)
 	}

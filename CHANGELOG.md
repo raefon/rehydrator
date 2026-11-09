@@ -1,3 +1,9 @@
+# Rehydrator v0.8.9 — Confirmed deletion of selected downloads (unreleased)
+
+- Allow checkbox selection and confirmed deletion of queued, downloading, mounting, missing and completed jobs as well as failed jobs.
+- Remove the requirement that a TorBox placement be failed before explicitly deleting it. Retain jobs when provider lookup/deletion fails.
+- Preserve library/shared-placement protections and block deletion while a submission is in flight or its provider identity is unresolved. No schema migration required.
+
 # Rehydrator v0.8.8 — Unified live Gateway and Core logs (unreleased)
 
 - Replace the recent-log table with a terminal-style window combining Gateway and Core output, with source/level filters, search, pause/resume and follow-newest. Refresh every two seconds and stop following when scrolling back.

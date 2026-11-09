@@ -18,4 +18,4 @@ export function recoveryAction(id: string, action: 'check' | 'rearm'): Promise<{
 
 export type LogEntry = {time:string;source:string;level:string;message:string;fields:Record<string,string>};
 export function recentLogs(signal?: AbortSignal): Promise<{entries:LogEntry[];sources:string[];scope:string}> { return request('logs',{signal}); }
-export function pruneFailed(ids:string[]): Promise<{results:{id:string;deleted:boolean;error?:string}[]}> { return request('jobs/prune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,confirm:true})}); }
+export function pruneJobs(ids:string[]): Promise<{results:{id:string;deleted:boolean;error?:string}[]}> { return request('jobs/prune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,confirm:true})}); }

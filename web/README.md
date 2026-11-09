@@ -216,7 +216,7 @@ Terminal provider failure messages are sanitized. Failed NZBs are reported throu
 SAB history so Arr's configured failed-download handling can blocklist and search
 for alternatives; see [failed NZB handling](../docs/nzb-gateway-setup.md#failed-downloads-and-replacement-searches-v084).
 
-## Operational logs and failed downloads
+## Operational logs and download deletion
 
 The Logs page polls the current process's last 300 structured messages every five
 seconds. Logs are held in memory, reset on restart, and are not aggregated across
@@ -224,11 +224,12 @@ replicas. A split gateway displays gateway logs; inspect controller logs through
 your existing Kubernetes tooling. The UI excludes free-form error/URL/body/header
 attributes; stdout logging is unchanged.
 
-In Download activity, select failed jobs (up to 50), choose Delete failed, and
-confirm the named selection. There is one action: remove each failed placement
+In Download activity, select jobs (up to 50), choose Delete selected, and
+confirm the named selection. There is one action: remove each selected placement
 from TorBox and then remove its Rehydrator job row. A provider download which is
-already absent can be removed locally. Active/uncertain jobs, library-linked jobs,
-shared provider IDs and downloads no longer failed at TorBox are blocked. Failed
+already absent can be removed locally. Queued, downloading, mounting, missing, completed and failed jobs can be
+selected. In-flight submissions, unresolved provider identities, library-linked
+jobs and shared provider IDs are blocked. Failed
 provider lookup/deletion leaves the job intact. Results can be partial; retry the
 remaining jobs after resolving the reported issue. No scheduled pruning is added.
 

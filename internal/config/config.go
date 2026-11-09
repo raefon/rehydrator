@@ -47,8 +47,11 @@ type Config struct {
 	FileHealth FileHealthConfig
 	Jellyfin   JellyfinConfig
 
-	PostgresURL string
-	Tenant      string
+	PostgresURL          string
+	Tenant               string
+	LibraryEdition       string
+	LibraryPaths         []string
+	Seerr4KControllerURL string
 
 	RadarrURL    string
 	RadarrAPIKey string
@@ -128,12 +131,15 @@ type Config struct {
 }
 
 type fileConfig struct {
-	Role        string           `yaml:"role"`
-	Gateway     GatewayConfig    `yaml:"gateway"`
-	FileHealth  FileHealthConfig `yaml:"file_health"`
-	Jellyfin    JellyfinConfig   `yaml:"jellyfin"`
-	PostgresURL string           `yaml:"postgres_url"`
-	Tenant      string           `yaml:"tenant"`
+	Role                 string           `yaml:"role"`
+	Gateway              GatewayConfig    `yaml:"gateway"`
+	FileHealth           FileHealthConfig `yaml:"file_health"`
+	Jellyfin             JellyfinConfig   `yaml:"jellyfin"`
+	PostgresURL          string           `yaml:"postgres_url"`
+	Tenant               string           `yaml:"tenant"`
+	LibraryEdition       string           `yaml:"library_edition"`
+	LibraryPaths         []string         `yaml:"library_paths"`
+	Seerr4KControllerURL string           `yaml:"seerr_4k_controller_url"`
 
 	Radarr struct {
 		URL    string `yaml:"url"`
@@ -352,6 +358,9 @@ func applyFileConfig(cfg *Config, fc fileConfig) {
 	if fc.PostgresURL != "" {
 		cfg.PostgresURL = fc.PostgresURL
 	}
+	cfg.LibraryEdition = fc.LibraryEdition
+	cfg.LibraryPaths = fc.LibraryPaths
+	cfg.Seerr4KControllerURL = fc.Seerr4KControllerURL
 	if fc.Tenant != "" {
 		cfg.Tenant = fc.Tenant
 	}
@@ -539,6 +548,7 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Jellyfin.TimeoutSeconds = getenvInt("JELLYFIN_TIMEOUT_SECONDS", cfg.Jellyfin.TimeoutSeconds)
 
 	cfg.PostgresURL = getenv("POSTGRES_URL", cfg.PostgresURL)
+	cfg.LibraryEdition = getenv("LIBRARY_EDITION", cfg.LibraryEdition)
 	cfg.Tenant = getenv("TENANT", getenv("TENANT_NAME", cfg.Tenant))
 
 	cfg.RadarrURL = getenv("RADARR_URL", cfg.RadarrURL)
@@ -629,6 +639,21 @@ func hydrateDurations(cfg *Config) {
 }
 
 func validate(cfg Config) error {
+	if cfg.LibraryEdition != "" && cfg.LibraryEdition != "4k" {
+		return errors.New("library_edition must be empty or 4k")
+	}
+	for _, root := range cfg.LibraryPaths {
+		if !filepath.IsAbs(root) || filepath.Clean(root) == string(filepath.Separator) {
+			return errors.New("library_paths must contain absolute library directories, not filesystem root")
+		}
+	}
+	if cfg.LibraryEdition == "4k" && len(cfg.LibraryPaths) == 0 {
+		return errors.New("4k controller requires explicit library_paths")
+	}
+	if cfg.LibraryEdition != "" && cfg.Role != RoleController {
+		return errors.New("library_edition requires controller role")
+	}
+
 	if cfg.Role != "" && cfg.Role != RoleCombined && cfg.Role != RoleGateway && cfg.Role != RoleController {
 		return errors.New("role must be combined, gateway or controller")
 	}
@@ -655,8 +680,8 @@ func validate(cfg Config) error {
 		}
 	}
 	if cfg.Gateway.Enabled {
-		for _, category := range []string{cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory} {
-			if category == "" || category == "." || category == ".." || strings.ContainsAny(category, "/\\") {
+		for _, category := range cfg.Gateway.Categories() {
+			if category == "" || category == "." || category == ".." || strings.ContainsAny(category, "/\\\x00") {
 				return errors.New("gateway categories must be nonempty path components")
 			}
 		}
@@ -764,4 +789,13 @@ func getenvBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return v
+}
+
+// StateTenant isolates Arr identity while the gateway retains the real tenant.
+// The standard scope is unchanged for existing installations.
+func (cfg Config) StateTenant() string {
+	if cfg.LibraryEdition == "4k" {
+		return cfg.Tenant + ":4k"
+	}
+	return cfg.Tenant
 }

@@ -19,6 +19,7 @@ type Client struct {
 }
 
 type Request struct {
+	Is4K       bool
 	RequestKey string
 	TVDBID     int
 	Seasons    []int
@@ -163,6 +164,7 @@ func parseRequest(m map[string]any) (Request, bool) {
 
 	return Request{
 		RequestKey: key,
+		Is4K:       m["is4k"] == true,
 		RequestID:  requestID,
 		TVDBID:     tvdbID,
 		Seasons:    Seasons(m["seasons"]),
@@ -251,4 +253,34 @@ func firstInt(m map[string]any, keys ...string) int {
 		}
 	}
 	return 0
+}
+
+// RequestByID resolves the edition from the authoritative request, because
+// Seerr webhook templates do not consistently include is4k.
+func (c *Client) RequestByID(ctx context.Context, id int) (Request, error) {
+	if !c.Configured() || id <= 0 {
+		return Request{}, fmt.Errorf("Seerr request lookup is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/request/%d", c.base, id), nil)
+	if err != nil {
+		return Request{}, err
+	}
+	req.Header.Set("X-Api-Key", c.key)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Request{}, err
+	}
+	defer resp.Body.Close()
+	if err = httpx.CheckStatus(resp); err != nil {
+		return Request{}, err
+	}
+	var item map[string]any
+	if err = json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return Request{}, err
+	}
+	result, ok := parseRequest(item)
+	if !ok {
+		return Request{}, fmt.Errorf("invalid Seerr request response")
+	}
+	return result, nil
 }

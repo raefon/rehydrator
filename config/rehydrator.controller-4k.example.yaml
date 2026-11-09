@@ -1,0 +1,36 @@
+# Tenant deployment: mount CSI at /storage/torbox and shared media at /storage/media.
+role: controller
+library_edition: 4k
+tenant: tenet-nofear101
+postgres_url: "" # POSTGRES_URL; same database/tenant as its gateway
+health_addr: ":8080"
+db_auto_migrate: false # Gateway/migration job must apply schema through 036 first.
+csi_path: /storage/media
+rearm_enabled: true
+api:
+  enabled: true
+  require_token: true
+  token: "" # API_TOKEN for Arr/Seerr/Jellyfin webhooks and controller APIs
+gateway:
+  additional_categories: [sonarr, radarr]
+  radarr_category: radarr-4k
+  sonarr_category: sonarr-4k
+  enabled: true
+  # No TorBox, qBittorrent, SAB or DAV credentials needed by this role.
+  mount_path: /storage/torbox
+  download_path: /storage/media/downloads/rehydrator
+radarr:
+  url: http://tenet-radarr-4k:7878
+  api_key: "" # RADARR_API_KEY
+sonarr:
+  url: http://tenet-sonarr-4k:8989
+  api_key: "" # SONARR_API_KEY
+jellyfin:
+  enabled: false # Enable and configure using the main example for refreshes.
+
+# This controller shares tenant, postgres_url and gateway storage with standard.
+# Give both controllers all four categories so either can verify shared mounts.
+# Required roots keep playback recovery within this edition.
+library_paths:
+  - /storage/media/movies-4k
+  - /storage/media/series-4k

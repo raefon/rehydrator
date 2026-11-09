@@ -9,6 +9,8 @@ rearm_enabled: true
 api:
   enabled: true
 gateway:
+  # Enable when adding separate 4K Arr/controller instances.
+  # additional_categories: [sonarr-4k, radarr-4k]
   radarr_category: radarr
   sonarr_category: sonarr
   dashboard_external_auth: false # Mutually exclusive with native OIDC.

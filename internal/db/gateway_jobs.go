@@ -148,7 +148,7 @@ func (r *Repo) GatewayJobCatalog(ctx context.Context, tenant, id string) (Gatewa
 
 func (r *Repo) GatewayRecoveryWaiting(ctx context.Context, tenant, id string) error {
 	_, err := r.pool.Exec(ctx, `UPDATE media_cache_state m SET state='WAITING_FOR_VISIBILITY',rearm_requested=true,next_retry_at=now(),last_error='gateway: waiting for shared provider placement recovery'
- WHERE m.tenant=$1 AND ((m.source_protocol='usenet' AND m.source_download_id=$2) OR (m.source_protocol='torrent' AND m.infohash=(SELECT infohash FROM gateway_jobs WHERE tenant=$1 AND id=$2)))
+ WHERE m.tenant IN ($1,$1||':4k') AND ((m.source_protocol='usenet' AND m.source_download_id=$2) OR (m.source_protocol='torrent' AND m.infohash=(SELECT infohash FROM gateway_jobs WHERE tenant=$1 AND id=$2)))
  AND m.state IN ('AVAILABLE','BROKEN') AND NOT m.rearm_requested
  AND EXISTS(SELECT 1 FROM media_cache_torrent_sources s WHERE s.media_id=m.id AND ((s.protocol='usenet' AND s.source_kind='nzb_file' AND lower(s.download_id)=$2) OR (s.protocol='torrent' AND s.source_kind IN ('magnet','torrent_file') AND s.infohash=m.infohash)))`, tenant, id)
 	return err

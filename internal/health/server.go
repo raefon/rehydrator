@@ -1,11 +1,14 @@
 package health
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,12 +26,16 @@ type Server struct {
 }
 
 type APIOptions struct {
-	Readiness        func(context.Context) error
-	GatewayUI        http.Handler
-	GatewayDashboard http.HandlerFunc
-	GatewayQB        http.HandlerFunc
-	GatewaySAB       http.HandlerFunc
-	GatewayDAV       http.HandlerFunc
+	Seerr4KControllerURL string
+	Seerr                *seerr.Client
+	LibraryPaths         []string
+	Is4K                 bool
+	Readiness            func(context.Context) error
+	GatewayUI            http.Handler
+	GatewayDashboard     http.HandlerFunc
+	GatewayQB            http.HandlerFunc
+	GatewaySAB           http.HandlerFunc
+	GatewayDAV           http.HandlerFunc
 
 	CaptureGrab                  func(context.Context, model.GrabSource) error
 	RecordGrabImport             func(context.Context, model.GrabSource, string) error
@@ -111,6 +118,10 @@ func newServer(opt APIOptions) *Server {
 			recordGrabImport:             opt.RecordGrabImport,
 			repo:                         opt.Repo,
 			tenant:                       opt.Tenant,
+			is4K:                         opt.Is4K,
+			libraryPaths:                 opt.LibraryPaths,
+			seerr:                        opt.Seerr,
+			seerr4KControllerURL:         opt.Seerr4KControllerURL,
 			token:                        opt.Token,
 			requireToken:                 opt.RequireToken,
 			metricsEnabled:               opt.MetricsEnabled,
@@ -185,6 +196,10 @@ func (s *Server) Run(ctx context.Context) {
 }
 
 type apiHandler struct {
+	seerr4KControllerURL         string
+	seerr                        *seerr.Client
+	libraryPaths                 []string
+	is4K                         bool
 	captureGrab                  func(context.Context, model.GrabSource) error
 	recordGrabImport             func(context.Context, model.GrabSource, string) error
 	jellyfinItemPath             func(context.Context, string, string) (string, error)
@@ -928,6 +943,50 @@ func (h *apiHandler) handleSeerrPost(w http.ResponseWriter, r *http.Request, for
 		return
 	}
 
+	if h.seerr != nil && h.seerr.Configured() {
+		if id := firstInt(payload, "requestId", "id"); id > 0 {
+			request, err := h.seerr.RequestByID(r.Context(), id)
+			if err != nil {
+				http.Error(w, "Seerr request edition could not be verified", http.StatusServiceUnavailable)
+				return
+			}
+			payload["is4k"] = request.Is4K
+		}
+	}
+	request4K := payload["is4k"] == true || strings.EqualFold(firstString(payload, "is4k"), "true")
+	if request4K && !h.is4K && h.seerr4KControllerURL != "" {
+		if forceDefault {
+			payload["force"] = true
+		}
+		body, _ := json.Marshal(payload)
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		forward, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(h.seerr4KControllerURL, "/")+"/api/seerr/webhook", bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, "invalid 4K controller endpoint", 503)
+			return
+		}
+		forward.Header.Set("Content-Type", "application/json")
+		forward.Header.Set("X-Rehydrator-Token", h.token)
+		client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+		response, err := client.Do(forward)
+		if err != nil {
+			http.Error(w, "4K controller unavailable; scheduled request sync will retry", 503)
+			return
+		}
+		defer response.Body.Close()
+		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			http.Error(w, "4K controller did not accept request", 503)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "forwarded": "4k"})
+		return
+	}
+	if request4K != h.is4K {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": "different library edition"})
+		return
+	}
 	mediaType := normalizeMediaType(firstString(payload, "mediaType", "type"))
 	media := firstMap(payload, "media", "mediaInfo")
 	if mediaType == "" {
@@ -1074,6 +1133,20 @@ func (h *apiHandler) handleGenericPlayback(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *apiHandler) handlePlaybackIntent(w http.ResponseWriter, r *http.Request, intent playbackIntent) {
+	if len(h.libraryPaths) > 0 {
+		matched := false
+		for _, root := range h.libraryPaths {
+			if rel, err := filepath.Rel(root, intent.Path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && intent.Path != "" {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "ignored": true, "message": "different library path scope"})
+			return
+		}
+	}
+
 	if intent.MediaType == "" {
 		intent.MediaType = model.MediaMovie
 	}

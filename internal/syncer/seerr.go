@@ -12,6 +12,7 @@ import (
 )
 
 type SeerrSyncer struct {
+	is4K     bool
 	repo     *db.Repo
 	seerr    *seerr.Client
 	tenant   string
@@ -20,6 +21,7 @@ type SeerrSyncer struct {
 }
 
 type SeerrOptions struct {
+	Is4K     bool
 	Repo     *db.Repo
 	Seerr    *seerr.Client
 	Tenant   string
@@ -34,7 +36,7 @@ func NewSeerr(opt SeerrOptions) *SeerrSyncer {
 	if opt.Limit <= 0 {
 		opt.Limit = 100
 	}
-	return &SeerrSyncer{repo: opt.Repo, seerr: opt.Seerr, tenant: opt.Tenant, interval: opt.Interval, limit: opt.Limit}
+	return &SeerrSyncer{is4K: opt.Is4K, repo: opt.Repo, seerr: opt.Seerr, tenant: opt.Tenant, interval: opt.Interval, limit: opt.Limit}
 }
 
 func (s *SeerrSyncer) Run(ctx context.Context) {
@@ -68,6 +70,9 @@ func (s *SeerrSyncer) SyncOnce(ctx context.Context) error {
 	notTracked := 0
 
 	for _, req := range requests {
+		if req.Is4K != s.is4K {
+			continue
+		}
 		if req.MediaType == model.MediaSeries {
 			seen++
 			key, err := s.repo.RecordSeerrTV(ctx, s.tenant, req.RequestID, req.TMDBID, req.Title, req.Status, req.RawJSON)

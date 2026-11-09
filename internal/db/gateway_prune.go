@@ -27,7 +27,7 @@ func (r *Repo) PruneGatewayJob(ctx context.Context, tenant, id string, remove fu
 		return ErrGatewayPruneActive
 	}
 	var used bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM media_cache_state WHERE tenant=$1 AND (source_download_id=$2 OR ($3='torrent' AND infohash=$4 AND $4<>''))) OR EXISTS(SELECT 1 FROM gateway_jobs WHERE protocol=$3 AND provider_id=$5 AND $5>0 AND NOT(tenant=$1 AND id=$2))`, tenant, id, j.Protocol, j.InfoHash, j.ProviderID).Scan(&used)
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM media_cache_state WHERE tenant IN ($1,$1||':4k') AND (source_download_id=$2 OR ($3='torrent' AND infohash=$4 AND $4<>''))) OR EXISTS(SELECT 1 FROM gateway_jobs WHERE protocol=$3 AND provider_id=$5 AND $5>0 AND NOT(tenant=$1 AND id=$2))`, tenant, id, j.Protocol, j.InfoHash, j.ProviderID).Scan(&used)
 	if err != nil {
 		return err
 	}

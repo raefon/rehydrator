@@ -210,3 +210,20 @@ func TestPruneUnresolvedSubmissionRetained(t *testing.T) {
 		t.Fatal("unknown provider submission removed")
 	}
 }
+
+func TestPruneBlocks4KLibraryLinkedJob(t *testing.T) {
+	s, _, conn := testService(t)
+	ctx := context.Background()
+	j := addTestJob(t, s)
+	if _, err := conn.Exec(ctx, "UPDATE gateway_jobs SET state='Failed' WHERE tenant=$1 AND id=$2", s.tenant, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `INSERT INTO media_cache_state(tenant,media_type,arr_id,symlink_path,state,source_protocol,source_download_id) VALUES($1,'movie',1,'/media/movies-4k/a.mkv','AVAILABLE','usenet',$2)`, s.tenant+":4k", j.ID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Exec(ctx, "DELETE FROM media_cache_state WHERE tenant=$1", s.tenant+":4k") })
+	called := false
+	if err := s.repo.PruneGatewayJob(ctx, s.tenant, j.ID, func(db.GatewayJob) error { called = true; return nil }); err == nil || called {
+		t.Fatal("4k library reference was ignored")
+	}
+}

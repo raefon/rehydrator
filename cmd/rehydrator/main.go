@@ -81,6 +81,9 @@ func main() {
 	}
 	if cfg.Role == config.RoleController {
 		logSource = "Core"
+		if cfg.LibraryEdition == "4k" {
+			logSource = "Core 4K"
+		}
 	}
 	go uilogs.Publish(ctx, repo, cfg.Tenant, logSource)
 
@@ -108,11 +111,11 @@ func main() {
 		gatewayConfig := cfg.Gateway
 		gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
 		if cfg.Role == config.RoleController {
-			cloud = gateway.New(gatewayConfig, cfg.Tenant, repo, nil, nil, cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory)
+			cloud = gateway.New(gatewayConfig, cfg.Tenant, repo, nil, nil, cfg.Gateway.Categories()...)
 			cloud.SetRole(config.RoleController)
 			go cloud.RunMountWorker(ctx)
 		} else {
-			cloud = gateway.New(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory)
+			cloud = gateway.New(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.Gateway.Categories()...)
 			gatewayQB = cloud.QBittorrent
 			gatewaySAB = cloud.SAB
 			gatewayDAV = cloud.DAV
@@ -130,7 +133,7 @@ func main() {
 	ctrl := controller.New(controller.Options{
 		Gateway:                    cloud,
 		FileHealth:                 cfg.FileHealth,
-		Tenant:                     cfg.Tenant,
+		Tenant:                     cfg.StateTenant(),
 		Repo:                       repo,
 		Radarr:                     radarrClient,
 		Sonarr:                     sonarrClient,
@@ -214,7 +217,7 @@ func main() {
 			SourceLookup: sourceLookup,
 			Repo:         repo,
 			Radarr:       radarrClient,
-			Tenant:       cfg.Tenant,
+			Tenant:       cfg.StateTenant(),
 			Category:     cfg.Gateway.RadarrCategory,
 			Interval:     cfg.RadarrSyncInterval,
 			CacheGrace:   cfg.CacheGrace,
@@ -229,7 +232,7 @@ func main() {
 			SourceLookup: sourceLookup,
 			Repo:         repo,
 			Sonarr:       sonarrClient,
-			Tenant:       cfg.Tenant,
+			Tenant:       cfg.StateTenant(),
 			Category:     cfg.Gateway.SonarrCategory,
 			Interval:     cfg.SonarrSyncInterval,
 			CacheGrace:   cfg.CacheGrace,
@@ -243,7 +246,8 @@ func main() {
 		seerrSyncer = syncer.NewSeerr(syncer.SeerrOptions{
 			Repo:     repo,
 			Seerr:    seerrClient,
-			Tenant:   cfg.Tenant,
+			Tenant:   cfg.StateTenant(),
+			Is4K:     cfg.LibraryEdition == "4k",
 			Interval: cfg.SeerrSyncInterval,
 			Limit:    cfg.SeerrSyncLimit,
 		})
@@ -272,7 +276,7 @@ func main() {
 	if jellyfinClient != nil {
 		refreshItem := func(mt model.MediaType) func(context.Context, int) error {
 			return func(ctx context.Context, id int) error {
-				item, found, err := repo.GetState(ctx, cfg.Tenant, mt, id)
+				item, found, err := repo.GetState(ctx, cfg.StateTenant(), mt, id)
 				if err != nil {
 					return err
 				}
@@ -285,7 +289,7 @@ func main() {
 					status = "failed"
 					message = err.Error()
 				}
-				_ = repo.RecordJellyfinRefresh(ctx, cfg.Tenant, item.ID, item.ArrID, "manual_refresh", string(mt)+"_file", item.SymlinkPath, status, message)
+				_ = repo.RecordJellyfinRefresh(ctx, cfg.StateTenant(), item.ID, item.ArrID, "manual_refresh", string(mt)+"_file", item.SymlinkPath, status, message)
 				return err
 			}
 		}
@@ -298,7 +302,7 @@ func main() {
 				status = "failed"
 				message = err.Error()
 			}
-			_ = repo.RecordJellyfinRefresh(ctx, cfg.Tenant, "", 0, "manual_library_refresh", "library", "", status, message)
+			_ = repo.RecordJellyfinRefresh(ctx, cfg.StateTenant(), "", 0, "manual_library_refresh", "library", "", status, message)
 			return err
 		}
 	}
@@ -335,11 +339,15 @@ func main() {
 			RecordGrabImport:             ctrl.RecordGrabImport,
 			Addr:                         cfg.HealthAddr,
 			Repo:                         repo,
-			Tenant:                       cfg.Tenant,
+			Tenant:                       cfg.StateTenant(),
 			Token:                        cfg.APIToken,
 			RequireToken:                 cfg.APIRequireToken,
 			MetricsEnabled:               cfg.MetricsEnabled,
 			PlaybackEnabled:              cfg.PlaybackEnabled,
+			Is4K:                         cfg.LibraryEdition == "4k",
+			LibraryPaths:                 cfg.LibraryPaths,
+			Seerr:                        seerrClient,
+			Seerr4KControllerURL:         cfg.Seerr4KControllerURL,
 			JellyfinItemPath:             jellyfinItemPath,
 			JellyfinRefreshMovie:         jellyfinRefreshMovie,
 			JellyfinRefreshSeries:        jellyfinRefreshSeries,
@@ -385,7 +393,7 @@ func main() {
 func runGateway(ctx context.Context, cfg config.Config, repo *db.Repo) {
 	gatewayConfig := cfg.Gateway
 	gatewayConfig.RecoverMissing = gatewayConfig.RecoverMissing && cfg.RearmEnabled
-	service := gateway.New(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.Gateway.SonarrCategory, cfg.Gateway.RadarrCategory)
+	service := gateway.New(gatewayConfig, cfg.Tenant, repo, torbox.NewTorrentClient(cfg.Gateway.APIKey), torbox.NewUsenetClient(cfg.Gateway.APIKey), cfg.Gateway.Categories()...)
 	service.SetRole(config.RoleGateway)
 	ui, err := service.ConfigureDashboard(ctx, cfg.Gateway.OIDC, webui.Handler())
 	if err != nil {

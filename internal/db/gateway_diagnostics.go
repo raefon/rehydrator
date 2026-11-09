@@ -24,7 +24,7 @@ func (r *Repo) GatewayDiagnostics(ctx context.Context, tenant string, j GatewayJ
 	if err != nil {
 		return d, err
 	}
-	rows, err := r.pool.Query(ctx, `SELECT media_type,arr_id,state,symlink_path FROM media_cache_state WHERE tenant=$1 AND source_protocol=$2 AND (($2='torrent' AND infohash=$3 AND $3<>'') OR ($2='usenet' AND source_download_id=$4)) ORDER BY media_type,arr_id LIMIT 500`, tenant, j.Protocol, j.InfoHash, j.ID)
+	rows, err := r.pool.Query(ctx, `SELECT media_type,arr_id,state,symlink_path FROM media_cache_state WHERE tenant IN ($1,$1||':4k') AND source_protocol=$2 AND (($2='torrent' AND infohash=$3 AND $3<>'') OR ($2='usenet' AND source_download_id=$4)) ORDER BY media_type,arr_id LIMIT 500`, tenant, j.Protocol, j.InfoHash, j.ID)
 	if err != nil {
 		return d, err
 	}

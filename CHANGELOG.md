@@ -1,3 +1,10 @@
+# Rehydrator v0.9.0 — Separate standard and 4K controller libraries (unreleased)
+
+- Add controller-only library_edition: 4k to isolate Arr state/recovery IDs under an internal tenant:4k scope while sharing the original tenant's gateway, sources and WebDAV mount. Existing standard identities remain unchanged.
+- Add gateway.additional_categories for sonarr-4k/radarr-4k and library_paths for edition-specific playback handling.
+- Filter Seerr request reconciliation by edition; verify webhook request editions through Seerr and optionally forward 4K requests using seerr_4k_controller_url.
+- Include both editions in gateway recovery, diagnostics and library-reference deletion guards. Display the 4K controller as a separate shared-log source. No schema migration beyond 036.
+
 # Rehydrator v0.8.9 — Confirmed deletion of selected downloads (unreleased)
 
 - Allow checkbox selection and confirmed deletion of queued, downloading, mounting, missing and completed jobs as well as failed jobs.

@@ -45,7 +45,7 @@ export default function Logs() {
   return <section aria-label="Operational logs">
     <div className="log-controls">
       <div className="log-sources" role="group" aria-label="Log source">
-        {['all', 'Gateway', 'Core', ...(sources.includes('Combined') ? ['Combined'] : [])].map(s =>
+        {['all', ...Array.from(new Set(['Gateway', 'Core', ...sources]))].map(s =>
           <button key={s} className="secondary" aria-pressed={source === s} onClick={() => setSource(s)}>{s === 'all' ? 'All sources' : s}</button>
         )}
       </div>

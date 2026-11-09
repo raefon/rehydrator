@@ -54,3 +54,11 @@ Apply schema through 035 before new binaries, or start the gateway with
 manual table drop is necessary for this consolidation.
 
 For native Authentik OIDC and ForwardAuth, see [dashboard setup](../web/README.md).
+
+## Separate 4K controllers
+
+Use `library_edition: 4k` only on a dedicated controller, retaining the real
+`tenant` used by the shared gateway. Set absolute `library_paths` for that
+controller's roots and `gateway.additional_categories` for the other edition's
+categories. `seerr_4k_controller_url` on the standard controller forwards verified
+4K Seerr requests to the second controller. See [separate 4K setup](separate-4k.md).

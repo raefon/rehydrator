@@ -126,29 +126,99 @@ func (c *UsenetClient) Create(ctx context.Context, nzb []byte, filename string) 
 
 	return result.ID, nil
 }
-func (c *UsenetClient) Get(ctx context.Context, id int64) (UsenetDownload, bool, error) {
-	raw, err := c.envelope(ctx, http.MethodGet, "/usenet/mylist?id="+strconv.FormatInt(id, 10)+"&bypass_cache=true", "", nil)
+
+// UsenetSubmissionFilename carries an opaque job identity through a timed-out add.
+// The NZB bytes stay unchanged; display/catalog names omit this transport marker.
+func UsenetSubmissionFilename(jobID, filename string) string {
+	return jobID + "--" + filename
+}
+
+func cleanUsenetName(name string) string {
+	if strings.HasPrefix(name, "cloud-nzb-") {
+		if i := strings.Index(name, "--"); i > 0 {
+			return name[i+2:]
+		}
+	}
+	return name
+}
+
+func (c *UsenetClient) inventory(ctx context.Context, query string) ([]UsenetDownload, error) {
+	raw, err := c.envelope(ctx, http.MethodGet, "/usenet/mylist?bypass_cache=true"+query, "", nil)
 	if err != nil {
-		return UsenetDownload{}, false, err
+		return nil, err
 	}
 	var entries []UsenetDownload
 	if json.Unmarshal(raw, &entries) != nil {
 		var one UsenetDownload
 		if json.Unmarshal(raw, &one) != nil || one.ID <= 0 {
-			return one, false, fmt.Errorf("invalid TorBox Usenet inventory")
+			return nil, fmt.Errorf("invalid TorBox Usenet inventory")
 		}
 		entries = []UsenetDownload{one}
 	}
+	seen := map[int64]bool{}
+	for _, entry := range entries {
+		if entry.ID <= 0 || seen[entry.ID] {
+			return nil, fmt.Errorf("ambiguous TorBox Usenet inventory")
+		}
+		seen[entry.ID] = true
+	}
+	return entries, nil
+}
+
+// FindSubmission observes only; it never uploads. Release-title-only matches are
+// deliberately refused, including jobs submitted by versions without a marker.
+func (c *UsenetClient) FindSubmission(ctx context.Context, jobID, filename string) (int64, error) {
+	entries, err := c.inventory(ctx, "")
+	if err != nil {
+		return 0, err
+	}
+	expected := strings.TrimSuffix(UsenetSubmissionFilename(jobID, filename), ".nzb")
+	var id int64
+	for _, entry := range entries {
+		if strings.TrimSuffix(entry.Name, ".nzb") != expected {
+			continue
+		}
+		if id != 0 {
+			return 0, fmt.Errorf("multiple TorBox placements match NZB submission marker")
+		}
+		id = entry.ID
+	}
+	return id, nil
+}
+
+func (c *UsenetClient) Get(ctx context.Context, id int64) (UsenetDownload, bool, error) {
+	entries, err := c.inventory(ctx, "&id="+strconv.FormatInt(id, 10))
+	if err != nil {
+		return UsenetDownload{}, false, err
+	}
+	var download UsenetDownload
+	found := false
 	for _, entry := range entries {
 		if entry.ID != id {
-			return UsenetDownload{}, false, fmt.Errorf("TorBox returned unexpected Usenet identity")
+			return download, false, fmt.Errorf("TorBox returned unexpected Usenet identity")
 		}
-		if err = ValidateUsenetFiles(entry.Files); err != nil {
-			return entry, false, err
-		}
-		return entry, true, nil
+		download, found = entry, true
 	}
-	return UsenetDownload{}, false, nil
+	// TorBox can serve an older processing response by ID while its inventory is
+	// already complete. Promote only the exact ID with a ready, validated catalog.
+	if found && !download.Ready() && ((download.Finished != nil && *download.Finished) || (download.Progress != nil && *download.Progress >= 1)) {
+		if _, failed := download.FailureMessage(); !failed {
+			if all, listErr := c.inventory(ctx, ""); listErr == nil {
+				for _, entry := range all {
+					if entry.ID == id && entry.Ready() && ValidateUsenetFiles(entry.Files) == nil {
+						download = entry
+					}
+				}
+			}
+		}
+	}
+	if found {
+		if err := ValidateUsenetFiles(download.Files); err != nil {
+			return download, false, err
+		}
+		download.Name = cleanUsenetName(download.Name)
+	}
+	return download, found, nil
 }
 func (c *UsenetClient) Link(ctx context.Context, id, file int64) (string, error) {
 	q := url.Values{"token": {c.key}, "usenet_id": {strconv.FormatInt(id, 10)}, "file_id": {strconv.FormatInt(file, 10)}, "redirect": {"false"}}

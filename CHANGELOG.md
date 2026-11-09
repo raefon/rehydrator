@@ -1,3 +1,9 @@
+# Rehydrator v0.9.1 — Recover uncertain NZB submissions (unreleased)
+
+- Mark new NZB uploads with their gateway job identity and reconcile timed-out submissions against a unique TorBox placement, without uploading again. Preserve original NZB bytes and hide transport markers from import names.
+- Prevent duplicate provider bindings and cross-tenant adoption. Older unmarked submissions and ambiguous matches remain unresolved for manual review; recovery checks run every five minutes.
+- Cross-check the full TorBox Usenet inventory when a per-ID response reports finished/100% but has not exposed its files. Accept only the same ID with a ready, valid file catalog. No configuration or schema migration required.
+
 # Rehydrator v0.9.0 — Separate standard and 4K controller libraries (unreleased)
 
 - Add controller-only library_edition: 4k to isolate Arr state/recovery IDs under an internal tenant:4k scope while sharing the original tenant's gateway, sources and WebDAV mount. Existing standard identities remain unchanged.

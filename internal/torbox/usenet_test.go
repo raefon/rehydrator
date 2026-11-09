@@ -97,3 +97,68 @@ func TestQueuedUsenetResponseNeverBecomesActiveID(t *testing.T) {
 		t.Fatal(id, err)
 	}
 }
+
+func TestFindNZBSubmissionRequiresUniqueMarker(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		want       int64
+		fail       bool
+	}{
+		{"marked", `[{"id":42,"name":"cloud-nzb-job--Release"}]`, 42, false},
+		{"extension", `[{"id":42,"name":"cloud-nzb-job--Release.nzb"}]`, 42, false},
+		{"legacy title", `[{"id":42,"name":"Release"}]`, 0, false},
+		{"other job", `[{"id":42,"name":"cloud-nzb-other--Release"}]`, 0, false},
+		{"ambiguous", `[{"id":42,"name":"cloud-nzb-job--Release"},{"id":43,"name":"cloud-nzb-job--Release"}]`, 0, true},
+		{"duplicate ID", `[{"id":42,"name":"cloud-nzb-job--Release"},{"id":42,"name":"cloud-nzb-job--Release"}]`, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" {
+					t.Error("recovery uploaded a second NZB")
+				}
+				fmt.Fprintf(w, `{"success":true,"data":%s}`, tc.data)
+			}))
+			defer server.Close()
+			c := NewUsenetClient("key")
+			c.base = server.URL
+			id, err := c.FindSubmission(context.Background(), "cloud-nzb-job", "Release.nzb")
+			if id != tc.want || (err != nil) != tc.fail {
+				t.Fatalf("got %d, %v", id, err)
+			}
+		})
+	}
+}
+
+func TestUsenetStaleStatusCrossCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		ready      bool
+	}{
+		{"ready same ID", `[{"id":123,"name":"cloud-nzb-job--Release","download_state":"completed","download_present":true,"files":[{"id":0,"name":"Movie.mkv","size":10}]}]`, true},
+		{"other ID", `[{"id":124,"download_state":"completed","files":[{"id":0,"name":"Movie.mkv","size":10}]}]`, false},
+		{"no files", `[{"id":123,"download_state":"completed","download_present":true}]`, false},
+		{"absent files", `[{"id":123,"download_state":"completed","download_present":false,"files":[{"id":0,"name":"Movie.mkv","size":10}]}]`, false},
+		{"unsafe catalog", `[{"id":123,"download_state":"completed","files":[{"id":0,"name":"../Movie.mkv","size":10}]}]`, false},
+		{"lookup failed", `null`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("id") != "" {
+					fmt.Fprint(w, `{"success":true,"data":[{"id":123,"download_state":"processing","download_present":false,"download_finished":true}]}`)
+					return
+				}
+				fmt.Fprintf(w, `{"success":true,"data":%s}`, tc.data)
+			}))
+			defer server.Close()
+			c := NewUsenetClient("key")
+			c.base = server.URL
+			d, found, err := c.Get(context.Background(), 123)
+			if err != nil || !found || d.Ready() != tc.ready {
+				t.Fatalf("got %+v, %v, %v", d, found, err)
+			}
+			if tc.ready && d.Name != "Release" {
+				t.Fatalf("transport marker leaked into release name: %q", d.Name)
+			}
+		})
+	}
+}

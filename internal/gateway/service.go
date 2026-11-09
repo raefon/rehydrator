@@ -128,6 +128,32 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	if lookup, ok := s.provider.(interface {
+		FindSubmission(context.Context, string, string) (int64, error)
+	}); ok {
+		j, claimed, err := s.repo.ClaimUnknownGatewayNZB(ctx, s.tenant)
+		if err != nil {
+			return err
+		}
+		if claimed {
+			id, err := lookup.FindSubmission(ctx, j.ID, j.Filename)
+			if err != nil {
+				return s.repo.RecordUnknownGatewayLookup(ctx, s.tenant, j.ID, "NZB submission lookup inconclusive: "+err.Error())
+			}
+			if id == 0 {
+				return s.repo.RecordUnknownGatewayLookup(ctx, s.tenant, j.ID, "No unique NZB submission marker found; no upload performed; legacy submissions require manual review")
+			}
+			resolved, err := s.repo.ResolveUnknownGatewayNZB(ctx, s.tenant, j, id)
+			if err != nil {
+				return err
+			}
+			if resolved {
+				slog.Info("TorBox unknown NZB submission matched existing download", "job_id", j.ID, "provider_id", id)
+			}
+			return nil
+		}
+	}
+
 	protocol := ""
 
 	j, claimed, err := s.repo.ClaimGatewayJob(ctx, s.tenant, time.Duration(s.cfg.SubmitIntervalSeconds)*time.Second, protocol)
@@ -144,7 +170,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				id, err = s.torrent.Submit(ctx, source)
 			}
 		} else {
-			id, err = s.provider.Create(ctx, j.NZB, j.Filename)
+			id, err = s.provider.Create(ctx, j.NZB, torbox.UsenetSubmissionFilename(j.ID, j.Filename))
 		}
 		if errors.Is(err, torbox.ErrSubmissionNotStarted) {
 			slog.Warn("TorBox gateway submission deferred before add", "tenant", s.tenant, "job_id", j.ID, "error", err)

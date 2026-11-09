@@ -130,3 +130,43 @@ func (r *Repo) RecordUnknownGatewayLookup(ctx context.Context, tenant, id, detai
 	_, err := r.pool.Exec(ctx, `UPDATE gateway_jobs SET last_error=$3,updated_at=now() WHERE tenant=$1 AND id=$2 AND state='SubmissionUnknown' AND provider_id=0`, tenant, id, detail)
 	return err
 }
+
+// Unknown NZBs use the job marker, never release-title inference or re-upload.
+func (r *Repo) ClaimUnknownGatewayNZB(ctx context.Context, tenant string) (GatewayJob, bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return GatewayJob{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	j, err := scanGatewayJob(tx.QueryRow(ctx, "SELECT "+gatewayColumns+" FROM gateway_jobs WHERE tenant=$1 AND protocol='usenet' AND state='SubmissionUnknown' AND provider_id=0 AND next_check_at<=now() ORDER BY next_check_at,id LIMIT 1 FOR UPDATE SKIP LOCKED", tenant))
+	if err == pgx.ErrNoRows {
+		return j, false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return j, false, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE gateway_jobs SET next_check_at=now()+interval '5 minutes' WHERE tenant=$1 AND id=$2", tenant, j.ID); err != nil {
+		return j, false, err
+	}
+	return j, true, tx.Commit(ctx)
+}
+
+func (r *Repo) ResolveUnknownGatewayNZB(ctx context.Context, tenant string, j GatewayJob, id int64) (bool, error) {
+	if id <= 0 {
+		return false, fmt.Errorf("active Usenet ID required")
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	// Serialize bindings per tenant so two observers cannot share a provider ID.
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", tenant); err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE gateway_jobs SET provider_id=$4,state='Downloading',last_error='',next_check_at=now(),catalog_revision=catalog_revision+1,updated_at=now() WHERE tenant=$1 AND id=$2 AND filename=$3 AND nzb=$5 AND protocol='usenet' AND state='SubmissionUnknown' AND provider_id=0 AND NOT EXISTS (SELECT 1 FROM gateway_jobs WHERE tenant=$1 AND protocol='usenet' AND provider_id=$4)`, tenant, j.ID, j.Filename, id, j.NZB)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, tx.Commit(ctx)
+}

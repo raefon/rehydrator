@@ -107,6 +107,11 @@ func TestDirectGatewayArrLifecycle(t *testing.T) {
 	if json.Unmarshal(info.Body.Bytes(), &listed) != nil || len(listed) != 1 || listed[0]["progress"] != float64(1) {
 		t.Fatal(info.Body.String())
 	}
+	// Import paths use the published release folder rather than the queued job ID.
+	j, err = s.repo.GatewayJob(ctx, s.tenant, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	source, err := s.SourceForImport(ctx, model.MediaCacheState{SymlinkPath: filepath.Join(s.storage(j), "Release", "Movie & test.mkv")})
 	if err != nil || source.Magnet != testMagnet {
 		t.Fatal(source, err)

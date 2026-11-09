@@ -24,18 +24,20 @@ import (
 const testNZB = `<nzb><file><segments><segment bytes="1" number="1">article@example</segment></segments></file></nzb>`
 
 type fakeProvider struct {
-	mu             sync.Mutex
-	creates, links int
-	exists, ready  bool
-	link           string
+	mu                 sync.Mutex
+	creates, links     int
+	submissionFilename string
+	exists, ready      bool
+	link               string
 }
 
 func (p *fakeProvider) Create(ctx context.Context, nzb []byte, name string) (int64, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.creates++
+	p.submissionFilename = name
 	p.exists = true
-	if string(nzb) != testNZB || name != "original.nzb" {
+	if string(nzb) != testNZB || !strings.HasSuffix(name, "--original.nzb") {
 		return 0, fmt.Errorf("source changed")
 	}
 	return int64(100 + p.creates), nil
@@ -271,5 +273,81 @@ func TestCloudSubmissionInterruptedDoesNotDuplicate(t *testing.T) {
 	j, _ := s.repo.GatewayJobCatalog(context.Background(), s.tenant, job.ID)
 	if j.State != "SubmissionUnknown" || p.creates != 0 {
 		t.Fatal("uncertain submission duplicated", j, p.creates)
+	}
+}
+
+type observingNZB struct {
+	*fakeProvider
+	existing int64
+	lookups  int
+}
+
+func (p *observingNZB) FindSubmission(ctx context.Context, jobID, filename string) (int64, error) {
+	p.lookups++
+	return p.existing, nil
+}
+func TestUnknownNZBRecoveryNeverResubmitsAndRefusesSharedBinding(t *testing.T) {
+	s, p, conn := testService(t)
+	lookup := &observingNZB{fakeProvider: p}
+	s.provider = lookup
+	ctx := context.Background()
+	j, err := s.repo.AddGatewayNZB(ctx, s.tenant, "radarr", "original.nzb", []byte(testNZB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.State = "SubmissionUnknown"
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, j, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.repo.GatewayJob(ctx, s.tenant, j.ID)
+	if err != nil || current.State != "SubmissionUnknown" || p.creates != 0 {
+		t.Fatal(current, p.creates, err)
+	}
+	lookup.existing = 4321
+	if _, err = conn.Exec(ctx, "UPDATE gateway_jobs SET next_check_at=now() WHERE tenant=$1 AND id=$2", s.tenant, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err = s.repo.GatewayJob(ctx, s.tenant, j.ID)
+	if err != nil || current.State != "Downloading" || current.ProviderID != 4321 || current.Attempts != j.Attempts || p.creates != 0 || lookup.lookups != 2 {
+		t.Fatal(current, p.creates, err)
+	}
+	// A second source must not bind the same provider placement.
+	other, err := s.repo.AddGatewayNZB(ctx, s.tenant, "radarr", "other.nzb", []byte(strings.ReplaceAll(testNZB, "article@example", "other@example")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.State = "SubmissionUnknown"
+	if err = s.repo.UpdateGatewayJob(ctx, s.tenant, other, 0); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := s.repo.ResolveUnknownGatewayNZB(ctx, s.tenant, other, 4321)
+	if err != nil || bound {
+		t.Fatal("shared provider binding allowed", err)
+	}
+	// Cross-tenant attempts cannot resolve the job either.
+	bound, err = s.repo.ResolveUnknownGatewayNZB(ctx, "another-tenant", other, 4322)
+	if err != nil || bound {
+		t.Fatal("cross tenant binding allowed", err)
+	}
+}
+
+func TestNZBUploadCarriesJobMarkerWithoutChangingSavedSource(t *testing.T) {
+	s, p, _ := testService(t)
+	j := addTestJob(t, s)
+	if err := s.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.submissionFilename != torbox.UsenetSubmissionFilename(j.ID, "original.nzb") {
+		t.Fatal("missing job identity on provider upload")
+	}
+	saved, err := s.repo.GatewayJob(context.Background(), s.tenant, j.ID)
+	if err != nil || saved.Filename != "original.nzb" || string(saved.NZB) != testNZB {
+		t.Fatal("original source changed", err)
 	}
 }

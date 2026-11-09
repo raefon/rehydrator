@@ -82,6 +82,9 @@ func (c *TorrentClient) Submit(ctx context.Context, source model.TorrentMetadata
 }
 func (c *TorrentClient) Get(ctx context.Context, id int64) (UsenetDownload, bool, error) {
 	raw, err := c.envelope(ctx, "GET", "/torrents/mylist?id="+strconv.FormatInt(id, 10)+"&bypass_cache=true", "", nil)
+	if errors.Is(err, errPlacementNotFound) {
+		return UsenetDownload{}, false, nil
+	}
 	if err != nil {
 		return UsenetDownload{}, false, err
 	}

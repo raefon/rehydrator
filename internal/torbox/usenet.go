@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -14,6 +15,9 @@ import (
 	"strings"
 	"time"
 )
+
+// errPlacementNotFound is emitted only for TorBox's explicit missing-item response.
+var errPlacementNotFound = errors.New("TorBox placement not found")
 
 type UsenetFile struct {
 	ID   int64  `json:"id"`
@@ -82,6 +86,9 @@ func (c *UsenetClient) envelope(ctx context.Context, method, endpoint, contentTy
 	}
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 20<<20)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("invalid TorBox Usenet response (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusNotFound && !result.Success && result.Error == "ITEM_NOT_FOUND" {
+		return nil, errPlacementNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.Success {
 		return nil, fmt.Errorf("TorBox Usenet HTTP %d: %s", resp.StatusCode, result.Error)
@@ -188,6 +195,9 @@ func (c *UsenetClient) FindSubmission(ctx context.Context, jobID, filename strin
 
 func (c *UsenetClient) Get(ctx context.Context, id int64) (UsenetDownload, bool, error) {
 	entries, err := c.inventory(ctx, "&id="+strconv.FormatInt(id, 10))
+	if errors.Is(err, errPlacementNotFound) {
+		return UsenetDownload{}, false, nil
+	}
 	if err != nil {
 		return UsenetDownload{}, false, err
 	}

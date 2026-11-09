@@ -1,3 +1,8 @@
+# Rehydrator v0.9.2 — Delete confirmed-absent gateway jobs (unreleased)
+
+- Treat explicit HTTP 404 ITEM_NOT_FOUND responses on individual torrent/NZB lookups as confirmed absence, allowing confirmed deletion of stale gateway jobs. Other provider errors and library/shared-placement protections still block deletion.
+- No configuration or schema migration required.
+
 # Rehydrator v0.9.1 — Recover uncertain NZB submissions (unreleased)
 
 - Mark new NZB uploads with their gateway job identity and reconcile timed-out submissions against a unique TorBox placement, without uploading again. Preserve original NZB bytes and hide transport markers from import names.

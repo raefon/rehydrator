@@ -1,3 +1,9 @@
+# Rehydrator v0.9.3 — Sort download activity columns (unreleased)
+
+- Add ascending/descending sorting for name, protocol, TorBox state, Rehydrator state, attempts and catalog size through keyboard-accessible column headers with sort indicators.
+- Preserve selected sorting during live refreshes and use consistent name/ID tie-breaks. Sort attempts and sizes numerically; apply visible-row selection to the sorted results.
+- Rebuild embedded dashboard assets. No configuration or schema migration required.
+
 # Rehydrator v0.9.2 — Delete confirmed-absent gateway jobs (unreleased)
 
 - Treat explicit HTTP 404 ITEM_NOT_FOUND responses on individual torrent/NZB lookups as confirmed absence, allowing confirmed deletion of stale gateway jobs. Other provider errors and library/shared-placement protections still block deletion.

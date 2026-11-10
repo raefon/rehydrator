@@ -171,3 +171,7 @@ a { color: var(--green); }
 .log-window-footer { border-top: 1px solid #343a32; color: #aab4a6; }
 .log-empty { padding: 16px 18px; color: #aab4a6; }
 @media (forced-colors: active) { .log-terminal, .log-window-bar, .log-window-footer { border-color: CanvasText; } }
+
+.sortbutton { border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; padding: 0; cursor: pointer; text-align: left; white-space: nowrap; }
+.sortbutton:hover { color: var(--text); }
+.sortbutton:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }

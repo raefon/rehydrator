@@ -222,7 +222,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if j.MissingChecks >= 3 && s.cfg.RecoverMissing {
 			if j.Attempts >= 3 {
 				j.State = "Failed"
-				j.LastError = "cloud release recovery attempt limit reached"
+				j.LastError = "TorBox placement confirmed missing after 3 checks; cloud release recovery attempt limit reached"
+				slog.Warn("Confirmed missing download exhausted recovery; failure reported to Arr", "tenant", s.tenant, "job_id", j.ID, "protocol", j.Protocol, "attempts", j.Attempts)
 			} else {
 				j.State = "Queued"
 				j.LastError = "confirmed missing cloud placement; saved source queued for recovery"

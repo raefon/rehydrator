@@ -80,3 +80,17 @@ Quote values containing spaces, such as `provider="Placement absent"`. Bare
 words retain phrase matching on the name. Unknown filters, empty values and
 unclosed quotes show an error. Search combines with the protocol dropdown and
 column sorting; it filters only the currently loaded catalog.
+
+### Confirmed missing downloads and Arr failure handling
+
+With `gateway.recover_missing: true`, three consecutive confirmed absent-placement
+checks queue recovery from the retained source while submission attempts remain.
+After the third submitted attempt, three confirmed absent checks mark the job
+`Failed` and log that recovery is exhausted. No fourth upload is made. Provider
+request errors do not count as confirmed absence and reset the confirmation count.
+
+Usenet failures appear as SAB history `Failed` with a failure message; torrent
+failures appear as qBittorrent `error`. Sonarr/Radarr must have failed-download
+handling configured and still track the job for their blocklist/replacement flow
+to run. Hidden or manually deleted jobs are not restored to Arr automatically.
+Disabling missing recovery leaves absent jobs in `Missing` for manual handling.

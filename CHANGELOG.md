@@ -1,3 +1,9 @@
+# Rehydrator v0.9.6 — Diagnose exhausted missing-download recovery (unreleased)
+
+- Add an explicit failure message and terminal-failure log when three confirmed absence checks exhaust the existing recovery attempt budget. Preserve SAB failed-history and qBittorrent error reporting for Arr failed-download handling.
+- Add database-backed regression coverage for Sonarr/Radarr standard and 4K categories. Provider request errors remain inconclusive and do not count as confirmed absence.
+- No configuration or schema migration required.
+
 # Rehydrator v0.9.5 — Recognize contradictory TorBox missing-item responses (unreleased)
 
 - Treat HTTP 404 with the explicit ITEM_NOT_FOUND error code as confirmed absence even when TorBox sets success=true. Apply to torrent and Usenet polling and protected deletion checks.

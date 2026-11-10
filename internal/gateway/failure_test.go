@@ -112,3 +112,73 @@ func TestProviderRequestErrorDoesNotBlocklistRelease(t *testing.T) {
 		t.Fatal(stored.State, err)
 	}
 }
+
+// Exercise the missing-placement path separately from explicit provider failures.
+func TestMissingNZBExhaustionReportsFailedHistory(t *testing.T) {
+	for _, category := range []string{"sonarr", "radarr", "sonarr-4k", "radarr-4k"} {
+		t.Run(category, func(t *testing.T) {
+			s, p, conn := testService(t)
+			s.categories[category] = true
+			ctx := context.Background()
+			j, err := s.repo.AddGatewayNZB(ctx, s.tenant, category, "original.nzb", []byte(testNZB))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			// Three submitted attempts have already been spent. No fourth upload is allowed.
+			if _, err = conn.Exec(ctx, "UPDATE gateway_jobs SET attempts=3 WHERE tenant=$1 AND id=$2", s.tenant, j.ID); err != nil {
+				t.Fatal(err)
+			}
+			p.exists = false
+			for check := 1; check <= 3; check++ {
+				due(t, s, conn, j.ID)
+				if err = s.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				current, err := s.repo.GatewayJob(ctx, s.tenant, j.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				expected := "Missing"
+				if check == 3 {
+					expected = "Failed"
+				}
+				if current.State != expected || current.MissingChecks != check || current.Attempts != 3 {
+					t.Fatalf("check %d: %+v", check, current)
+				}
+			}
+			values := url.Values{"mode": {"history"}, "apikey": {"sab-key"}, "cat": {category}}
+			request := httptest.NewRequest("GET", SABPath+"?"+values.Encode(), nil)
+			response := httptest.NewRecorder()
+			s.SAB(response, request)
+			var history struct {
+				History struct {
+					Slots []struct {
+						ID      string `json:"nzo_id"`
+						Status  string
+						Message string `json:"fail_message"`
+					}
+				}
+			}
+			if err = json.Unmarshal(response.Body.Bytes(), &history); err != nil {
+				t.Fatal(err)
+			}
+			if len(history.History.Slots) != 1 {
+				t.Fatal(response.Body.String())
+			}
+			entry := history.History.Slots[0]
+			if entry.ID != j.ID || entry.Status != "Failed" || !strings.Contains(entry.Message, "confirmed missing") {
+				t.Fatal(entry)
+			}
+			due(t, s, conn, j.ID)
+			if err = s.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if p.creates != 1 {
+				t.Fatal("exhausted job uploaded again")
+			}
+		})
+	}
+}

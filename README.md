@@ -67,3 +67,16 @@ routes and the superseded file/provider sweep. Update your YAML and environment
 using [the migration guide](docs/configuration.md#upgrade-from-earlier-configurations).
 Unknown/removed YAML fields now fail startup. Existing sources, job IDs, database
 records, schema upgrades and WebDAV paths are preserved; no database wipe is needed.
+
+### Download activity search
+
+Search matches name text, ignoring case. With `*` or `?`, the pattern matches
+the whole name: `*1080p*`, `Movie?.mkv`. Combine field filters with spaces (AND):
+`state=failed protocol=usenet`, `category=sonarr name="*Season 2*"`. Supported
+fields: `name`, `state` (`status` alias), `protocol`, `category`, `id`, `provider`
+(the displayed TorBox state). Field values match exactly ignoring case unless
+they contain wildcards; `name=` uses substring matching without wildcards.
+Quote values containing spaces, such as `provider="Placement absent"`. Bare
+words retain phrase matching on the name. Unknown filters, empty values and
+unclosed quotes show an error. Search combines with the protocol dropdown and
+column sorting; it filters only the currently loaded catalog.

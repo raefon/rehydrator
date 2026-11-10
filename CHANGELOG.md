@@ -1,3 +1,9 @@
+# Rehydrator v0.9.4 — Download search filters and wildcards (unreleased)
+
+- Support case-insensitive download search with * and ? wildcards and AND-combined name/state/status/protocol/category/id/provider filters, quoted values and visible syntax errors.
+- Preserve plain-text name searches and combine search results with protocol filtering and column sorting. Add inline search syntax guidance and rebuild embedded dashboard assets.
+- No configuration or schema migration required.
+
 # Rehydrator v0.9.3 — Sort download activity columns (unreleased)
 
 - Add ascending/descending sorting for name, protocol, TorBox state, Rehydrator state, attempts and catalog size through keyboard-accessible column headers with sort indicators.

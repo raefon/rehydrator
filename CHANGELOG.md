@@ -1,3 +1,8 @@
+# Rehydrator v0.9.5 — Recognize contradictory TorBox missing-item responses (unreleased)
+
+- Treat HTTP 404 with the explicit ITEM_NOT_FOUND error code as confirmed absence even when TorBox sets success=true. Apply to torrent and Usenet polling and protected deletion checks.
+- Continue rejecting generic/proxy 404s and authentication, rate-limit or server errors as evidence of absence. Preserve scheduled missing confirmations and recovery attempt limits. No configuration or schema migration required.
+
 # Rehydrator v0.9.4 — Download search filters and wildcards (unreleased)
 
 - Support case-insensitive download search with * and ? wildcards and AND-combined name/state/status/protocol/category/id/provider filters, quoted values and visible syntax errors.

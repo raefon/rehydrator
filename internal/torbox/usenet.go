@@ -87,7 +87,7 @@ func (c *UsenetClient) envelope(ctx context.Context, method, endpoint, contentTy
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 20<<20)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("invalid TorBox Usenet response (HTTP %d)", resp.StatusCode)
 	}
-	if resp.StatusCode == http.StatusNotFound && !result.Success && result.Error == "ITEM_NOT_FOUND" {
+	if resp.StatusCode == http.StatusNotFound && result.Error == "ITEM_NOT_FOUND" {
 		return nil, errPlacementNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.Success {

@@ -65,6 +65,7 @@ func TestPlacementLookupRequiresExplicitNotFound(t *testing.T) {
 			body   string
 			absent bool
 		}{
+			{"confirmed absence with success true", 404, `{"success":true,"error":"ITEM_NOT_FOUND"}`, true},
 			{"confirmed absence", 404, `{"success":false,"error":"ITEM_NOT_FOUND"}`, true},
 			{"generic 404", 404, `{"success":false,"error":"NOT_FOUND"}`, false},
 			{"proxy 404", 404, `<html>not found</html>`, false},

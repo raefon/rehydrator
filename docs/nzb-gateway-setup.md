@@ -89,7 +89,7 @@ LIMIT 10;
 - `Mounting`: provider ready, waiting for controller/CSI verification.
 - `Completed`: SAB history exposes the staged import directory to Arr.
 - `Failed`: inspect the provider's error and acquire a replacement in Arr as needed.
-- `SubmissionUnknown`: new uploads carry a unique gateway job marker in the TorBox upload filename. The gateway checks every five minutes and adopts only one exact matching placement; it never re-uploads during recovery. Original NZB bytes and import names are preserved. Older unmarked jobs, providers that remove the marker, and ambiguous matches require manual review; do not reset/re-add blindly.
+- `SubmissionUnknown`: uploads use the original NZB filename. Because that name is not a unique job identity, the gateway cannot safely identify a timed-out submission by filename; inspect TorBox and resolve it manually. The gateway never blindly re-uploads during recovery. Original NZB bytes and import names are preserved.
 - If a per-ID TorBox response says finished/100% but still processing, the gateway cross-checks its inventory. Completion requires the same provider ID, available files, and a valid file catalog.
 
 Torrent and NZB submissions share the account-owner submission gap. Queue-only

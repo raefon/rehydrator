@@ -170,7 +170,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				id, err = s.torrent.Submit(ctx, source)
 			}
 		} else {
-			id, err = s.provider.Create(ctx, j.NZB, torbox.UsenetSubmissionFilename(j.ID, j.Filename))
+			id, err = s.provider.Create(ctx, j.NZB, j.Filename)
 		}
 		if errors.Is(err, torbox.ErrSubmissionNotStarted) {
 			slog.Warn("TorBox gateway submission deferred before add", "tenant", s.tenant, "job_id", j.ID, "error", err)

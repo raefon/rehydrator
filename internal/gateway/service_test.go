@@ -337,14 +337,14 @@ func TestUnknownNZBRecoveryNeverResubmitsAndRefusesSharedBinding(t *testing.T) {
 	}
 }
 
-func TestNZBUploadCarriesJobMarkerWithoutChangingSavedSource(t *testing.T) {
+func TestNZBUploadUsesOriginalFilenameWithoutChangingSavedSource(t *testing.T) {
 	s, p, _ := testService(t)
 	j := addTestJob(t, s)
 	if err := s.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p.submissionFilename != torbox.UsenetSubmissionFilename(j.ID, "original.nzb") {
-		t.Fatal("missing job identity on provider upload")
+	if p.submissionFilename != "original.nzb" {
+		t.Fatalf("provider filename = %q, want original filename", p.submissionFilename)
 	}
 	saved, err := s.repo.GatewayJob(context.Background(), s.tenant, j.ID)
 	if err != nil || saved.Filename != "original.nzb" || string(saved.NZB) != testNZB {
